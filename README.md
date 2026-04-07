@@ -11,7 +11,7 @@ LeetCode-style coding problems for Databricks data engineers. Import this repo i
 **Jakub Lasak** - Databricks Data Engineer
 
 - [LinkedIn](https://www.linkedin.com/in/jrlasak/) (13.5K followers)
-- [Substack](https://dataengineerjourney.substack.com/) (newsletter)
+- [Substack](https://dataengineerwiki.substack.com/) (newsletter)
 - [DataEngineer.wiki](https://dataengineer.wiki) (cheat sheets, learning paths, cert guides)
 
 ## How It Works
