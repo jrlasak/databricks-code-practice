@@ -16,7 +16,7 @@ LeetCode-style coding problems for Databricks data engineers. Import this repo i
 
 ## How It Works
 
-1. Sign up for [Databricks Community Edition](https://community.cloud.databricks.com/login.html) (free)
+1. Sign up for [Databricks Free Edition](https://www.databricks.com/learn/free-edition) (free)
 2. Clone or download this repo
 3. Import the notebooks into your Databricks workspace
 4. Pick a topic folder, run `00_Setup.py` once to create shared tables
