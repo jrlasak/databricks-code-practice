@@ -4,6 +4,19 @@ LeetCode-style coding problems for Databricks data engineers. Import this repo i
 
 104 exercises across 13 notebooks. All free.
 
+### How is this different from my [hands-on labs](https://github.com/jrlasak)?
+
+| | This repo | Hands-on labs |
+|---|---|---|
+| **Format** | Single exercise, one TODO cell | Multi-notebook guided project |
+| **Time** | 5-30 minutes per exercise | 2-3 hours per lab |
+| **Narrative** | None. "Given table X, write a query that..." | Business scenario. "You're building a streaming pipeline for..." |
+| **Scope** | One concept per exercise (MERGE, window functions, ...) | End-to-end project (ingestion, transformation, quality, orchestration) |
+| **Order** | Pick any exercise, skip around freely | Sequential notebooks that build on each other |
+| **Goal** | Drill a specific skill until it's automatic | See how multiple concepts fit together in a real project |
+
+Use this repo when you want focused reps on a single concept. Use the labs when you want to build something end-to-end.
+
 > **Disclaimer**: This is an independent educational resource created by Jakub Lasak. It is not affiliated with, endorsed by, or sponsored by Databricks, Inc.
 
 ## Author
