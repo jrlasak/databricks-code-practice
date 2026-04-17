@@ -27,6 +27,8 @@ Use this repo when you want focused reps on a single concept. Use the labs when 
 - [Substack](https://dataengineerwiki.substack.com/) (newsletter)
 - [DataEngineer.wiki](https://dataengineer.wiki) (cheat sheets, learning paths, cert guides)
 
+> **Prepping for interviews?** Writing code is one half of the battle - knowing the questions that actually come up is the other. I maintain [Databricks Interview Cheat Sheets](https://dataengineer.wiki/products) by seniority level (junior / mid / senior / bundle).
+
 ## How It Works
 
 1. Sign up for [Databricks Free Edition](https://www.databricks.com/learn/free-edition) (free)
