@@ -50,6 +50,8 @@ Each exercise is atomic - you can skip around freely. Exercise 5 never depends o
 **Total: 13 notebooks, 104 exercises**
 <!-- TOPICS-END -->
 
+More topics coming if this format gets traction - next up: Streaming, Unity Catalog, Performance, and DLT.
+
 ## Notebook Structure
 
 Each topic folder contains:
