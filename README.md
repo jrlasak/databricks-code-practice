@@ -4,7 +4,7 @@ LeetCode-style coding problems for Databricks data engineers. Import this repo i
 
 104 exercises across 13 notebooks. All free.
 
-### How is this different from my [hands-on labs](https://github.com/jrlasak)?
+### How is this different from my [hands-on labs](https://github.com/jrlasak/databricks-hands-on-labs)?
 
 | | This repo | Hands-on labs |
 |---|---|---|
