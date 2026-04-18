@@ -1,113 +1,106 @@
 # Databricks Code Practice
 
-LeetCode-style coding problems for Databricks data engineers. Import this repo into your Databricks workspace, pick a topic folder, run its `00_Setup.py`, then solve exercises - write code, run assertions, check pass/fail.
+### Get fluent in Databricks by typing, not watching.
 
-104 exercises across 13 notebooks. All free.
+**104 exercises + 5 production-grade pipeline labs. All on Databricks Free Edition.**
 
-### How is this different from my [hands-on labs](https://github.com/jrlasak/databricks-hands-on-labs)?
+> **New (18 April 2026):** 5 full-scale pipeline labs + 1 benchmark deep-dive just landed. If you starred this repo for the exercises, they're still here - now alongside end-to-end project work.
 
-| | This repo | Hands-on labs |
-|---|---|---|
-| **Format** | Single exercise, one TODO cell | Multi-notebook guided project |
-| **Time** | 5-30 minutes per exercise | 2-3 hours per lab |
-| **Narrative** | None. "Given table X, write a query that..." | Business scenario. "You're building a streaming pipeline for..." |
-| **Scope** | One concept per exercise (MERGE, window functions, ...) | End-to-end project (ingestion, transformation, quality, orchestration) |
-| **Order** | Pick any exercise, skip around freely | Sequential notebooks that build on each other |
-| **Goal** | Drill a specific skill until it's automatic | See how multiple concepts fit together in a real project |
+---
 
-Use this repo when you want focused reps on a single concept. Use the labs when you want to build something end-to-end.
+Databricks tutorials are everywhere. Tutorials that actually make you fluent are not. Watching someone else write a MERGE doesn't mean you can write one under interview pressure. Reading about Auto Loader doesn't mean you can debug the broken job you inherit on day 1 of a new team.
 
-> **Disclaimer**: This is an independent educational resource created by Jakub Lasak. It is not affiliated with, endorsed by, or sponsored by Databricks, Inc.
+Fluency comes from reps, not reading. This repo is the reps: code you type, assertions that fail loudly until you get it right, pipelines you ship end to end. Three structured paths, all on Databricks Free Edition:
+
+- **`exercises/`** when you want focused reps on a single concept. LeetCode-style, 5-30 min each - MERGE, window functions, Auto Loader, time travel, liquid clustering. Write code, run assertions, pass or iterate.
+- **`pipeline-labs/`** when you want to build something end-to-end. Multi-notebook medallion pipelines on a realistic business scenario (streaming retail, fintech fraud, cert-aligned). 2-3 hours each, same structure you'll ship in production.
+- **`deep-dives/`** when you want to measure the impact of a technique with numbers. Apply one lever at a time, benchmark the delta, prove what it actually buys you.
+
+Walk away able to answer the Delta Lake question in your next interview, debug the Auto Loader job you inherit on day 1 of a new team, and point at production-grade code you've written yourself - not watched someone else write.
+
+104 exercises across 13 notebooks, plus 5 full project labs. No cloud account, no cluster config. Free.
 
 ## Author
 
-**Jakub Lasak** - Databricks Data Engineer
+**Jakub Lasak** - Databricks Data Engineer. Helping you interview like seniors, execute like seniors, and think like seniors.
 
-- [LinkedIn](https://www.linkedin.com/in/jrlasak/) (13.5K followers)
-- [Substack](https://dataengineerwiki.substack.com/) (newsletter)
-- [DataEngineer.wiki](https://dataengineer.wiki) (cheat sheets, learning paths, cert guides)
+- [LinkedIn](https://www.linkedin.com/in/jrlasak/) (13.5K followers) - Databricks projects and tips
+- [Substack](https://dataengineer.wiki/substack) - Newsletter for data engineers
+- [DataEngineer.wiki](https://dataengineer.wiki) - Cheat sheets, learning paths, cert guides
 
 > **Prepping for interviews?** Writing code is one half of the battle - knowing the questions that actually come up is the other. I maintain [Databricks Interview Cheat Sheets](https://dataengineer.wiki/products) by seniority level (junior / mid / senior / bundle).
 
-## How It Works
+## What's Inside
 
-1. Sign up for [Databricks Free Edition](https://www.databricks.com/learn/free-edition) (free)
-2. Clone or download this repo
-3. Import the notebooks into your Databricks workspace
-4. Pick a topic folder, run `00_Setup.py` once to create shared tables
-5. Open any exercise notebook, solve the TODO cells, run the validation cells
+|               | Exercises                                  | Pipeline Labs                                                    | Deep-Dives                                              |
+| ------------- | ------------------------------------------ | ---------------------------------------------------------------- | ------------------------------------------------------- |
+| **Format**    | Single notebook, one TODO per exercise     | Multi-notebook guided project                                    | Single-topic deep investigation                         |
+| **Time**      | 5-30 min per exercise                      | 2-3 hours per lab                                                | 1-2 hours                                               |
+| **Scope**     | One concept (MERGE, window functions, ...) | End-to-end project (ingestion -> bronze -> silver -> gold)       | One topic measured in depth                             |
+| **Narrative** | None. "Given table X, write..."            | Business scenario. "You're building a streaming pipeline for..." | Benchmark-driven. "Apply technique, measure the delta." |
+| **Order**     | Pick any, skip around                      | Sequential notebooks that build on each other                    | Sequential; each step layers on the last                |
+| **Goal**      | Drill a skill until it's automatic         | See how concepts fit in a real project                           | Prove what a technique actually buys you                |
 
-Each exercise is atomic - you can skip around freely. Exercise 5 never depends on Exercise 1's output.
+## Catalog
 
-## Topics
+### Exercises (`exercises/`)
 
 <!-- TOPICS-START -->
-| Topic | Notebooks | Exercises | Description |
-|---|---|---|---|
-| [Delta Lake](delta-lake/) | 6 | 51 | MERGE operations, time travel, schema enforcement, OPTIMIZE, liquid clustering, change data feed |
-| [ELT](elt/) | 7 | 53 | Spark SQL joins, window functions, PySpark transformations, Auto Loader, batch ingestion, medallion architecture, complex data types |
+
+| Topic                               | Notebooks | Exercises | Description                                                                                                                          |
+| ----------------------------------- | --------- | --------- | ------------------------------------------------------------------------------------------------------------------------------------ |
+| [Delta Lake](exercises/delta-lake/) | 6         | 51        | MERGE operations, time travel, schema enforcement, OPTIMIZE, liquid clustering, change data feed                                     |
+| [ELT](exercises/elt/)               | 7         | 53        | Spark SQL joins, window functions, PySpark transformations, Auto Loader, batch ingestion, medallion architecture, complex data types |
 
 **Total: 13 notebooks, 104 exercises**
+
 <!-- TOPICS-END -->
 
-More topics coming if this format gets traction - next up: Streaming, Unity Catalog, Performance, and DLT.
+More exercise topics coming - next up: Streaming, Unity Catalog, Performance, and DLT.
 
-## Notebook Structure
+### Pipeline Labs (`pipeline-labs/`)
 
-Each topic folder contains:
+Multi-notebook, end-to-end medallion pipelines with a business scenario. Each runs 2-3 hours and ships with a synthetic data generator.
 
-```
-{topic}/
-  00_Setup.py                    # Run once - creates catalog, schemas, base tables
-  01_{notebook}.py               # Exercise notebook (read problem, write code, validate)
-  02_{notebook}.py
-  ...
-  setup/
-    {notebook}-setup.py          # Per-notebook setup (called automatically via %run)
-  solutions/
-    {notebook}-solutions.py      # Hints, reference solutions, common mistakes
-```
+| Lab                                                                      | What You Build                                                                                       | Focus                                                                                         |
+| ------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------- |
+| [Apparel Retail 360 (DLT)](pipeline-labs/apparel-streaming/)             | End-to-end retail analytics pipeline on Delta Live Tables with a full medallion architecture.        | DLT, Medallion, SCD Type 2, Streaming, Data Quality Expectations                              |
+| [Fintech Transaction Monitoring](pipeline-labs/fintech-monitoring/)      | Real-time fraud-monitoring pipeline for a payment processor handling 500K+ transactions/day.         | Structured Streaming, Rescued Data, Watermarked Dedup, Stream-Static Joins, Liquid Clustering |
+| [DE Associate Certification Prep](pipeline-labs/de-associate-cert-prep/) | Production-grade pipeline covering every exam domain of the Databricks Data Engineer Associate cert. | Auto Loader, COPY INTO, Medallion, SCD2, Jobs, Unity Catalog                                  |
+| [PySpark Developer Cert Prep](pipeline-labs/pyspark-cert-zenith/)        | E-commerce analytics pipeline covering every domain of the Spark Developer Associate cert.           | DataFrame API, Structured Streaming, Data Skew, Performance Tuning                            |
 
-## How Exercises Work
+### Deep-Dives (`deep-dives/`)
 
-Every exercise follows the same pattern:
+Single-topic labs that measure the impact of a technique with numbers, not intuition.
 
-1. **Read** the problem description (markdown cell with requirements + expected output)
-2. **Write** your solution in the TODO cell
-3. **Run** the validation cell - assertions either pass or fail
+| Lab                                                                    | What You Build                                                                              | Focus                                                                     |
+| ---------------------------------------------------------------------- | ------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------- |
+| [6 Delta Optimization Techniques](deep-dives/optimization-techniques/) | Iteratively apply and measure core Delta performance levers on a synthetic 50M-row dataset. | Partitioning, Z-Order, OPTIMIZE, Auto Optimize, Liquid Clustering, VACUUM |
 
-```python
-# TODO cell
-# EXERCISE_KEY: merge_ex1
-result = spark.sql("""
-    -- your solution here
-""")
+## How to Use
 
-# Validation cell
-assert result.count() == 42, f"Expected 42 rows, got {result.count()}"
-print("Exercise 1 passed!")
-```
+1. Sign up for [Databricks Free Edition](https://www.databricks.com/learn/free-edition) (free, no credit card)
+2. Clone or import this repo into Databricks (Workspace -> Create -> Git folder)
+3. Navigate to the folder you want, open its README, follow the instructions
 
-Solutions are in a separate `solutions/` notebook so you don't accidentally peek.
+Everything runs on Free Edition: serverless compute, Unity Catalog, Delta Lake. No cloud account, no cluster config.
 
-## Difficulty
+## Which Should I Start With?
 
-Exercises within each notebook progress from easy to hard:
+- **New to Databricks?** Start with [DE Associate Cert Prep](pipeline-labs/de-associate-cert-prep/) - broadest fundamentals.
+- **Want quick reps on a specific concept?** [Delta Lake exercises](exercises/delta-lake/) or [ELT exercises](exercises/elt/) - drill one concept at a time.
+- **Comfortable with batch, new to streaming?** [Apparel DLT](pipeline-labs/apparel-streaming/), then [Fintech Monitoring](pipeline-labs/fintech-monitoring/).
+- **Preparing for a cert?** [DE Associate](pipeline-labs/de-associate-cert-prep/) or [Spark Developer Associate](pipeline-labs/pyspark-cert-zenith/).
+- **Already shipping pipelines, want to go deeper on performance?** [Delta Optimization Techniques](deep-dives/optimization-techniques/).
 
-| Level | Time | What It Tests |
-|---|---|---|
-| Easy | 5-10 min | Single concept, one correct approach |
-| Medium | 10-20 min | Multiple concepts, edge cases, production awareness |
-| Hard | 20-30 min | System design thinking, tradeoffs, multi-step |
+## Stay in the Loop
 
-A junior can start with the first few exercises. A senior can skip straight to the end.
-
-## Requirements
-
-- Databricks Community Edition (free) or any Databricks workspace
-- Serverless compute or a cluster with DBR 13.3+
-- Python and SQL only (no Scala/R)
+New exercises and labs ship regularly. Follow on [LinkedIn](https://www.linkedin.com/in/jrlasak/) or subscribe to the [Substack newsletter](https://dataengineer.wiki/substack) to be notified when new content drops.
 
 ## Feedback
 
 Found a bug? Have a suggestion? [Open an issue](../../issues).
+
+---
+
+> **Disclaimer**: This is an independent educational resource created by Jakub Lasak. Not affiliated with, endorsed by, or sponsored by Databricks, Inc. "Databricks" and "Delta Lake" are trademarks of their respective owners.
