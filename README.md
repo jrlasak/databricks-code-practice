@@ -4,21 +4,11 @@
 
 **104 exercises + 5 production-grade pipeline labs. All on Databricks Free Edition.**
 
+Clone once, import into Databricks, pick a folder. Exercises fail loud until your code is right; labs ship with synthetic data so you build production-style pipelines, not toy ones.
+
 > **New (18 April 2026):** 5 full-scale pipeline labs + 1 benchmark deep-dive just landed. If you starred this repo for the exercises, they're still here - now alongside end-to-end project work.
 
 ---
-
-Databricks tutorials are everywhere. Tutorials that actually make you fluent are not. Watching someone else write a MERGE doesn't mean you can write one under interview pressure. Reading about Auto Loader doesn't mean you can debug the broken job you inherit on day 1 of a new team.
-
-Fluency comes from reps, not reading. This repo is the reps: code you type, assertions that fail loudly until you get it right, pipelines you ship end to end. Three structured paths, all on Databricks Free Edition:
-
-- **`exercises/`** when you want focused reps on a single concept. LeetCode-style, 5-30 min each - MERGE, window functions, Auto Loader, time travel, liquid clustering. Write code, run assertions, pass or iterate.
-- **`pipeline-labs/`** when you want to build something end-to-end. Multi-notebook medallion pipelines on a realistic business scenario (streaming retail, fintech fraud, cert-aligned). 2-3 hours each, same structure you'll ship in production.
-- **`deep-dives/`** when you want to measure the impact of a technique with numbers. Apply one lever at a time, benchmark the delta, prove what it actually buys you.
-
-Walk away able to answer the Delta Lake question in your next interview, debug the Auto Loader job you inherit on day 1 of a new team, and point at production-grade code you've written yourself - not watched someone else write.
-
-104 exercises across 13 notebooks, plus 5 full project labs. No cloud account, no cluster config. Free.
 
 ## Author
 
@@ -31,6 +21,12 @@ Walk away able to answer the Delta Lake question in your next interview, debug t
 > **Prepping for interviews?** Writing code is one half of the battle - knowing the questions that actually come up is the other. I maintain [Databricks Interview Cheat Sheets](https://dataengineer.wiki/products) by seniority level (junior / mid / senior / bundle).
 
 ## What's Inside
+
+Fluency comes from reps, not reading. Three structured paths:
+
+- **`exercises/`** - focused reps on a single concept. LeetCode-style, 5-30 min each.
+- **`pipeline-labs/`** - end-to-end medallion pipelines on a business scenario. 2-3 hours each.
+- **`deep-dives/`** - measure the impact of a technique with numbers. 1-2 hours each.
 
 |               | Exercises                                  | Pipeline Labs                                                    | Deep-Dives                                              |
 | ------------- | ------------------------------------------ | ---------------------------------------------------------------- | ------------------------------------------------------- |
