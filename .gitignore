@@ -1,6 +1,5 @@
 .DS_Store
 __pycache__/
-.dev/
-llm/
-/llm
 Bin/
+.dev/
+social-preview.jpg
