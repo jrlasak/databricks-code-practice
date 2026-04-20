@@ -375,13 +375,16 @@ print("Exercise 7 passed!")
 # MAGIC CUST-010: 1 row (new).
 # MAGIC
 # MAGIC **Requirements**:
-# MAGIC 1. Expire old records for changed customers (is_current=false, effective_end_date=today)
+# MAGIC 1. Expire old records ONLY for customers whose attributes actually changed (is_current=false, effective_end_date=today)
 # MAGIC 2. Insert new current version for changed customers
 # MAGIC 3. Insert brand new customers with is_current=true
 # MAGIC 4. Leave customers not in source unchanged
+# MAGIC 5. The pipeline must be idempotent: running twice with the same source does nothing on the second run
 # MAGIC
 # MAGIC **Constraints**:
-# MAGIC - You may use multiple statements (MERGE + INSERT is a valid approach)
+# MAGIC - Canonical approach is a single MERGE with a "staging union" subquery (one source row emits one expire action and one insert action). It is atomic and idempotent.
+# MAGIC - A two-statement approach (MERGE to expire + INSERT new versions) is also valid but not atomic - a reader between the two statements sees a customer with zero current rows.
+# MAGIC - Use null-safe comparison (`<=>` or `IS DISTINCT FROM`) when detecting changes; plain `<>` silently misses NULL -> value transitions.
 
 # COMMAND ----------
 
@@ -410,6 +413,15 @@ assert result.filter("customer_id = 'CUST-002' AND is_current = true").count() =
     "CUST-002 should be unchanged"
 
 print("Exercise 8 passed!")
+
+# --- Idempotency check (manual) ---
+# Re-run your TODO cell above ONCE MORE without re-running the setup notebook,
+# then re-run this validate cell. All assertions must still pass: 6 total rows,
+# 4 current, 2 expired. If they fail on the second run, your solution is
+# non-idempotent - it is expiring unchanged records and inserting spurious
+# "current" versions on every run. A correct SCD Type 2 only writes when a
+# source attribute actually changed.
+print("Idempotency: re-run your TODO cell then this cell. Assertions must still pass.")
 
 # COMMAND ----------
 # MAGIC %md

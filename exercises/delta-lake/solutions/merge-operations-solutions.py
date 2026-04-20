@@ -209,38 +209,79 @@ spark.sql(f"""
 # MAGIC ## Exercise 8: SCD Type 2 with MERGE
 # MAGIC
 # MAGIC **Hints**:
-# MAGIC 1. SCD Type 2 requires two operations: expire old + insert new
-# MAGIC 2. Step 1: MERGE to set is_current=false and effective_end_date on matched records
-# MAGIC 3. Step 2: INSERT all source records as new current versions
+# MAGIC 1. A correct SCD Type 2 only writes when something actually changed - otherwise every run creates spurious new versions.
+# MAGIC 2. Single MERGE via "staging union": for each changed source row, emit two rows. One has the real customer_id so it matches the current target (triggers UPDATE to expire). The other has a NULL key so it never matches (triggers INSERT of the new current). Brand-new customers emit just the NULL-key row.
+# MAGIC 3. Use null-safe comparison (`<=>` or `IS DISTINCT FROM`) so a change from NULL to a value is detected.
+# MAGIC 4. A two-statement (MERGE + INSERT) approach also works and is simpler to read, but it is not atomic: a reader between the two statements sees a customer with zero current rows.
 # MAGIC
 # MAGIC **Common mistakes**:
-# MAGIC - Trying to do it in a single MERGE (possible but much more complex)
-# MAGIC - Forgetting to filter on is_current=true in the MERGE ON clause
-# MAGIC - Not inserting new versions for ALL source records (only inserting new customers)
-# MAGIC - Using UPDATE SET * (would overwrite the customer_id and other fields)
+# MAGIC - Unconditionally expiring every matched row and re-inserting every source row: non-idempotent, creates a new "current" version on every run even when nothing changed.
+# MAGIC - Using plain `<>` for change detection: returns NULL (treated as false) when either side is NULL, so NULL -> 'x' changes are silently skipped.
+# MAGIC - Forgetting `t.is_current = true` in the ON clause: the MERGE then matches against expired history rows too.
+# MAGIC - Using UPDATE SET * on the expire step: would overwrite customer_id and attributes instead of just flipping `is_current` and `effective_end_date`.
 
 # COMMAND ----------
 
 # EXERCISE_KEY: merge_ex8
-# Step 1: Expire existing records that have updates
+# Canonical SCD Type 2: single atomic MERGE via staging union.
+# The staging subquery emits one row per "expire" action and one row per "insert new current" action.
+# Change detection uses `<=>` (null-safe equality) so NULL -> value transitions are caught.
 spark.sql(f"""
     MERGE INTO {CATALOG}.{SCHEMA}.merge_ex8_target t
-    USING {CATALOG}.{SCHEMA}.merge_ex8_source s
-    ON t.customer_id = s.customer_id AND t.is_current = true
+    USING (
+        -- Changed rows: real key -> matches current target -> triggers UPDATE (expire)
+        SELECT s.customer_id AS mergeKey, s.*
+        FROM {CATALOG}.{SCHEMA}.merge_ex8_source s
+        JOIN {CATALOG}.{SCHEMA}.merge_ex8_target t
+          ON s.customer_id = t.customer_id AND t.is_current = true
+        WHERE NOT (s.name   <=> t.name)
+           OR NOT (s.email  <=> t.email)
+           OR NOT (s.region <=> t.region)
+           OR NOT (s.tier   <=> t.tier)
+
+        UNION ALL
+
+        -- Changed + brand-new rows: NULL key -> never matches -> triggers INSERT
+        SELECT NULL AS mergeKey, s.*
+        FROM {CATALOG}.{SCHEMA}.merge_ex8_source s
+        LEFT JOIN {CATALOG}.{SCHEMA}.merge_ex8_target t
+          ON s.customer_id = t.customer_id AND t.is_current = true
+        WHERE t.customer_id IS NULL
+           OR NOT (s.name   <=> t.name)
+           OR NOT (s.email  <=> t.email)
+           OR NOT (s.region <=> t.region)
+           OR NOT (s.tier   <=> t.tier)
+    ) staged
+    ON t.customer_id = staged.mergeKey AND t.is_current = true
     WHEN MATCHED THEN UPDATE SET
         is_current = false,
         effective_end_date = current_date()
+    WHEN NOT MATCHED THEN INSERT
+        (customer_id, name, email, region, tier,
+         is_current, effective_start_date, effective_end_date)
+        VALUES (staged.customer_id, staged.name, staged.email, staged.region, staged.tier,
+                true, current_date(), DATE '9999-12-31')
 """)
 
-# Step 2: Insert new current versions for ALL source customers
-spark.sql(f"""
-    INSERT INTO {CATALOG}.{SCHEMA}.merge_ex8_target
-    SELECT customer_id, name, email, region, tier,
-           true AS is_current,
-           current_date() AS effective_start_date,
-           DATE '9999-12-31' AS effective_end_date
-    FROM {CATALOG}.{SCHEMA}.merge_ex8_source
-""")
+# Alternative (simpler, not atomic): two statements with change detection.
+# spark.sql(f"""
+#     MERGE INTO {CATALOG}.{SCHEMA}.merge_ex8_target t
+#     USING {CATALOG}.{SCHEMA}.merge_ex8_source s
+#     ON t.customer_id = s.customer_id AND t.is_current = true
+#     WHEN MATCHED AND (
+#         NOT (s.name <=> t.name) OR NOT (s.email <=> t.email)
+#         OR NOT (s.region <=> t.region) OR NOT (s.tier <=> t.tier)
+#     ) THEN UPDATE SET is_current = false, effective_end_date = current_date()
+# """)
+# spark.sql(f"""
+#     INSERT INTO {CATALOG}.{SCHEMA}.merge_ex8_target
+#     SELECT s.customer_id, s.name, s.email, s.region, s.tier,
+#            true, current_date(), DATE '9999-12-31'
+#     FROM {CATALOG}.{SCHEMA}.merge_ex8_source s
+#     LEFT JOIN {CATALOG}.{SCHEMA}.merge_ex8_target t
+#       ON s.customer_id = t.customer_id AND t.is_current = true
+#     WHERE t.customer_id IS NULL
+# """)
 
 # COMMAND ----------
 # MAGIC %md
