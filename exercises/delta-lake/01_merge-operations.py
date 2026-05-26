@@ -79,7 +79,8 @@ df.show()
 
 # COMMAND ----------
 
-
+# MAGIC %sql
+# MAGIC SELECT * FROM merge_ex1_target
 
 # COMMAND ----------
 
@@ -551,6 +552,102 @@ spark.read.table("merge_ex8_target").show()
 
 # COMMAND ----------
 
+# MAGIC %sql
+# MAGIC DROP TABLE merge_ex8_target_copy;
+# MAGIC DROP TABLE merge_ex8_source_copy;
+
+# COMMAND ----------
+
+# MAGIC %sql
+# MAGIC CREATE TABLE merge_ex8_target_copy CLONE merge_ex8_target;
+# MAGIC CREATE TABLE merge_ex8_source_copy CLONE merge_ex8_source
+
+# COMMAND ----------
+
+# MAGIC %sql
+# MAGIC SELECT current_date
+
+# COMMAND ----------
+
+# MAGIC %sql
+# MAGIC    SELECT s1.customer_id AS mergeKey, s1.* FROM merge_ex8_source_copy s1 
+# MAGIC     LEFT JOIN merge_ex8_target_copy tgt ON s1.customer_id = tgt.customer_id  AND tgt.is_current = true
+# MAGIC     WHERE tgt.customer_id IS NULL  
+# MAGIC            OR NOT (s1.name   <=> tgt.name)
+# MAGIC            OR NOT (s1.email  <=> tgt.email)
+# MAGIC            OR NOT (s1.region <=> tgt.region)
+# MAGIC            OR NOT (s1.tier   <=> tgt.tier)
+# MAGIC
+# MAGIC
+# MAGIC
+# MAGIC     UNION ALL
+# MAGIC
+# MAGIC     --updated rows
+# MAGIC     SELECT NULL AS mergeKey, s11.* FROM merge_ex8_source_copy s11
+# MAGIC     LEFT JOIN merge_ex8_target_copy tgt2 ON s11.customer_id = tgt2.customer_id AND tgt2.is_current = true
+# MAGIC     WHERE tgt2.customer_id IS NULL 
+# MAGIC            OR NOT (s11.name   <=> tgt2.name)
+# MAGIC            OR NOT (s11.email  <=> tgt2.email)
+# MAGIC            OR NOT (s11.region <=> tgt2.region)
+# MAGIC            OR NOT (s11.tier   <=> tgt2.tier)
+
+# COMMAND ----------
+
+# MAGIC %sql
+# MAGIC SELECT * FROM merge_ex8_target_copy
+
+# COMMAND ----------
+
+# MAGIC %sql
+# MAGIC
+# MAGIC MERGE INTO merge_ex8_target_copy tgt USING (
+# MAGIC
+# MAGIC     -- completely new records
+# MAGIC     SELECT s1.customer_id AS mergeKey, s1.* FROM merge_ex8_source_copy s1 
+# MAGIC     JOIN merge_ex8_target_copy tgt ON s1.customer_id = tgt.customer_id  AND tgt.is_current = true
+# MAGIC     WHERE --1=1--tgt.customer_id IS NULL  
+# MAGIC            NOT (s1.name   <=> tgt.name)
+# MAGIC            OR NOT (s1.email  <=> tgt.email)
+# MAGIC            OR NOT (s1.region <=> tgt.region)
+# MAGIC            OR NOT (s1.tier   <=> tgt.tier)
+# MAGIC
+# MAGIC     UNION ALL
+# MAGIC
+# MAGIC     --updated rows
+# MAGIC     SELECT NULL AS mergeKey, s11.* FROM merge_ex8_source_copy s11
+# MAGIC     LEFT JOIN merge_ex8_target_copy tgt2 ON s11.customer_id = tgt2.customer_id AND tgt2.is_current = true
+# MAGIC     WHERE tgt2.customer_id IS NULL 
+# MAGIC            OR NOT (s11.name   <=> tgt2.name)
+# MAGIC            OR NOT (s11.email  <=> tgt2.email)
+# MAGIC            OR NOT (s11.region <=> tgt2.region)
+# MAGIC            OR NOT (s11.tier   <=> tgt2.tier)
+# MAGIC         
+# MAGIC ) src
+# MAGIC ON tgt.customer_id = src.mergeKey AND tgt.is_current = true
+# MAGIC
+# MAGIC WHEN MATCHED-- AND tgt.is_current = true
+# MAGIC     THEN
+# MAGIC UPDATE SET 
+# MAGIC         tgt.is_current = false,
+# MAGIC         tgt.effective_end_date = current_date()
+# MAGIC
+# MAGIC
+# MAGIC WHEN NOT MATCHED THEN 
+# MAGIC     INSERT (tgt.customer_id, tgt.name, tgt.email, tgt.region, tgt.tier, tgt.is_current, tgt.effective_start_date, tgt.effective_end_date) 
+# MAGIC     VALUES (
+# MAGIC         src.customer_id,
+# MAGIC         src.name,
+# MAGIC         src.email,
+# MAGIC         src.region,
+# MAGIC         src.tier,
+# MAGIC         true,
+# MAGIC         current_date(),
+# MAGIC         DATE '9999-12-31'
+# MAGIC     )
+# MAGIC
+
+# COMMAND ----------
+
 # EXERCISE_KEY: merge_ex8
 # TODO: Write your solution here
 
@@ -560,7 +657,9 @@ spark.read.table("merge_ex8_target").show()
 # COMMAND ----------
 
 # Validate Exercise 8
-result = spark.table(f"{CATALOG}.{SCHEMA}.merge_ex8_target")
+CATALOG = "db_code"
+SCHEMA = "merge_operations"
+result = spark.table(f"{CATALOG}.{SCHEMA}.merge_ex8_target_copy")
 
 assert result.count() == 6, f"Expected 6 rows, got {result.count()}"
 assert result.filter("is_current = true").count() == 4, \
