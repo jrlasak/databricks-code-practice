@@ -4,14 +4,14 @@
 
 ## Author
 
-<img src="https://dataengineer.wiki/download/profilepicture.jpg" alt="Jakub Lasak" width="80" style="border-radius: 50%;" />
+<img src="https://dataengineer.wiki/download/profilepicture.jpg?utm_source=github&utm_medium=readme&utm_campaign=databricks-code-practice" alt="Jakub Lasak" width="80" style="border-radius: 50%;" />
 
-**Jakub Lasak** — Helping you interview like seniors, execute like seniors, and think like seniors.
+**Jakub Lasak** - Helping you interview like seniors, execute like seniors, and think like seniors.
 
 - 🔗 [LinkedIn](https://www.linkedin.com/in/jrlasak/) - Databricks projects and tips
-- 📬 [Substack Newsletter](https://dataengineer.wiki/substack) - Exclusive content for Data Engineers
-- 🌐 [DataEngineer.wiki](http://dataengineer.wiki/) - Training materials and resources
-- 🚀 [More Practice Labs](https://dataengineer.wiki/projects) - Delta Live Tables, table optimization, and more
+- 📬 [Substack Newsletter](https://dataengineer.wiki/substack?utm_source=github&utm_medium=readme&utm_campaign=databricks-code-practice) - Exclusive content for Data Engineers
+- 🌐 [DataEngineer.wiki](https://dataengineer.wiki/?utm_source=github&utm_medium=readme&utm_campaign=databricks-code-practice) - Training materials and resources
+- 🚀 [More Practice Labs](https://dataengineer.wiki/projects?utm_source=github&utm_medium=readme&utm_campaign=databricks-code-practice) - Delta Live Tables, table optimization, and more
 
 ## 1. Context and Goal
 

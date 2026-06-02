@@ -4,14 +4,14 @@
 
 ### Author
 
-<img src="https://dataengineer.wiki/download/profilepicture.jpg" alt="Jakub Lasak" width="80" style="border-radius: 50%;" />
+<img src="https://dataengineer.wiki/download/profilepicture.jpg?utm_source=github&utm_medium=readme&utm_campaign=databricks-code-practice" alt="Jakub Lasak" width="80" style="border-radius: 50%;" />
 
-**Jakub Lasak** — Helping you interview like seniors, execute like seniors, and think like seniors.
+**Jakub Lasak** - Helping you interview like seniors, execute like seniors, and think like seniors.
 
 - 🔗 [LinkedIn](https://www.linkedin.com/in/jrlasak/) - Databricks projects and tips
-- 📬 [Substack Newsletter](https://dataengineer.wiki/substack) - Exclusive content for Data Engineers
-- 🌐 [DataEngineer.wiki](http://dataengineer.wiki/) - Training materials and resources
-- 🚀 [More Practice Labs](https://dataengineer.wiki/projects) - Delta Live Tables, table optimization, and more
+- 📬 [Substack Newsletter](https://dataengineer.wiki/substack?utm_source=github&utm_medium=readme&utm_campaign=databricks-code-practice) - Exclusive content for Data Engineers
+- 🌐 [DataEngineer.wiki](https://dataengineer.wiki/?utm_source=github&utm_medium=readme&utm_campaign=databricks-code-practice) - Training materials and resources
+- 🚀 [More Practice Labs](https://dataengineer.wiki/projects?utm_source=github&utm_medium=readme&utm_campaign=databricks-code-practice) - Delta Live Tables, table optimization, and more
 
 ### Project Overview
 
@@ -24,7 +24,7 @@ This project is a comprehensive, hands-on lab designed to prepare you for the **
 Passing a certification exam requires more than just memorizing documentation. It requires understanding _how_ and _why_ specific tools and techniques are used in practice. This project bridges that gap by providing:
 
 - **A Realistic Scenario:** You aren't just running random code snippets. You are building a complete solution from raw data to valuable business insights, following the industry-standard Medallion Architecture.
-- **Purposeful Complexity:** The project is intentionally designed to include common data engineering challenges. The synthetic data generator creates **data skew**—a frequent source of performance bottlenecks—which you will diagnose and solve.
+- **Purposeful Complexity:** The project is intentionally designed to include common data engineering challenges. The synthetic data generator creates **data skew** - a frequent source of performance bottlenecks - which you will diagnose and solve.
 - **Comprehensive Certification Coverage:** The pipeline is carefully crafted to touch upon topics from all major sections of the certification exam, from Spark architecture and the DataFrame API to Structured Streaming and performance tuning.
 - **Serverless-Ready Code:** The entire project is designed to run on the **Databricks Free Community Edition**, which means you can complete it without any cost, while learning to work within the constraints of a modern, serverless Spark environment.
 
@@ -55,7 +55,7 @@ This project provides practical, hands-on experience covering the majority of th
 #### **Section 1: Apache Spark Architecture and Components**
 
 - You will see the entire **execution hierarchy** in action (transformations are defined, and actions trigger jobs).
-- The pipeline demonstrates **lazy evaluation**—the entire plan is built before any data is processed.
+- The pipeline demonstrates **lazy evaluation** - the entire plan is built before any data is processed.
 - You will use key features from multiple Spark Modules, including **Spark SQL**, **DataFrames**, **Structured Streaming**, and the **Pandas API on Spark**.
 
 #### **Section 2: Using Spark SQL**

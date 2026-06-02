@@ -3,7 +3,7 @@
 ## ⚠️ Consistency Note: Use `variables.py` for Paths and Names
 
 To ensure consistency across all scripts and notebooks, **import and use the variables defined in `lab/variables.py`**. This file contains all catalog, schema, and volume names, as well as key data paths.
-**Do not hardcode catalog, schema, or path names**—always reference the variables.
+**Do not hardcode catalog, schema, or path names** - always reference the variables.
 
 ## I. Getting Started
 

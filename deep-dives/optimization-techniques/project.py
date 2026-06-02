@@ -254,7 +254,7 @@ df_raw.where(
 # MAGIC %md
 # MAGIC ## Technique 2: Z-Order
 # MAGIC
-# MAGIC Z-Ordering re-writes data files using a multi-dimensional space-filling curve (Z-order) so rows with similar values for selected columns co-locate. Think of it like organizing a library so related books (rows) live on the same shelf (file) — Spark can then skip whole shelves.
+# MAGIC Z-Ordering re-writes data files using a multi-dimensional space-filling curve (Z-order) so rows with similar values for selected columns co-locate. Think of it like organizing a library so related books (rows) live on the same shelf (file) - Spark can then skip whole shelves.
 # MAGIC
 # MAGIC ### What It Solves
 # MAGIC - Improves data skipping without exploding partition counts
@@ -329,7 +329,7 @@ delta_table.optimize().executeZOrderBy("country", "customer_id", "product_id")
 # MAGIC %md
 # MAGIC ## Technique 3: Liquid Clustering
 # MAGIC
-# MAGIC Liquid Clustering dynamically reorganizes data based on query patterns, adapting to your workload without manual tuning. It decouples logical clustering from static partitions — Databricks maintains clustering as data evolves, avoiding rigid directory hierarchies while still enabling data skipping.
+# MAGIC Liquid Clustering dynamically reorganizes data based on query patterns, adapting to your workload without manual tuning. It decouples logical clustering from static partitions - Databricks maintains clustering as data evolves, avoiding rigid directory hierarchies while still enabling data skipping.
 # MAGIC
 # MAGIC ### Advantages vs Partitioning / Z-Order
 # MAGIC - Adaptive: automatically reorganizes incremental data
@@ -467,7 +467,7 @@ spark.sql(f"DESCRIBE DETAIL {tbl('to_compact')}").select("numFiles").show()
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC Execute `OPTIMIZE` (compaction only — no Z-order here).
+# MAGIC Execute `OPTIMIZE` (compaction only - no Z-order here).
 
 # COMMAND ----------
 

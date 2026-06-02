@@ -15,10 +15,10 @@ Clone once, import into Databricks, pick a folder. Exercises fail loud until you
 **Jakub Lasak** - Databricks Data Engineer. Helping you interview like seniors, execute like seniors, and think like seniors.
 
 - [LinkedIn](https://www.linkedin.com/in/jrlasak/) (13.5K followers) - Databricks projects and tips
-- [Substack](https://dataengineer.wiki/substack) - Newsletter for data engineers
-- [DataEngineer.wiki](https://dataengineer.wiki) - Cheat sheets, learning paths, cert guides
+- [Substack](https://dataengineer.wiki/substack?utm_source=github&utm_medium=readme&utm_campaign=databricks-code-practice) - Newsletter for data engineers
+- [DataEngineer.wiki](https://dataengineer.wiki?utm_source=github&utm_medium=readme&utm_campaign=databricks-code-practice) - Cheat sheets, learning paths, cert guides
 
-> **Prepping for interviews?** Writing code is one half of the battle - knowing the questions that actually come up is the other. I maintain [Databricks Interview Cheat Sheets](https://dataengineer.wiki/products) by seniority level (junior / mid / senior / bundle).
+> **Prepping for interviews?** Writing code is one half of the battle - knowing the questions that actually come up is the other. I maintain [Databricks Interview Cheat Sheets](https://dataengineer.wiki/products?utm_source=github&utm_medium=readme&utm_campaign=databricks-code-practice) by seniority level (junior / mid / senior / bundle).
 
 ## What's Inside
 
@@ -47,12 +47,13 @@ Fluency comes from reps, not reading. Three structured paths:
 | ----------------------------------- | --------- | --------- | ------------------------------------------------------------------------------------------------------------------------------------ |
 | [Delta Lake](exercises/delta-lake/) | 6         | 51        | MERGE operations, time travel, schema enforcement, OPTIMIZE, liquid clustering, change data feed                                     |
 | [ELT](exercises/elt/)               | 7         | 53        | Spark SQL joins, window functions, PySpark transformations, Auto Loader, batch ingestion, medallion architecture, complex data types |
+| [Streaming](exercises/streaming/)   | 6         | 45        | Structured Streaming basics, windowed aggregations & watermarks, stream-static joins, stream-stream joins, foreachBatch patterns, checkpointing & recovery |
 
-**Total: 13 notebooks, 104 exercises**
+**Total: 19 notebooks, 149 exercises**
 
 <!-- TOPICS-END -->
 
-More exercise topics coming - next up: Streaming, Unity Catalog, Performance, and DLT.
+More exercise topics coming - next up: Unity Catalog, Performance, and DLT.
 
 ### Pipeline Labs (`pipeline-labs/`)
 
@@ -84,14 +85,14 @@ Everything runs on Free Edition: serverless compute, Unity Catalog, Delta Lake. 
 ## Which Should I Start With?
 
 - **New to Databricks?** Start with [DE Associate Cert Prep](pipeline-labs/de-associate-cert-prep/) - broadest fundamentals.
-- **Want quick reps on a specific concept?** [Delta Lake exercises](exercises/delta-lake/) or [ELT exercises](exercises/elt/) - drill one concept at a time.
-- **Comfortable with batch, new to streaming?** [Apparel DLT](pipeline-labs/apparel-streaming/), then [Fintech Monitoring](pipeline-labs/fintech-monitoring/).
+- **Want quick reps on a specific concept?** [Delta Lake exercises](exercises/delta-lake/), [ELT exercises](exercises/elt/), or [Streaming exercises](exercises/streaming/) - drill one concept at a time.
+- **Comfortable with batch, new to streaming?** Start with [Streaming exercises](exercises/streaming/) for atomic concept drills, then [Apparel DLT](pipeline-labs/apparel-streaming/) and [Fintech Monitoring](pipeline-labs/fintech-monitoring/) for end-to-end pipelines.
 - **Preparing for a cert?** [DE Associate](pipeline-labs/de-associate-cert-prep/) or [Spark Developer Associate](pipeline-labs/pyspark-cert-zenith/).
 - **Already shipping pipelines, want to go deeper on performance?** [Delta Optimization Techniques](deep-dives/optimization-techniques/).
 
 ## Stay in the Loop
 
-New exercises and labs ship regularly. Follow on [LinkedIn](https://www.linkedin.com/in/jrlasak/) or subscribe to the [Substack newsletter](https://dataengineer.wiki/substack) to be notified when new content drops.
+New exercises and labs ship regularly. Follow on [LinkedIn](https://www.linkedin.com/in/jrlasak/) or subscribe to the [Substack newsletter](https://dataengineer.wiki/substack?utm_source=github&utm_medium=readme&utm_campaign=databricks-code-practice) to be notified when new content drops.
 
 ## Feedback
 

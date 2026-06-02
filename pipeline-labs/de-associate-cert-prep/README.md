@@ -4,17 +4,17 @@
 
 ## Author
 
-<img src="https://dataengineer.wiki/download/profilepicture.jpg" alt="Jakub Lasak" width="80" style="border-radius: 50%;" />
+<img src="https://dataengineer.wiki/download/profilepicture.jpg?utm_source=github&utm_medium=readme&utm_campaign=databricks-code-practice" alt="Jakub Lasak" width="80" style="border-radius: 50%;" />
 
-**Jakub Lasak** — Helping you interview like seniors, execute like seniors, and think like seniors.
+**Jakub Lasak** - Helping you interview like seniors, execute like seniors, and think like seniors.
 
 - 🔗 [LinkedIn](https://www.linkedin.com/in/jrlasak/) - Databricks projects and tips
-- 📬 [Substack Newsletter](https://dataengineer.wiki/substack) - Exclusive content for Data Engineers
-- 🌐 [DataEngineer.wiki](http://dataengineer.wiki/) - Training materials and resources
-- 🚀 [More Practice Labs](https://dataengineer.wiki/projects) - Delta Live Tables, table optimization, and more
+- 📬 [Substack Newsletter](https://dataengineer.wiki/substack?utm_source=github&utm_medium=readme&utm_campaign=databricks-code-practice) - Exclusive content for Data Engineers
+- 🌐 [DataEngineer.wiki](https://dataengineer.wiki/?utm_source=github&utm_medium=readme&utm_campaign=databricks-code-practice) - Training materials and resources
+- 🚀 [More Practice Labs](https://dataengineer.wiki/projects?utm_source=github&utm_medium=readme&utm_campaign=databricks-code-practice) - Delta Live Tables, table optimization, and more
 
 > **Looking for more info on passing the Databricks Data Engineer Associate Certification exam?**  
-> Check out helpful resources including YouTube videos and official Databricks courses at [dataengineer.wiki/certifications/data-engineer-associate](https://dataengineer.wiki/certifications/data-engineer-associate).
+> Check out helpful resources including YouTube videos and official Databricks courses at [dataengineer.wiki/certifications/data-engineer-associate](https://dataengineer.wiki/certifications/data-engineer-associate?utm_source=github&utm_medium=readme&utm_campaign=databricks-code-practice).
 
 ## High-Level Overview
 
@@ -54,7 +54,7 @@ This lab is structured to cover the key topics outlined in [the official Databri
 
 ## Additional Exam Topics
 
-This lab focuses on core data engineering workflows. If you want to practice additional exam topics such as **Delta Live Tables (DLT) pipelines** or **Delta table optimization techniques**, check out my other hands-on labs at [dataengineer.wiki/projects](https://dataengineer.wiki/projects/).
+This lab focuses on core data engineering workflows. If you want to practice additional exam topics such as **Delta Live Tables (DLT) pipelines** or **Delta table optimization techniques**, check out my other hands-on labs at [dataengineer.wiki/projects](https://dataengineer.wiki/projects/?utm_source=github&utm_medium=readme&utm_campaign=databricks-code-practice).
 
 ## Get 50% Off Your Certification
 

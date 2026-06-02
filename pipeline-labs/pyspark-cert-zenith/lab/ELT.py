@@ -324,7 +324,7 @@ print("Silver Layer: Pandas UDF `categorize_region` created.")
 # MAGIC ---
 # MAGIC ### 🎯 TASK 5: Create `silver_sessionized_activity` Streaming Table
 # MAGIC
-# MAGIC **Why:** Transforms noisy raw events into a de-duplicated, enriched activity fact set combining product, customer, temporal, and derived region context—shaping data into a form suited for consistent business aggregation without re-implementing joins each time.
+# MAGIC **Why:** Transforms noisy raw events into a de-duplicated, enriched activity fact set combining product, customer, temporal, and derived region context - shaping data into a form suited for consistent business aggregation without re-implementing joins each time.
 # MAGIC
 # MAGIC **End Goal:** A single conformed Silver table (`silver_sessionized_activity`) that is the authoritative behavioral dataset powering all Gold-layer KPIs.
 # MAGIC
