@@ -2,11 +2,9 @@
 
 ### Get fluent in Databricks by typing, not watching.
 
-**104 exercises + 5 production-grade pipeline labs. All on Databricks Free Edition.**
+**149 exercises, 4 production-grade pipeline labs, and 2 deep-dives. All on Databricks Free Edition.**
 
 Clone once, import into Databricks, pick a folder. Exercises fail loud until your code is right; labs ship with synthetic data so you build production-style pipelines, not toy ones.
-
-> **New (18 April 2026):** 5 full-scale pipeline labs + 1 benchmark deep-dive just landed. If you starred this repo for the exercises, they're still here - now alongside end-to-end project work.
 
 ---
 
@@ -26,16 +24,16 @@ Fluency comes from reps, not reading. Three structured paths:
 
 - **`exercises/`** - focused reps on a single concept. LeetCode-style, 5-30 min each.
 - **`pipeline-labs/`** - end-to-end medallion pipelines on a business scenario. 2-3 hours each.
-- **`deep-dives/`** - measure the impact of a technique with numbers. 1-2 hours each.
+- **`deep-dives/`** - go deep on a single topic, hands-on, end to end. 1-3 hours each.
 
 |               | Exercises                                  | Pipeline Labs                                                    | Deep-Dives                                              |
 | ------------- | ------------------------------------------ | ---------------------------------------------------------------- | ------------------------------------------------------- |
 | **Format**    | Single notebook, one TODO per exercise     | Multi-notebook guided project                                    | Single-topic deep investigation                         |
-| **Time**      | 5-30 min per exercise                      | 2-3 hours per lab                                                | 1-2 hours                                               |
-| **Scope**     | One concept (MERGE, window functions, ...) | End-to-end project (ingestion -> bronze -> silver -> gold)       | One topic measured in depth                             |
-| **Narrative** | None. "Given table X, write..."            | Business scenario. "You're building a streaming pipeline for..." | Benchmark-driven. "Apply technique, measure the delta." |
+| **Time**      | 5-30 min per exercise                      | 2-3 hours per lab                                                | 1-3 hours                                               |
+| **Scope**     | One concept (MERGE, window functions, ...) | End-to-end project (ingestion -> bronze -> silver -> gold)       | One topic, hands-on in depth                            |
+| **Narrative** | None. "Given table X, write..."            | Business scenario. "You're building a streaming pipeline for..." | Focused. "Go deep on one topic, end to end."            |
 | **Order**     | Pick any, skip around                      | Sequential notebooks that build on each other                    | Sequential; each step layers on the last                |
-| **Goal**      | Drill a skill until it's automatic         | See how concepts fit in a real project                           | Prove what a technique actually buys you                |
+| **Goal**      | Drill a skill until it's automatic         | See how concepts fit in a real project                           | Build real, hands-on command of one topic               |
 
 ## Catalog
 
@@ -68,11 +66,12 @@ Multi-notebook, end-to-end medallion pipelines with a business scenario. Each ru
 
 ### Deep-Dives (`deep-dives/`)
 
-Single-topic labs that measure the impact of a technique with numbers, not intuition.
+Single-topic labs that go deep on one technique or capability - hands-on, end to end.
 
 | Lab                                                                    | What You Build                                                                              | Focus                                                                     |
 | ---------------------------------------------------------------------- | ------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------- |
 | [6 Delta Optimization Techniques](deep-dives/optimization-techniques/) | Iteratively apply and measure core Delta performance levers on a synthetic 50M-row dataset. | Partitioning, Z-Order, OPTIMIZE, Auto Optimize, Liquid Clustering, VACUUM |
+| [Build a Genie Space](deep-dives/genie-sales-analytics/) | Stand up and tune a production Databricks Genie space on a retail star schema, then benchmark its natural-language answer accuracy against ground-truth SQL. | Genie, Unity Catalog Functions, Star Schema, Benchmarking, AI/BI Dashboards |
 
 ## How to Use
 
@@ -89,10 +88,18 @@ Everything runs on Free Edition: serverless compute, Unity Catalog, Delta Lake. 
 - **Comfortable with batch, new to streaming?** Start with [Streaming exercises](exercises/streaming/) for atomic concept drills, then [Apparel DLT](pipeline-labs/apparel-streaming/) and [Fintech Monitoring](pipeline-labs/fintech-monitoring/) for end-to-end pipelines.
 - **Preparing for a cert?** [DE Associate](pipeline-labs/de-associate-cert-prep/) or [Spark Developer Associate](pipeline-labs/pyspark-cert-zenith/).
 - **Already shipping pipelines, want to go deeper on performance?** [Delta Optimization Techniques](deep-dives/optimization-techniques/).
+- **Want to ship natural-language analytics (Genie / AI/BI)?** [Build a Genie Space](deep-dives/genie-sales-analytics/) - connect Genie to a star schema, benchmark its accuracy, embed it in a dashboard.
 
 ## Stay in the Loop
 
 New exercises and labs ship regularly. Follow on [LinkedIn](https://www.linkedin.com/in/jrlasak/) or subscribe to the [Substack newsletter](https://dataengineer.wiki/substack?utm_source=github&utm_medium=readme&utm_campaign=databricks-code-practice) to be notified when new content drops.
+
+## Changelog
+
+- **3 June 2026** - New deep-dive: [Build a Genie Space](deep-dives/genie-sales-analytics/) - natural-language analytics on a retail star schema, with a regression benchmark and an embedded AI/BI dashboard.
+- **2 June 2026** - New exercise topic: [Streaming](exercises/streaming/) - 45 LeetCode-style reps across 6 notebooks (Structured Streaming, watermarks, stream-static & stream-stream joins, foreachBatch, checkpointing).
+- **18 April 2026** - Consolidated into one repo: 4 pipeline labs and the first deep-dive (Delta optimization) joined the original Delta Lake + ELT exercises.
+- **7 April 2026** - Initial release: Delta Lake + ELT exercises.
 
 ## Feedback
 

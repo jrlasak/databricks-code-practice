@@ -11,7 +11,7 @@
 - 🔗 [LinkedIn](https://www.linkedin.com/in/jrlasak/) - Databricks projects and tips
 - 📬 [Substack Newsletter](https://dataengineer.wiki/substack?utm_source=github&utm_medium=readme&utm_campaign=databricks-code-practice) - Exclusive content for Data Engineers
 - 🌐 [DataEngineer.wiki](https://dataengineer.wiki/?utm_source=github&utm_medium=readme&utm_campaign=databricks-code-practice) - Training materials and resources
-- 🚀 [More Practice Labs](https://dataengineer.wiki/projects?utm_source=github&utm_medium=readme&utm_campaign=databricks-code-practice) - Delta Live Tables, table optimization, and more
+- 🚀 [More Practice Labs](https://github.com/jrlasak/databricks-code-practice) - more pipeline labs, deep-dives, and exercises in this repo
 
 ## 1. Context and Goal
 

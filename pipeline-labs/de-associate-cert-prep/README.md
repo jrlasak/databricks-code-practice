@@ -11,7 +11,7 @@
 - 🔗 [LinkedIn](https://www.linkedin.com/in/jrlasak/) - Databricks projects and tips
 - 📬 [Substack Newsletter](https://dataengineer.wiki/substack?utm_source=github&utm_medium=readme&utm_campaign=databricks-code-practice) - Exclusive content for Data Engineers
 - 🌐 [DataEngineer.wiki](https://dataengineer.wiki/?utm_source=github&utm_medium=readme&utm_campaign=databricks-code-practice) - Training materials and resources
-- 🚀 [More Practice Labs](https://dataengineer.wiki/projects?utm_source=github&utm_medium=readme&utm_campaign=databricks-code-practice) - Delta Live Tables, table optimization, and more
+- 🚀 [More Practice Labs](https://github.com/jrlasak/databricks-code-practice) - more pipeline labs, deep-dives, and exercises in this repo
 
 > **Looking for more info on passing the Databricks Data Engineer Associate Certification exam?**  
 > Check out helpful resources including YouTube videos and official Databricks courses at [dataengineer.wiki/certifications/data-engineer-associate](https://dataengineer.wiki/certifications/data-engineer-associate?utm_source=github&utm_medium=readme&utm_campaign=databricks-code-practice).
@@ -54,7 +54,7 @@ This lab is structured to cover the key topics outlined in [the official Databri
 
 ## Additional Exam Topics
 
-This lab focuses on core data engineering workflows. If you want to practice additional exam topics such as **Delta Live Tables (DLT) pipelines** or **Delta table optimization techniques**, check out my other hands-on labs at [dataengineer.wiki/projects](https://dataengineer.wiki/projects/?utm_source=github&utm_medium=readme&utm_campaign=databricks-code-practice).
+This lab focuses on core data engineering workflows. If you want to practice additional exam topics such as **Delta Live Tables (DLT) pipelines** or **Delta table optimization techniques**, check out the other hands-on labs in this repo - the [Apparel DLT pipeline](../apparel-streaming/) and the [Delta Optimization deep-dive](../../deep-dives/optimization-techniques/).
 
 ## Get 50% Off Your Certification
 
