@@ -1,7 +1,7 @@
 # Databricks notebook source
 # MAGIC %md
 # MAGIC # 01 - Setup Tables
-# MAGIC Creates the `aurora_retail` catalog, the `sales` schema, and the 7 tables of a clean
+# MAGIC Creates the `bramblepeak_retail` catalog, the `sales` schema, and the 7 tables of a clean
 # MAGIC **retail sales star schema** - with rich Unity Catalog column comments. Those comments are
 # MAGIC the single biggest lever on Genie accuracy: Genie reads them before it writes any SQL.
 # MAGIC

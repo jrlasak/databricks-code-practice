@@ -34,7 +34,7 @@ Every Genie answer can show its work. This is the most important habit in the wh
    **Question**, Genie usually reuses that query's SQL almost verbatim. If the SQL looks nothing like your
    certified query, that's a signal the Instructions/Question text didn't route it.
 3. **Re-run the SQL yourself.** Genie shows the SQL it ran - paste it into a SQL editor or notebook cell
-   against `aurora_retail.sales` and confirm the numbers match. This is how you prove an answer.
+   against `bramblepeak_retail.sales` and confirm the numbers match. This is how you prove an answer.
 4. **Watch which table it read.** For regional questions, confirm the SQL joined `dim_store` (not
    `dim_customer`) for region - the #1 thing to catch in this dataset.
 

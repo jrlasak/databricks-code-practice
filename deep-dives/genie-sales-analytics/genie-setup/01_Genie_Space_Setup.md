@@ -1,4 +1,4 @@
-# Genie Space Setup - Aurora Sales Assistant
+# Genie Space Setup - Bramblepeak Sales Assistant
 
 Step-by-step build of a production-grade Genie space on top of the star schema you just created.
 Pick up here once `00_Run_All` finished and all 7 tables are populated.
@@ -28,7 +28,7 @@ all run on the Serverless Starter Warehouse).
 | `sales_targets`        | region × month    | `region`, `year_month`, `revenue_target`                                                        |
 | `performance_insights` | ranked driver     | `region`, `year_month`, `rank`, `driver_type`, `insight`                                        |
 
-Full namespace prefix: `aurora_retail.sales.` - column names are clean `snake_case`, so **no backticks anywhere**.
+Full namespace prefix: `bramblepeak_retail.sales.` - column names are clean `snake_case`, so **no backticks anywhere**.
 
 ---
 
@@ -38,7 +38,7 @@ Free Edition leads with **Connect your data** before you name the space.
 
 1. In the Databricks left sidebar, click **Genie Spaces**.
 2. Click **New** in the top-right corner.
-3. The **Connect your data** dialog opens. Navigate the breadcrumb: **All catalogs → `aurora_retail` → `sales`**.
+3. The **Connect your data** dialog opens. Navigate the breadcrumb: **All catalogs → `bramblepeak_retail` → `sales`**.
    You should see all 7 tables:
    - `dim_customer`
    - `dim_date`
@@ -77,13 +77,13 @@ The About tab has fields for **Name**, **Tags**, **Thumbnail**, **Description**,
 Genie pre-fills a suggested description and several suggested common questions; you can **Accept** each
 suggestion or click the **pencil** icon to edit. Tags and Thumbnail are optional - skip them.
 
-- **Name**: `Aurora Sales Assistant`
+- **Name**: `Bramblepeak Sales Assistant`
 - **Description**: Genie's auto-suggestion is usually close (something like "this space enables analysis
   of retail sales performance by region, product, category, and channel…"). If you'd rather pin it down,
   click the pencil and replace with:
 
   ```text
-  AI assistant for Aurora Outfitters retail sales. Answers questions about revenue, margin, target attainment, regional and channel performance, top products, and pricing what-ifs.
+  AI assistant for Bramblepeak Outfitters retail sales. Answers questions about revenue, margin, target attainment, regional and channel performance, top products, and pricing what-ifs.
   ```
 - **Common questions**: come back to this at **§ 8** below - once SQL Queries and functions exist, the
   curated set there is what we want. For now you can Accept any of Genie's auto-suggestions that look
@@ -100,11 +100,11 @@ prompt template, clear it. Paste the block below in its place and click **Save**
 This is the single most important artifact in the whole setup. Iterate it whenever Genie misreads a question.
 
 ```
-You are a sales analyst assistant for Aurora Outfitters, a US omnichannel outdoor and lifestyle
+You are a sales analyst assistant for Bramblepeak Outfitters, a US omnichannel outdoor and lifestyle
 retailer. Answer questions about revenue, margin, target attainment, regional and channel performance,
 top products, and pricing what-ifs.
 
-CURRENT MONTH: "this month" = (SELECT MAX(year_month) FROM aurora_retail.sales.dim_date). Never
+CURRENT MONTH: "this month" = (SELECT MAX(year_month) FROM bramblepeak_retail.sales.dim_date). Never
 hardcode a year-month string. "Last month" = the second-most-recent month.
 
 REGION: for sales / revenue / channel reporting, region means dim_store.region (the store's region).
@@ -205,7 +205,7 @@ Fill **Code**, **Synonyms**, and **Instructions** for each.
 > **No "current month" filter expression on purpose.** A SQL Expression is anchored to a single table
 > (`fact_sales`), which has `date_key` but not `year_month` - so it can't self-anchor on the latest month
 > without hardcoding a date range that would go stale. "This month" is handled instead by joining
-> `dim_date` and filtering `year_month = (SELECT MAX(year_month) FROM aurora_retail.sales.dim_date)`,
+> `dim_date` and filtering `year_month = (SELECT MAX(year_month) FROM bramblepeak_retail.sales.dim_date)`,
 > which every certified query below already does. Keeps the lab evergreen.
 
 ---
@@ -231,10 +231,10 @@ Each has 4 fields: **Question** (NL label Genie matches intent against), **SQL**
 ```sql
 WITH actual AS (
   SELECT s.region, SUM(f.net_sales) AS revenue
-  FROM aurora_retail.sales.fact_sales f
-  JOIN aurora_retail.sales.dim_store s ON f.store_key = s.store_key
-  JOIN aurora_retail.sales.dim_date d  ON f.date_key = d.date_key
-  WHERE d.year_month = (SELECT MAX(year_month) FROM aurora_retail.sales.dim_date)
+  FROM bramblepeak_retail.sales.fact_sales f
+  JOIN bramblepeak_retail.sales.dim_store s ON f.store_key = s.store_key
+  JOIN bramblepeak_retail.sales.dim_date d  ON f.date_key = d.date_key
+  WHERE d.year_month = (SELECT MAX(year_month) FROM bramblepeak_retail.sales.dim_date)
   GROUP BY s.region
 )
 SELECT
@@ -243,9 +243,9 @@ SELECT
   ROUND(SUM(a.revenue) - SUM(t.revenue_target))            AS gap_to_target,
   ROUND(100 * SUM(a.revenue) / SUM(t.revenue_target), 1)   AS pct_to_target,
   CASE WHEN SUM(a.revenue) >= SUM(t.revenue_target) THEN 'ON TRACK' ELSE 'OFF TRACK' END AS status
-FROM aurora_retail.sales.sales_targets t
+FROM bramblepeak_retail.sales.sales_targets t
 JOIN actual a ON a.region = t.region
-WHERE t.year_month = (SELECT MAX(year_month) FROM aurora_retail.sales.dim_date);
+WHERE t.year_month = (SELECT MAX(year_month) FROM bramblepeak_retail.sales.dim_date);
 ```
 
 - **Usage Guidance**: `Use when the user asks "are we hitting target", "how are sales tracking this month", or any company-level status question. Returns one row: company actual revenue, target, dollar gap, percent-to-target, and ON/OFF TRACK. Do NOT list regions or products here - if the user wants the regional breakdown, the per-region certified query handles that. Anchored on the current month (the latest month in the data).`
@@ -259,10 +259,10 @@ WHERE t.year_month = (SELECT MAX(year_month) FROM aurora_retail.sales.dim_date);
 ```sql
 WITH actual AS (
   SELECT s.region, SUM(f.net_sales) AS revenue
-  FROM aurora_retail.sales.fact_sales f
-  JOIN aurora_retail.sales.dim_store s ON f.store_key = s.store_key
-  JOIN aurora_retail.sales.dim_date d  ON f.date_key = d.date_key
-  WHERE d.year_month = (SELECT MAX(year_month) FROM aurora_retail.sales.dim_date)
+  FROM bramblepeak_retail.sales.fact_sales f
+  JOIN bramblepeak_retail.sales.dim_store s ON f.store_key = s.store_key
+  JOIN bramblepeak_retail.sales.dim_date d  ON f.date_key = d.date_key
+  WHERE d.year_month = (SELECT MAX(year_month) FROM bramblepeak_retail.sales.dim_date)
   GROUP BY s.region
 )
 SELECT
@@ -272,9 +272,9 @@ SELECT
   ROUND(a.revenue - t.revenue_target)           AS gap_to_target,
   ROUND(100 * a.revenue / t.revenue_target, 1)  AS pct_to_target,
   CASE WHEN a.revenue >= t.revenue_target THEN 'ON TRACK' ELSE 'OFF TRACK' END AS status
-FROM aurora_retail.sales.sales_targets t
+FROM bramblepeak_retail.sales.sales_targets t
 JOIN actual a ON a.region = t.region
-WHERE t.year_month = (SELECT MAX(year_month) FROM aurora_retail.sales.dim_date)
+WHERE t.year_month = (SELECT MAX(year_month) FROM bramblepeak_retail.sales.dim_date)
 ORDER BY pct_to_target ASC;
 ```
 
@@ -292,10 +292,10 @@ SELECT
   ROUND(SUM(f.net_sales))    AS revenue,
   SUM(f.quantity)            AS units,
   ROUND(SUM(f.gross_margin)) AS margin
-FROM aurora_retail.sales.fact_sales f
-JOIN aurora_retail.sales.dim_product p ON f.product_key = p.product_key
-JOIN aurora_retail.sales.dim_date d    ON f.date_key = d.date_key
-WHERE d.year_month = (SELECT MAX(year_month) FROM aurora_retail.sales.dim_date)
+FROM bramblepeak_retail.sales.fact_sales f
+JOIN bramblepeak_retail.sales.dim_product p ON f.product_key = p.product_key
+JOIN bramblepeak_retail.sales.dim_date d    ON f.date_key = d.date_key
+WHERE d.year_month = (SELECT MAX(year_month) FROM bramblepeak_retail.sales.dim_date)
 GROUP BY p.product_id, p.product_name, p.category
 ORDER BY revenue DESC
 LIMIT :limit_n;
@@ -316,10 +316,10 @@ SELECT
   SUM(f.quantity)                                                    AS units,
   ROUND(SUM(f.net_sales) / COUNT(DISTINCT f.order_id), 2)            AS avg_order_value,
   ROUND(100 * SUM(f.gross_margin) / SUM(f.net_sales), 1)             AS margin_pct
-FROM aurora_retail.sales.fact_sales f
-JOIN aurora_retail.sales.dim_store s ON f.store_key = s.store_key
-JOIN aurora_retail.sales.dim_date d  ON f.date_key = d.date_key
-WHERE d.year_month = (SELECT MAX(year_month) FROM aurora_retail.sales.dim_date)
+FROM bramblepeak_retail.sales.fact_sales f
+JOIN bramblepeak_retail.sales.dim_store s ON f.store_key = s.store_key
+JOIN bramblepeak_retail.sales.dim_date d  ON f.date_key = d.date_key
+WHERE d.year_month = (SELECT MAX(year_month) FROM bramblepeak_retail.sales.dim_date)
 GROUP BY s.channel
 ORDER BY revenue DESC;
 ```
@@ -334,8 +334,8 @@ ORDER BY revenue DESC;
 
 ```sql
 SELECT d.year_month, ROUND(SUM(f.net_sales)) AS revenue, ROUND(SUM(f.gross_margin)) AS margin
-FROM aurora_retail.sales.fact_sales f
-JOIN aurora_retail.sales.dim_date d ON f.date_key = d.date_key
+FROM bramblepeak_retail.sales.fact_sales f
+JOIN bramblepeak_retail.sales.dim_date d ON f.date_key = d.date_key
 GROUP BY d.year_month
 ORDER BY d.year_month;
 ```
@@ -354,10 +354,10 @@ SELECT
   ROUND(SUM(f.net_sales))                                  AS revenue,
   ROUND(SUM(f.gross_margin))                               AS margin,
   ROUND(100 * SUM(f.gross_margin) / SUM(f.net_sales), 1)   AS margin_pct
-FROM aurora_retail.sales.fact_sales f
-JOIN aurora_retail.sales.dim_product p ON f.product_key = p.product_key
-JOIN aurora_retail.sales.dim_date d    ON f.date_key = d.date_key
-WHERE d.year_month = (SELECT MAX(year_month) FROM aurora_retail.sales.dim_date)
+FROM bramblepeak_retail.sales.fact_sales f
+JOIN bramblepeak_retail.sales.dim_product p ON f.product_key = p.product_key
+JOIN bramblepeak_retail.sales.dim_date d    ON f.date_key = d.date_key
+WHERE d.year_month = (SELECT MAX(year_month) FROM bramblepeak_retail.sales.dim_date)
 GROUP BY p.category
 ORDER BY revenue DESC;
 ```
@@ -371,7 +371,7 @@ ORDER BY revenue DESC;
 - **SQL**:
 
 ```sql
-SELECT * FROM aurora_retail.sales.simulate_discount(:product_id, :discount_pct);
+SELECT * FROM bramblepeak_retail.sales.simulate_discount(:product_id, :discount_pct);
 ```
 
 - **Usage Guidance**: `Use for any pricing what-if ("what if we mark down X by Y percent", "impact of discounting X"). Resolve a product NAME to its product_id via dim_product first, then pass it. Returns projected units, revenue, margin, margin percent, and a margin_safe flag. CALL SYNTAX: positional arguments only. Having this as a certified query gives Genie a worked example so it reliably routes to the function instead of writing historical SQL.`
@@ -383,7 +383,7 @@ SELECT * FROM aurora_retail.sales.simulate_discount(:product_id, :discount_pct);
 - **SQL**:
 
 ```sql
-SELECT * FROM aurora_retail.sales.top_drivers(:region) ORDER BY rank;
+SELECT * FROM bramblepeak_retail.sales.top_drivers(:region) ORDER BY rank;
 ```
 
 - **Usage Guidance**: `Use when the user asks "what's dragging down [region]", "what's driving the gap in [region]", or "top detractors for [region]". The function scopes to the current month automatically - no month argument needed. Returns the precomputed ranked drivers (rank 1 = biggest). For the West, rank 1 is Outdoor & Camping. CALL SYNTAX: positional argument only.`
@@ -396,9 +396,9 @@ automatically. The notebooks already attached rich what/how/avoid comments.
 
 | Catalog         | Schema  | Function            |
 | --------------- | ------- | ------------------- |
-| `aurora_retail` | `sales` | `simulate_discount` |
-| `aurora_retail` | `sales` | `top_drivers`       |
-| `aurora_retail` | `sales` | `explain_driver`    |
+| `bramblepeak_retail` | `sales` | `simulate_discount` |
+| `bramblepeak_retail` | `sales` | `top_drivers`       |
+| `bramblepeak_retail` | `sales` | `explain_driver`    |
 
 Click **Save** after each.
 

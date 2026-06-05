@@ -10,7 +10,7 @@ Work through this after the Genie space is built, benchmarked, and tested. Every
 
 ## 1. Create the dashboard
 
-**AI/BI → Dashboards → New dashboard**. Rename it to `Aurora Sales Cockpit` (click the title to edit).
+**AI/BI → Dashboards → New dashboard**. Rename it to `Bramblepeak Sales Cockpit` (click the title to edit).
 
 The page opens with a **"Create a dashboard with Genie"** prompt in the centre - that's **Genie Code**,
 an AI-assisted dashboard builder. We'll use it in § 4, but datasets need to exist first. Click
@@ -34,37 +34,37 @@ for picking an existing table directly without writing SQL.)
 ```sql
 WITH actual AS (
   SELECT s.region, SUM(f.net_sales) AS revenue
-  FROM aurora_retail.sales.fact_sales f
-  JOIN aurora_retail.sales.dim_store s ON f.store_key = s.store_key
-  JOIN aurora_retail.sales.dim_date d  ON f.date_key = d.date_key
-  WHERE d.year_month = (SELECT MAX(year_month) FROM aurora_retail.sales.dim_date)
+  FROM bramblepeak_retail.sales.fact_sales f
+  JOIN bramblepeak_retail.sales.dim_store s ON f.store_key = s.store_key
+  JOIN bramblepeak_retail.sales.dim_date d  ON f.date_key = d.date_key
+  WHERE d.year_month = (SELECT MAX(year_month) FROM bramblepeak_retail.sales.dim_date)
   GROUP BY s.region
 )
 SELECT t.region, ROUND(a.revenue) AS actual_revenue, ROUND(t.revenue_target) AS revenue_target,
        ROUND(a.revenue - t.revenue_target) AS gap_to_target,
        ROUND(100 * a.revenue / t.revenue_target, 1) AS pct_to_target,
        CASE WHEN a.revenue >= t.revenue_target THEN 'ON TRACK' ELSE 'OFF TRACK' END AS status
-FROM aurora_retail.sales.sales_targets t
+FROM bramblepeak_retail.sales.sales_targets t
 JOIN actual a ON a.region = t.region
-WHERE t.year_month = (SELECT MAX(year_month) FROM aurora_retail.sales.dim_date)
+WHERE t.year_month = (SELECT MAX(year_month) FROM bramblepeak_retail.sales.dim_date)
 ORDER BY pct_to_target ASC;
 ```
 
 **B - `monthly_trend`**
 ```sql
 SELECT d.year_month, ROUND(SUM(f.net_sales)) AS revenue, ROUND(SUM(f.gross_margin)) AS margin
-FROM aurora_retail.sales.fact_sales f
-JOIN aurora_retail.sales.dim_date d ON f.date_key = d.date_key
+FROM bramblepeak_retail.sales.fact_sales f
+JOIN bramblepeak_retail.sales.dim_date d ON f.date_key = d.date_key
 GROUP BY d.year_month ORDER BY d.year_month;
 ```
 
 **C - `top_products`**
 ```sql
 SELECT p.product_name, p.category, ROUND(SUM(f.net_sales)) AS revenue, SUM(f.quantity) AS units
-FROM aurora_retail.sales.fact_sales f
-JOIN aurora_retail.sales.dim_product p ON f.product_key = p.product_key
-JOIN aurora_retail.sales.dim_date d    ON f.date_key = d.date_key
-WHERE d.year_month = (SELECT MAX(year_month) FROM aurora_retail.sales.dim_date)
+FROM bramblepeak_retail.sales.fact_sales f
+JOIN bramblepeak_retail.sales.dim_product p ON f.product_key = p.product_key
+JOIN bramblepeak_retail.sales.dim_date d    ON f.date_key = d.date_key
+WHERE d.year_month = (SELECT MAX(year_month) FROM bramblepeak_retail.sales.dim_date)
 GROUP BY p.product_name, p.category
 ORDER BY revenue DESC LIMIT 10;
 ```
@@ -73,10 +73,10 @@ ORDER BY revenue DESC LIMIT 10;
 ```sql
 SELECT p.category, ROUND(SUM(f.net_sales)) AS revenue, ROUND(SUM(f.gross_margin)) AS margin,
        ROUND(100 * SUM(f.gross_margin) / SUM(f.net_sales), 1) AS margin_pct
-FROM aurora_retail.sales.fact_sales f
-JOIN aurora_retail.sales.dim_product p ON f.product_key = p.product_key
-JOIN aurora_retail.sales.dim_date d    ON f.date_key = d.date_key
-WHERE d.year_month = (SELECT MAX(year_month) FROM aurora_retail.sales.dim_date)
+FROM bramblepeak_retail.sales.fact_sales f
+JOIN bramblepeak_retail.sales.dim_product p ON f.product_key = p.product_key
+JOIN bramblepeak_retail.sales.dim_date d    ON f.date_key = d.date_key
+WHERE d.year_month = (SELECT MAX(year_month) FROM bramblepeak_retail.sales.dim_date)
 GROUP BY p.category ORDER BY revenue DESC;
 ```
 
@@ -84,10 +84,10 @@ GROUP BY p.category ORDER BY revenue DESC;
 ```sql
 SELECT s.channel, ROUND(SUM(f.net_sales)) AS revenue, SUM(f.quantity) AS units,
        ROUND(100 * SUM(f.gross_margin) / SUM(f.net_sales), 1) AS margin_pct
-FROM aurora_retail.sales.fact_sales f
-JOIN aurora_retail.sales.dim_store s ON f.store_key = s.store_key
-JOIN aurora_retail.sales.dim_date d  ON f.date_key = d.date_key
-WHERE d.year_month = (SELECT MAX(year_month) FROM aurora_retail.sales.dim_date)
+FROM bramblepeak_retail.sales.fact_sales f
+JOIN bramblepeak_retail.sales.dim_store s ON f.store_key = s.store_key
+JOIN bramblepeak_retail.sales.dim_date d  ON f.date_key = d.date_key
+WHERE d.year_month = (SELECT MAX(year_month) FROM bramblepeak_retail.sales.dim_date)
 GROUP BY s.channel ORDER BY revenue DESC;
 ```
 
@@ -95,12 +95,12 @@ GROUP BY s.channel ORDER BY revenue DESC;
 ```sql
 SELECT f.sale_id, d.year_month, s.region, s.channel, p.category, p.product_name,
        c.loyalty_tier, f.quantity, f.net_sales, f.gross_margin
-FROM aurora_retail.sales.fact_sales f
-JOIN aurora_retail.sales.dim_store s    ON f.store_key = s.store_key
-JOIN aurora_retail.sales.dim_product p  ON f.product_key = p.product_key
-JOIN aurora_retail.sales.dim_customer c ON f.customer_key = c.customer_key
-JOIN aurora_retail.sales.dim_date d     ON f.date_key = d.date_key
-WHERE d.year_month = (SELECT MAX(year_month) FROM aurora_retail.sales.dim_date);
+FROM bramblepeak_retail.sales.fact_sales f
+JOIN bramblepeak_retail.sales.dim_store s    ON f.store_key = s.store_key
+JOIN bramblepeak_retail.sales.dim_product p  ON f.product_key = p.product_key
+JOIN bramblepeak_retail.sales.dim_customer c ON f.customer_key = c.customer_key
+JOIN bramblepeak_retail.sales.dim_date d     ON f.date_key = d.date_key
+WHERE d.year_month = (SELECT MAX(year_month) FROM bramblepeak_retail.sales.dim_date);
 ```
 > Add this as a dataset only (no widget). The embedded Genie picks it up as queryable context so it can
 > answer ad-hoc current-month questions that aren't pre-aggregated into the other datasets.
@@ -122,7 +122,7 @@ dashboard is published.
 4. Choose **Link existing Genie space** - the second radio. **Do NOT pick "Auto-generate Genie space"**
    (the recommended default); that builds a brand-new space from the dashboard data and ignores all
    your Instructions, joins, expressions, certified queries, and function registrations.
-5. A **Paste URL here…** input appears. Paste the URL of your Aurora Sales Assistant space (open the
+5. A **Paste URL here…** input appears. Paste the URL of your Bramblepeak Sales Assistant space (open the
    space in another tab and copy its URL from the browser address bar - the Genie space ID at the end
    of the URL is what the field actually needs; pasting the full URL works fine, the field extracts the
    ID). The red "Invalid Genie ID or URL" warning under the field clears once a valid value is in.
@@ -154,7 +154,7 @@ or `explain_driver`.
 **Practical consequence (if the limitation still holds):** the on-track, region, product, channel,
 category, and trend questions all work in the embed (the datasets hold the answers). But the
 **discount what-if** and the **top-drivers function** need the **full Genie space** - open it in a
-second browser tab (sidebar → **Genie Spaces** → Aurora Sales Assistant) and flip to it for those.
+second browser tab (sidebar → **Genie Spaces** → Bramblepeak Sales Assistant) and flip to it for those.
 
 ---
 
@@ -168,7 +168,7 @@ Databricks data engineer's time goes. **Let Genie Code do it.** Paste this promp
 and hit send:
 
 ```text
-Build a 2-page sales cockpit for Aurora Outfitters on aurora_retail.sales.
+Build a 2-page sales cockpit for Bramblepeak Outfitters on bramblepeak_retail.sales.
 
 Page 1 "This Month vs Target": KPI counters for company actual revenue, target attainment %,
 and dollar gap; a table of region vs target sorted by attainment ascending; a grouped bar of actual

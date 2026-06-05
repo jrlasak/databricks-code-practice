@@ -1,7 +1,7 @@
 # Databricks notebook source
 # MAGIC %md
 # MAGIC # 02 - Generate Data
-# MAGIC Generates deterministic synthetic data (seed=42) for Aurora Outfitters and writes it into the
+# MAGIC Generates deterministic synthetic data (seed=42) for Bramblepeak Outfitters and writes it into the
 # MAGIC 7 tables from notebook 01. The data has a **baked-in storyline** so every demo question lands:
 # MAGIC
 # MAGIC - **The company misses its sales target this month.** (drives "are we on track this month?")

@@ -3,7 +3,7 @@
 # MAGIC # 00 - Run All
 # MAGIC One-click setup for the whole data layer. Runs notebooks 01 → 04 in order:
 # MAGIC
-# MAGIC 1. **01_Setup_Tables** - catalog `aurora_retail`, schema `sales`, 7 star-schema tables (with comments).
+# MAGIC 1. **01_Setup_Tables** - catalog `bramblepeak_retail`, schema `sales`, 7 star-schema tables (with comments).
 # MAGIC 2. **02_Generate_Data** - deterministic synthetic sales with the baked-in storyline.
 # MAGIC 3. **03_Setup_Functions** - the 3 Unity Catalog functions Genie calls.
 # MAGIC 4. **04_Compute_Insights** - fills `performance_insights` (the "daily job").

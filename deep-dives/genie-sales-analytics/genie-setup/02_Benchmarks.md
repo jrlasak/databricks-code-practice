@@ -41,13 +41,13 @@ mix modes per question; you pick one mode for the whole run.
 
 1. Genie space → **Benchmark** tab → **Questions** sub-tab.
 2. Genie auto-suggests questions. Click **Review** on each: verify (or replace) the draft ground-truth
-   SQL against `aurora_retail.sales`, then **Accept**. Reject anything off-scenario.
+   SQL against `bramblepeak_retail.sales`, then **Accept**. Reject anything off-scenario.
 3. For the questions below that weren't auto-suggested, click **+ Add benchmark** and fill three fields:
    - **Question** - the natural-language prompt
    - **Ground truth SQL answer** (optional but recommended - without it, the question is marked for
      manual review instead of auto-scored)
    - **Evaluation note** (Agent-mode only - the LLM-judge reads this to verify the Agent's response)
-4. Once all questions exist, name your benchmark (e.g. `Aurora Sales Day-1 Accuracy`).
+4. Once all questions exist, name your benchmark (e.g. `Bramblepeak Sales Day-1 Accuracy`).
 5. Toggle the mode at the top to **Agent**, then click **▶ Run all benchmarks**. Wait ~2-3 min for a
    per-question and overall green/yellow/red score.
 
@@ -65,10 +65,10 @@ mix modes per question; you pick one mode for the whole run.
 ```sql
 WITH actual AS (
   SELECT s.region, SUM(f.net_sales) AS revenue
-  FROM aurora_retail.sales.fact_sales f
-  JOIN aurora_retail.sales.dim_store s ON f.store_key = s.store_key
-  JOIN aurora_retail.sales.dim_date d  ON f.date_key = d.date_key
-  WHERE d.year_month = (SELECT MAX(year_month) FROM aurora_retail.sales.dim_date)
+  FROM bramblepeak_retail.sales.fact_sales f
+  JOIN bramblepeak_retail.sales.dim_store s ON f.store_key = s.store_key
+  JOIN bramblepeak_retail.sales.dim_date d  ON f.date_key = d.date_key
+  WHERE d.year_month = (SELECT MAX(year_month) FROM bramblepeak_retail.sales.dim_date)
   GROUP BY s.region
 )
 SELECT
@@ -77,9 +77,9 @@ SELECT
   ROUND(SUM(a.revenue) - SUM(t.revenue_target))          AS gap_to_target,
   ROUND(100 * SUM(a.revenue) / SUM(t.revenue_target), 1) AS pct_to_target,
   CASE WHEN SUM(a.revenue) >= SUM(t.revenue_target) THEN 'ON TRACK' ELSE 'OFF TRACK' END AS status
-FROM aurora_retail.sales.sales_targets t
+FROM bramblepeak_retail.sales.sales_targets t
 JOIN actual a ON a.region = t.region
-WHERE t.year_month = (SELECT MAX(year_month) FROM aurora_retail.sales.dim_date);
+WHERE t.year_month = (SELECT MAX(year_month) FROM bramblepeak_retail.sales.dim_date);
 ```
 
 **Evaluation note**: `Response includes company actual revenue, monthly target, the dollar gap or percent-to-target, and an explicit ON TRACK / OFF TRACK label. Does not enumerate regions or products.`
@@ -89,17 +89,17 @@ WHERE t.year_month = (SELECT MAX(year_month) FROM aurora_retail.sales.dim_date);
 ```sql
 WITH actual AS (
   SELECT s.region, SUM(f.net_sales) AS revenue
-  FROM aurora_retail.sales.fact_sales f
-  JOIN aurora_retail.sales.dim_store s ON f.store_key = s.store_key
-  JOIN aurora_retail.sales.dim_date d  ON f.date_key = d.date_key
-  WHERE d.year_month = (SELECT MAX(year_month) FROM aurora_retail.sales.dim_date)
+  FROM bramblepeak_retail.sales.fact_sales f
+  JOIN bramblepeak_retail.sales.dim_store s ON f.store_key = s.store_key
+  JOIN bramblepeak_retail.sales.dim_date d  ON f.date_key = d.date_key
+  WHERE d.year_month = (SELECT MAX(year_month) FROM bramblepeak_retail.sales.dim_date)
   GROUP BY s.region
 )
 SELECT t.region, ROUND(a.revenue) AS actual_revenue, ROUND(t.revenue_target) AS revenue_target,
        ROUND(100 * a.revenue / t.revenue_target, 1) AS pct_to_target
-FROM aurora_retail.sales.sales_targets t
+FROM bramblepeak_retail.sales.sales_targets t
 JOIN actual a ON a.region = t.region
-WHERE t.year_month = (SELECT MAX(year_month) FROM aurora_retail.sales.dim_date)
+WHERE t.year_month = (SELECT MAX(year_month) FROM bramblepeak_retail.sales.dim_date)
 ORDER BY pct_to_target ASC;
 ```
 
@@ -109,10 +109,10 @@ ORDER BY pct_to_target ASC;
 
 ```sql
 SELECT p.product_id, p.product_name, p.category, ROUND(SUM(f.net_sales)) AS revenue
-FROM aurora_retail.sales.fact_sales f
-JOIN aurora_retail.sales.dim_product p ON f.product_key = p.product_key
-JOIN aurora_retail.sales.dim_date d    ON f.date_key = d.date_key
-WHERE d.year_month = (SELECT MAX(year_month) FROM aurora_retail.sales.dim_date)
+FROM bramblepeak_retail.sales.fact_sales f
+JOIN bramblepeak_retail.sales.dim_product p ON f.product_key = p.product_key
+JOIN bramblepeak_retail.sales.dim_date d    ON f.date_key = d.date_key
+WHERE d.year_month = (SELECT MAX(year_month) FROM bramblepeak_retail.sales.dim_date)
 GROUP BY p.product_id, p.product_name, p.category
 ORDER BY revenue DESC
 LIMIT 10;
@@ -125,10 +125,10 @@ LIMIT 10;
 ```sql
 SELECT s.channel, ROUND(SUM(f.net_sales)) AS revenue, SUM(f.quantity) AS units,
        ROUND(100 * SUM(f.gross_margin) / SUM(f.net_sales), 1) AS margin_pct
-FROM aurora_retail.sales.fact_sales f
-JOIN aurora_retail.sales.dim_store s ON f.store_key = s.store_key
-JOIN aurora_retail.sales.dim_date d  ON f.date_key = d.date_key
-WHERE d.year_month = (SELECT MAX(year_month) FROM aurora_retail.sales.dim_date)
+FROM bramblepeak_retail.sales.fact_sales f
+JOIN bramblepeak_retail.sales.dim_store s ON f.store_key = s.store_key
+JOIN bramblepeak_retail.sales.dim_date d  ON f.date_key = d.date_key
+WHERE d.year_month = (SELECT MAX(year_month) FROM bramblepeak_retail.sales.dim_date)
 GROUP BY s.channel
 ORDER BY revenue DESC;
 ```
@@ -140,10 +140,10 @@ ORDER BY revenue DESC;
 ```sql
 SELECT p.category, ROUND(SUM(f.net_sales)) AS revenue, ROUND(SUM(f.gross_margin)) AS margin,
        ROUND(100 * SUM(f.gross_margin) / SUM(f.net_sales), 1) AS margin_pct
-FROM aurora_retail.sales.fact_sales f
-JOIN aurora_retail.sales.dim_product p ON f.product_key = p.product_key
-JOIN aurora_retail.sales.dim_date d    ON f.date_key = d.date_key
-WHERE d.year_month = (SELECT MAX(year_month) FROM aurora_retail.sales.dim_date)
+FROM bramblepeak_retail.sales.fact_sales f
+JOIN bramblepeak_retail.sales.dim_product p ON f.product_key = p.product_key
+JOIN bramblepeak_retail.sales.dim_date d    ON f.date_key = d.date_key
+WHERE d.year_month = (SELECT MAX(year_month) FROM bramblepeak_retail.sales.dim_date)
 GROUP BY p.category
 ORDER BY revenue DESC;
 ```
@@ -154,8 +154,8 @@ ORDER BY revenue DESC;
 
 ```sql
 SELECT d.year_month, ROUND(SUM(f.net_sales)) AS revenue
-FROM aurora_retail.sales.fact_sales f
-JOIN aurora_retail.sales.dim_date d ON f.date_key = d.date_key
+FROM bramblepeak_retail.sales.fact_sales f
+JOIN bramblepeak_retail.sales.dim_date d ON f.date_key = d.date_key
 GROUP BY d.year_month
 ORDER BY d.year_month;
 ```
@@ -166,10 +166,10 @@ ORDER BY d.year_month;
 
 ```sql
 SELECT c.loyalty_tier, ROUND(SUM(f.net_sales)) AS revenue, COUNT(DISTINCT f.order_id) AS orders
-FROM aurora_retail.sales.fact_sales f
-JOIN aurora_retail.sales.dim_customer c ON f.customer_key = c.customer_key
-JOIN aurora_retail.sales.dim_date d     ON f.date_key = d.date_key
-WHERE d.year_month = (SELECT MAX(year_month) FROM aurora_retail.sales.dim_date)
+FROM bramblepeak_retail.sales.fact_sales f
+JOIN bramblepeak_retail.sales.dim_customer c ON f.customer_key = c.customer_key
+JOIN bramblepeak_retail.sales.dim_date d     ON f.date_key = d.date_key
+WHERE d.year_month = (SELECT MAX(year_month) FROM bramblepeak_retail.sales.dim_date)
 GROUP BY c.loyalty_tier
 ORDER BY revenue DESC;
 ```
@@ -182,10 +182,10 @@ ORDER BY revenue DESC;
 SELECT s.region,
        ROUND(SUM(f.net_sales) / COUNT(DISTINCT f.order_id), 2) AS avg_order_value,
        COUNT(DISTINCT f.order_id) AS orders
-FROM aurora_retail.sales.fact_sales f
-JOIN aurora_retail.sales.dim_store s ON f.store_key = s.store_key
-JOIN aurora_retail.sales.dim_date d  ON f.date_key = d.date_key
-WHERE d.year_month = (SELECT MAX(year_month) FROM aurora_retail.sales.dim_date)
+FROM bramblepeak_retail.sales.fact_sales f
+JOIN bramblepeak_retail.sales.dim_store s ON f.store_key = s.store_key
+JOIN bramblepeak_retail.sales.dim_date d  ON f.date_key = d.date_key
+WHERE d.year_month = (SELECT MAX(year_month) FROM bramblepeak_retail.sales.dim_date)
 GROUP BY s.region
 ORDER BY avg_order_value DESC;
 ```
@@ -200,9 +200,9 @@ ORDER BY avg_order_value DESC;
 ```sql
 SELECT rank, driver_type, dimension_value, revenue_current, revenue_prior,
        revenue_delta, contribution_to_gap_pct, insight
-FROM aurora_retail.sales.performance_insights
+FROM bramblepeak_retail.sales.performance_insights
 WHERE region = 'West'
-  AND year_month = (SELECT MAX(year_month) FROM aurora_retail.sales.dim_date)
+  AND year_month = (SELECT MAX(year_month) FROM bramblepeak_retail.sales.dim_date)
 ORDER BY rank;
 ```
 
@@ -213,7 +213,7 @@ ORDER BY rank;
 > Ground truth is the function output. Tests product-name resolution + routing to `simulate_discount`.
 
 ```sql
-SELECT * FROM aurora_retail.sales.simulate_discount('SKU-1042', 15);
+SELECT * FROM bramblepeak_retail.sales.simulate_discount('SKU-1042', 15);
 ```
 
 **Evaluation note**: `Response resolves "Summit 600 Down Jacket" to SKU-1042 and calls simulate_discount('SKU-1042', 15) (visible in the Thinking trace) rather than writing hand-built SQL. Reports projected units, projected revenue, projected margin, and the margin_safe flag.`

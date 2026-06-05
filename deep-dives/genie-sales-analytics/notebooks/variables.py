@@ -7,9 +7,9 @@
 # COMMAND ----------
 
 # --- Unity Catalog namespace ---
-CATALOG = "aurora_retail"          # created idempotently by 01_Setup_Tables
+CATALOG = "bramblepeak_retail"          # created idempotently by 01_Setup_Tables
 SCHEMA = "sales"                   # the gold star schema Genie connects to
-FQ = f"{CATALOG}.{SCHEMA}"         # fully-qualified prefix, e.g. aurora_retail.sales
+FQ = f"{CATALOG}.{SCHEMA}"         # fully-qualified prefix, e.g. bramblepeak_retail.sales
 
 # --- Star schema tables ---
 DIM_DATE = f"{FQ}.dim_date"

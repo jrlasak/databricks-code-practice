@@ -41,7 +41,7 @@ custom **Unity Catalog functions** Genie can call, a regression **benchmark** th
 an **AI/BI dashboard with embedded Genie**. You finish with the exact "ask your data in plain English"
 capability companies are racing to ship in 2025-26 - and the judgment to make it accurate, not just demo-able.
 
-The data tells a story on purpose. You play an analyst at **Aurora Outfitters**, a US omnichannel retailer.
+The data tells a story on purpose. You play an analyst at **Bramblepeak Outfitters**, a US omnichannel retailer.
 This month the company missed its sales target, and you'll use Genie to find out why: the **West** region is
 dragging, **Outdoor & Camping** collapsed there, and one product is surging online. By the end, Genie can
 answer "are we on track? → why? → what's driving it? → what if we discount to recover?" as a connected
@@ -65,7 +65,7 @@ conversation.
 
 ## Architecture
 
-A clean Kimball-style **star schema** in Unity Catalog (`aurora_retail.sales`):
+A clean Kimball-style **star schema** in Unity Catalog (`bramblepeak_retail.sales`):
 
 ```
                  dim_date
@@ -113,7 +113,7 @@ on **Databricks Free Edition** (serverless SQL, UC functions, Genie, and AI/BI d
    - See [Repos in Databricks](https://docs.databricks.com/repos/index.html) for details.
 
 3. **Provision the data layer** - open `00_Run_All.py` and **Run all**. It runs notebooks 01→04
-   on serverless (~3-6 min) and creates catalog `aurora_retail`, schema `sales`, 7 tables, and 3 functions.
+   on serverless (~3-6 min) and creates catalog `bramblepeak_retail`, schema `sales`, 7 tables, and 3 functions.
    The output prints a storyline check (West off track) and final row counts. Re-running is safe.
 
 4. **Build the Genie space** - follow `genie-setup/01_Genie_Space_Setup.md` step by step in the Databricks
