@@ -1,5 +1,8 @@
 # Databricks notebook source
-# COMMAND ----------
+# /// script
+# [tool.databricks.environment]
+# environment_version = "5"
+# ///
 # MAGIC %md
 # MAGIC ### Setup: MERGE Operations
 # MAGIC Creates per-exercise target and source tables. Run automatically via `%run` from the exercise notebook.
