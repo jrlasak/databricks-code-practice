@@ -18,7 +18,7 @@
 
 **Company**: ModernPaymentsABC - a payment processor handling 500K+ transactions/day.
 
-**Problem**: Fraud is rising, and overnight batch detection is too slow. The ops team needs real-time alerts for suspicious activity (velocity spikes, geo-anomalies), and compliance needs daily Suspicious Activity Reports (SARs).
+**Problem**: Fraud is rising, and overnight batch detection is too slow. The ops team needs real-time alerts for suspicious activity (velocity spikes, geo-anomalies), and compliance needs a daily queue of Suspicious Activity Report (SAR) candidates, pre-filled with who, how much and when.
 
 **Your Role**: Senior Data Engineer building the end-to-end monitoring pipeline on Databricks.
 
@@ -28,7 +28,7 @@
 
 By completing this lab, you will be able to:
 
-- **Ingest Streaming JSON** with Auto Loader and capture malformed data using the Rescued Data Column.
+- **Ingest Streaming JSON** with Auto Loader and keep values that do not match the schema (type mismatches, unexpected fields) in the Rescued Data Column.
 - **Implement Watermarked Deduplication** to handle technical payment gateway retries.
 - **Perform Stream-Static Joins** to enrich real-time events with customer and merchant reference data.
 - **Design a Rules Engine** using Tumbling and Sliding windows for velocity detection.
@@ -40,14 +40,16 @@ By completing this lab, you will be able to:
 ## Architecture Overview
 
 1. **Bronze**: Raw ingestion via Auto Loader + Watermarked Dedup.
-2. **Silver**: Enriched transactions + Real-time risk scoring & alerts.
-3. **Gold**: Aggregated merchant summaries and SAR pre-fill datasets.
+2. **Silver**: Enriched transactions, velocity and amount spike tables (tumbling and sliding windows), and real-time risk scoring & alerts.
+3. **Gold**: Daily per-category summaries and a SAR candidate queue.
 
 ---
 
 ## Prerequisites
 
 - Basic knowledge of PySpark and Delta Lake.
+- Structured Streaming basics: `readStream`/`writeStream`, checkpoints, triggers. The lab uses them from Notebook 01 on without re-teaching them.
+- Time: about 3 hours (40 + 60 + 55 + 30 minutes).
 - Access to a Databricks workspace (Free Edition compatible).
 
 ⚠️ **Before you start**: Disable AI code suggestions in your Databricks workspace.
@@ -78,6 +80,8 @@ Go to **User Settings → Developer → AI-powered code completion** and turn **
 4. Follow the numbered notebooks (`01` to `04`) to build the pipeline.
 
    Each exercise includes a **STUDENT EXERCISE** area for your code and a commented-out **SOLUTION** for verification.
+
+5. **Stuck after a streaming write went wrong?** Re-run `00_Setup_Environment.py` (it drops every table and checkpoint and regenerates the data), then run the notebooks in order again. Re-running a corrected streaming cell on its own does nothing: its checkpoint already marked the files as processed.
 
 ---
 

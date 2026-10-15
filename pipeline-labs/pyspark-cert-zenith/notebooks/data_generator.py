@@ -1,3 +1,4 @@
+# Databricks notebook source
 """
 Zenith Online - Synthetic Data Generator for Spark Certification Project
 
@@ -8,7 +9,7 @@ Databricks Certified Associate Developer for Apache Spark exam.
 The script produces three distinct datasets:
 1.  A batch file of customer profiles in CSV format.
 2.  A batch file of product details in Parquet format.
-3.  A continuous stream of user events as individual JSON files, simulating a real-time feed.
+3.  A continuous stream of user events as JSON Lines files (one event per line), simulating a real-time feed.
 
 ------------------------------------------------------------------------------------
 Data Generation Logic & Intentionally Introduced Challenges
@@ -19,32 +20,50 @@ Data Generation Logic & Intentionally Introduced Challenges
       at the start of the run to represent a dimension table that is loaded infrequently.
     *   **Products (Parquet):** A catalog of products. This is also generated as a single file
       at the start. The Parquet format is chosen to cover this common columnar format in Spark.
+      Each category has its own product nouns and price band (`PRODUCT_CATALOG`), so a name,
+      its category and its price agree, and every name is unique (it ends in a model code
+      built from the `product_id`, e.g. `Z101`).
 
 2.  **Streaming Data (`generate_streaming_events`)**:
-    *   **User Events (JSON):** This function runs in a continuous loop to simulate a stream
+    *   **User Events (JSON Lines):** This function runs in a continuous loop to simulate a stream
       of user actions (`view_product`, `add_to_cart`, `purchase`). Each batch of events is
-      written as a new JSON file to a specific directory, which Databricks Auto Loader
-      or `readStream` can pick up.
+      written as a new JSON Lines file (one event object per line) to a specific directory,
+      which Databricks Auto Loader or `readStream` can pick up.
     *   **Data Skew (Critical for the Project):** The generator intentionally introduces data skew.
       A small subset of `product_id`s (defined in `POPULAR_PRODUCT_IDS`) has a significantly
-      higher probability of appearing in `view_product` events. This is designed to test
-      the student's ability to identify and handle data skew during aggregation tasks
-      in the Spark project (e.g., using salting).
-    *   **Referential Integrity:** The event stream only uses `user_id`s and `product_id`s that
-      were previously generated in the batch customer and product files, ensuring that joins
-      in the downstream pipeline will be meaningful.
+      higher probability of appearing in events of every type (views, add-to-carts and
+      purchases alike), so each product keeps a view > cart > purchase funnel and the hot
+      products are also the best sellers. This is designed to test the student's ability to
+      identify and handle data skew during aggregation tasks in the Spark project (e.g., using
+      salting).
+    *   **Planted Data Quality Issues:** Drawn after the main event loop, so the seeded event mix
+      stays the same:
+        - Client retries: about 1% of events are re-sent as exact copies (same `event_id`,
+          same `event_timestamp`), as a tracking SDK does when a beacon call times out.
+          The Silver layer's watermarked de-duplication removes them.
+        - Late sign-ups: about 0.5% of events carry a `user_id` from 1001-1050, accounts
+          created after the nightly CRM export, so `customer_profiles.csv` does not have them
+          yet. The Silver left join keeps them with a null region.
+        - Delisted products: about 0.2% of events carry a `product_id` from 501-505, products
+          removed from the catalog export after the event fired. The Silver inner join drops
+          them, because they cannot be priced.
 
 ------------------------------------------------------------------------------------
 How to Use in Databricks
 ------------------------------------------------------------------------------------
 
-1.  **Create a Project Volume:** In your Databricks workspace, create a Volume named
-    `zenith_online` (or choose another name and update the `BASE_PATH` variable).
-2.  **Run the Script:** Copy and paste this code into a new Databricks notebook and run it.
-    The script will create the necessary directory structure within the Volume.
-3.  **Observe Data Generation:** The script will print status messages as it writes batch
-    files and then each new stream file.
-4.  **Stop the Stream:** To stop generating data, interrupt or cancel the notebook execution.
+You do not run this notebook yourself. `00_Setup_Environment` creates the catalog,
+schemas, volumes and directories, loads this notebook with `%run ./data_generator`, and
+then calls:
+
+1.  `generate_batch_data()`: writes the customer CSV and the product Parquet file.
+2.  `generate_streaming_events(infinite=False, stream_events_per_batch=50000)`: writes ONE
+    JSON Lines file of 50,000 events plus 500 retried copies (50,500 lines) and stops
+    (no endless loop to cancel).
+
+All paths come from `variables.py`. `random` is seeded once (42), so every run draws the
+same products, customers and event mix; event timestamps stay relative to the moment of
+the run, which the 3-minute watermark in the Silver layer depends on.
 
 This setup provides a realistic starting point (the "raw" layer) for a Bronze-Silver-Gold
 ETL pipeline project.
@@ -58,7 +77,14 @@ import time
 import uuid
 from datetime import datetime, timezone, timedelta
 
-from variables import *
+# COMMAND ----------
+
+# MAGIC %run ./variables
+
+# COMMAND ----------
+
+# Seed once so two runs draw the same products, customers and event mix.
+random.seed(42)
 
 # Try to import pandas and pyarrow, which are needed for Parquet export.
 # These are pre-installed in Databricks runtimes.
@@ -86,9 +112,16 @@ CONFIG = {
     "STREAM_BATCH_INTERVAL_S": 30,
 
     # Data Skew Configuration
-    # These 5 products will be viewed much more frequently than others.
+    # These 5 products will be viewed, carted and bought much more frequently than others.
     "POPULAR_PRODUCT_IDS": [101, 210, 315, 420, 55],
-    "SKEW_FACTOR_PROBABILITY": 0.75, # 75% of 'view_product' events will be for a popular product.
+    "SKEW_FACTOR_PROBABILITY": 0.75, # 75% of all events (any type) will be for a popular product.
+
+    # Planted data quality issues (share of the events in one batch)
+    "RETRY_RATE": 0.01,                       # exact re-sent copies (client retries)
+    "LATE_SIGNUP_RATE": 0.005,                # user_id not in the customer CSV yet
+    "LATE_SIGNUP_USER_IDS": (1001, 1050),
+    "DELISTED_RATE": 0.002,                   # product_id no longer in the product catalog
+    "DELISTED_PRODUCT_IDS": (501, 505),
 
     # Streaming Mode: If True, stream is infinite; if False, only one batch is generated.
     "STREAM_INFINITE": True
@@ -100,8 +133,13 @@ last_names = ['Smith', 'Johnson', 'Williams', 'Brown', 'Jones', 'Garcia', 'Mille
 locations = ['New York', 'Los Angeles', 'Chicago', 'Houston', 'Phoenix', 'Philadelphia', 'San Antonio', 'San Diego']
 
 product_adjectives = ['Classic', 'Modern', 'Rustic', 'Ergonomic', 'Sleek', 'Durable', 'Lightweight', 'Heavy Duty']
-product_nouns = ['Chair', 'Table', 'Lamp', 'Desk', 'Bookcase', 'Sofa', 'Clock', 'Keyboard', 'Monitor']
-categories = ['Furniture', 'Home Decor', 'Electronics', 'Office Supplies']
+# Category -> (product nouns, lowest price, highest price in USD): names, categories and prices agree.
+PRODUCT_CATALOG = {
+    'Furniture': (['Chair', 'Table', 'Desk', 'Bookcase', 'Sofa'], 89.00, 899.99),
+    'Home Decor': (['Lamp', 'Clock', 'Vase', 'Mirror'], 15.50, 249.99),
+    'Electronics': (['Keyboard', 'Monitor', 'Headphones', 'Webcam'], 29.99, 599.99),
+    'Office Supplies': (['Stapler', 'Desk Organizer', 'Notebook Set', 'Pen Set'], 15.50, 79.99),
+}
 
 # --- Global lists to ensure referential integrity ---
 existing_customer_ids = []
@@ -145,9 +183,12 @@ def generate_batch_data():
     for i in range(1, CONFIG["PRODUCT_COUNT"] + 1):
         product_id = i
         existing_product_ids.append(product_id)
-        product_name = f"{random.choice(product_adjectives)} {random.choice(product_nouns)}"
-        category = random.choice(categories)
-        price = round(random.uniform(15.50, 899.99), 2)
+        category = random.choice(list(PRODUCT_CATALOG))
+        nouns, lowest_price, highest_price = PRODUCT_CATALOG[category]
+        noun = random.choice(nouns)
+        # The model code (Z001-Z500) makes every product name unique.
+        product_name = f"{random.choice(product_adjectives)} {noun} Z{product_id:03d}"
+        price = round(random.uniform(lowest_price, highest_price), 2)
         product_data.append({
             'product_id': product_id,
             'product_name': product_name,
@@ -182,7 +223,7 @@ def generate_streaming_events(infinite=None, stream_events_per_batch=None, strea
 
     print(f"[{datetime.now()}] Starting event stream generation...")
     print(f"Data will be written to: {streaming_path}")
-    print(f"Data Skew active: {CONFIG['SKEW_FACTOR_PROBABILITY']*100}% of 'view_product' events target {CONFIG['POPULAR_PRODUCT_IDS']}")
+    print(f"Data Skew active: {CONFIG['SKEW_FACTOR_PROBABILITY']*100}% of events (every type) target {CONFIG['POPULAR_PRODUCT_IDS']}")
     print(f"Streaming mode: {'infinite' if infinite else 'single batch'}")
     print("-" * 50)
 
@@ -191,7 +232,9 @@ def generate_streaming_events(infinite=None, stream_events_per_batch=None, strea
         now = datetime.now(timezone.utc)
         for _ in range(stream_events_per_batch):
             event_type = random.choices(['view_product', 'add_to_cart', 'purchase'], weights=[0.7, 0.2, 0.1], k=1)[0]
-            if event_type == 'view_product' and random.random() < CONFIG['SKEW_FACTOR_PROBABILITY']:
+            # The hot-product draw applies to every event type, so each product keeps a
+            # view > cart > purchase funnel and the hot products are also the best sellers.
+            if random.random() < CONFIG['SKEW_FACTOR_PROBABILITY']:
                 product_id = random.choice(CONFIG['POPULAR_PRODUCT_IDS'])
             else:
                 product_id = random.choice(existing_product_ids)
@@ -204,11 +247,31 @@ def generate_streaming_events(infinite=None, stream_events_per_batch=None, strea
                 "session_id": str(uuid.uuid4())
             }
             events.append(event)
+
+        # --- Planted data quality issues ---
+        # Drawn AFTER the main loop, so the seeded event mix above stays the same.
+        # 1. Late sign-ups: accounts created after the nightly CRM export, so
+        #    customer_profiles.csv does not have them yet.
+        first_id, last_id = CONFIG['LATE_SIGNUP_USER_IDS']
+        for event in random.sample(events, k=round(len(events) * CONFIG['LATE_SIGNUP_RATE'])):
+            event['user_id'] = random.randint(first_id, last_id)
+        # 2. Delisted products: removed from the catalog export after the event fired.
+        first_id, last_id = CONFIG['DELISTED_PRODUCT_IDS']
+        for event in random.sample(events, k=round(len(events) * CONFIG['DELISTED_RATE'])):
+            event['product_id'] = random.randint(first_id, last_id)
+        # 3. Client retries: the tracking SDK re-sends a beacon whose call timed out, so the
+        #    copy is exact (same event_id, same event_timestamp). Drawn last, so each copy
+        #    matches its original exactly.
+        retries = [dict(event) for event in random.sample(events, k=round(len(events) * CONFIG['RETRY_RATE']))]
+        events.extend(retries)
+
         file_timestamp = datetime.now().strftime('%Y%m%d_%H%M%S_%f')
         output_filepath = os.path.join(streaming_path, f"events_{file_timestamp}.json")
+        # JSON Lines: one event object per line, the layout Auto Loader's json format reads by default.
         with open(output_filepath, 'w') as f:
-            json.dump(events, f, indent=4)
-        print(f"[{datetime.now()}] Wrote batch of {len(events)} events to {output_filepath}")
+            for event in events:
+                f.write(json.dumps(event) + "\n")
+        print(f"[{datetime.now()}] Wrote batch of {len(events)} events ({len(retries)} of them retried copies) to {output_filepath}")
 
     if infinite:
         while True:

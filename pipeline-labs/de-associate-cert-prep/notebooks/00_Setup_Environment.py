@@ -45,7 +45,7 @@ spark.sql(f"USE CATALOG {CATALOG_NAME}")
 # MAGIC - **01_bronze**: Raw, unprocessed data tables
 # MAGIC - **02_silver**: Cleaned and conformed data tables
 # MAGIC - **03_gold**: Business-level aggregations and analytics tables
-# MAGIC - **dlt_pipeline**: Delta Live Tables pipeline objects
+# MAGIC - **dlt_pipeline**: reserved for a Lakeflow Spark Declarative Pipelines (formerly DLT) pipeline; no notebook here uses it
 
 # COMMAND ----------
 
@@ -60,7 +60,7 @@ spark.sql(f"CREATE SCHEMA IF NOT EXISTS {SILVER_SCHEMA} COMMENT 'Silver layer: c
 
 spark.sql(f"CREATE SCHEMA IF NOT EXISTS {GOLD_SCHEMA} COMMENT 'Gold layer: business-level aggregations'")
 
-spark.sql(f"CREATE SCHEMA IF NOT EXISTS {DLT_SCHEMA} COMMENT 'Schema for Delta Live Tables pipeline'")
+spark.sql(f"CREATE SCHEMA IF NOT EXISTS {DLT_SCHEMA} COMMENT 'Lakeflow Spark Declarative Pipelines (formerly DLT)'")
 
 # COMMAND ----------
 
@@ -172,6 +172,10 @@ print("="*70)
 # MAGIC ⚠️ **WARNING**: This will delete ALL data, tables, and objects in the catalog. This action cannot be undone.
 # MAGIC ```sql
 # MAGIC -- To tear down the environment (WARNING: Deletes all data)
-# MAGIC -- DROP CATALOG IF EXISTS ${CATALOG_NAME} CASCADE;
+# MAGIC -- DROP CATALOG IF EXISTS cert_prep_catalog CASCADE;
 # MAGIC ```
+# MAGIC (or from Python: `spark.sql(f"DROP CATALOG IF EXISTS {CATALOG_NAME} CASCADE")`)
+# MAGIC
 # MAGIC After dropping the catalog, you can re-run this notebook to recreate the environment from scratch.
+# MAGIC
+# MAGIC To start over, always drop the catalog first. Re-running this notebook without the cleanup lands every data file again under new names, Auto Loader in notebook 02 ingests the copies, and every Bronze count doubles.

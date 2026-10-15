@@ -1,13 +1,13 @@
 # Databricks notebook source
 # MAGIC %md
 # MAGIC # Notebook 01: Environment Setup & Unity Catalog
-# MAGIC **Exam Coverage**: Sections 1 (Databricks Lakehouse Platform) & 5 (Data Governance)
+# MAGIC **Exam Coverage**: Sections 1 (Databricks Intelligence Platform) & 5 (Data Governance & Quality)
 # MAGIC **Duration**: 30-45 minutes
 # MAGIC ---
 # MAGIC ## Learning Objectives
 # MAGIC By the end of this notebook, you will be able to:
 # MAGIC - Understand Unity Catalog's three-level namespace (catalog.schema.table)
-# MAGIC - Create and manage catalogs, schemas, and volumes
+# MAGIC - Navigate the catalog, schemas and volumes the setup notebook created
 # MAGIC - Create managed tables in Unity Catalog
 # MAGIC - Implement access control using GRANT and REVOKE
 # MAGIC - Understand serverless compute and its benefits
@@ -17,6 +17,8 @@
 
 # MAGIC %md
 # MAGIC ## Section 1: Introduction and Setup
+# MAGIC **The scenario.** You are the data engineer at CartHarborHQ, a fictional US online retailer with 10,000 customers and 1,000 products across Electronics, Clothing, Home & Garden, Sports & Outdoors and Books. Customer, catalog, order and clickstream files land in a Unity Catalog volume every day.
+# MAGIC
 # MAGIC Unity Catalog provides centralized governance for all data and AI assets in Databricks.
 # MAGIC ### Three-Level Namespace
 # MAGIC ```
@@ -115,22 +117,19 @@ display(customers_df.limit(10))
 # MAGIC ---
 # MAGIC ### 🎯 EXERCISE 1: Create a Managed Table
 # MAGIC **Your task**: Save the `customers_df` DataFrame as a managed Delta table.
+# MAGIC
+# MAGIC **Why**: UC owns a managed table's files, so nobody tracks a storage path and DROP TABLE leaves no orphaned data.
+# MAGIC
 # MAGIC **Requirements:**
-# MAGIC - Table name: `{CATALOG_NAME}.{BRONZE_SCHEMA}.customers_managed`
-# MAGIC - Format: Delta
-# MAGIC - Mode: Overwrite (since this is the first load)
-# MAGIC - Use `.saveAsTable()` to create a managed table
-# MAGIC **Key syntax:**
-# MAGIC ```python
-# MAGIC df.write \
-# MAGIC .format("delta") \
-# MAGIC .mode("overwrite") \
-# MAGIC .saveAsTable("catalog.schema.table")
-# MAGIC ```
-# MAGIC **Hint**: The table name variable `managed_table_name` is created for you below.
+# MAGIC - Table name: `managed_table_name` (`{CATALOG_NAME}.{BRONZE_SCHEMA}.customers_managed`, created for you below)
+# MAGIC - Delta format, overwrite mode (this is the first load)
+# MAGIC - A managed table: you give a table name, never a storage path
+# MAGIC
+# MAGIC **Hint**: the DataFrame writer has a method that registers the output as a Unity Catalog table instead of writing to a path.
 
 # COMMAND ----------
 
+# ✏️ STUDENT EXERCISE
 # TODO: Create a managed table
 
 # Table name (provided)
@@ -148,7 +147,7 @@ print(f"Created managed table: {managed_table_name}")
 
 # MAGIC %md
 # MAGIC ---
-# MAGIC **Check the solution below** ⬇️
+# MAGIC **Solution below** ⬇️
 
 # COMMAND ----------
 
@@ -165,8 +164,17 @@ print(f"Created managed table: {managed_table_name}")
 
 # COMMAND ----------
 
-# Check table details to see where data is stored
+# MAGIC %md
+# MAGIC ### 🔍 Verify Your Results
+# MAGIC Run the cell below. You should see:
+# MAGIC - `format` = delta, and a `location` you never typed: a managed path Unity Catalog chose.
+# MAGIC - **10,200** rows: 10,000 customers + 200 planted duplicates (notebook 03 removes them on the way to Silver).
+
+# COMMAND ----------
+
+# 🔍 Verify: check table details to see where data is stored, and the row count
 display(spark.sql(f"DESCRIBE DETAIL {managed_table_name}"))
+print(f"Rows in {managed_table_name}: {spark.table(managed_table_name).count():,}")
 
 # COMMAND ----------
 
@@ -185,44 +193,37 @@ display(spark.sql(f"DESCRIBE DETAIL {managed_table_name}"))
 # MAGIC - ✅ Makes auditing easier
 # MAGIC - ✅ Follows security best practices
 # MAGIC ### Persona-Based Groups
-# MAGIC We'll create groups for common data team roles:
+# MAGIC We'll create one group for each data team role this lab grants access to:
 # MAGIC | Group | Role | Typical Access |
 # MAGIC |-------|------|----------------|
 # MAGIC | `data_engineers` | Build and maintain pipelines | Full access to Bronze, Silver, Gold |
-# MAGIC | `data_analysts` | Create reports and dashboards | Read-only on Silver and Gold |
-# MAGIC | `data_scientists` | Build ML models | Read-only on Silver (feature engineering) |
-# MAGIC | `business_users` | View business reports | Read-only on specific Gold views |
-# MAGIC | `managers` | Oversee operations | Read-only on Gold (high-level metrics) |
+# MAGIC | `data_analysts` | Create reports and dashboards | Read-only on Gold |
+# MAGIC | `data_scientists` | Build ML models | Read-only on Silver (features) and Gold (labels) |
 # MAGIC ### Group Management Notes
 # MAGIC **In production:**
 # MAGIC - Groups are typically created by workspace admins
 # MAGIC - Often synced from corporate identity providers (Azure AD, Okta, etc.)
 # MAGIC - Group membership is managed centrally
 # MAGIC **For this lab:**
-# MAGIC - Groups must be created manually via the Admin Console (not SQL)
+# MAGIC - Groups must be created manually in workspace settings (this creates account groups, the only groups Unity Catalog can grant to)
 # MAGIC - You'll need workspace admin or account admin privileges
 # MAGIC - Groups persist across workspace sessions
 # MAGIC ### 🔧 How to Create Groups Manually
 # MAGIC **Step-by-step instructions:**
-# MAGIC 1. **Navigate to Admin Console:**
-# MAGIC    - Click your profile icon (top right)
-# MAGIC    - Select **Settings** → **Admin Console**
+# MAGIC 1. **Open the groups page:**
+# MAGIC    - Click your username (top right) > **Settings** > **Identity and access**
 # MAGIC    - OR append `/settings/workspace/identity-and-access/groups` to your workspace URL
 # MAGIC 2. **Create Groups:**
-# MAGIC    - Click **Groups** tab (left sidebar)
-# MAGIC    - Click **Create Group**
-# MAGIC    - Create each of the following groups:
+# MAGIC    - Next to **Groups**, click **Manage** > **Add group** > **Add new**, enter the name, click **Add**
+# MAGIC    - Repeat for each of the following groups:
 # MAGIC      - `data_engineers`
 # MAGIC      - `data_analysts`
 # MAGIC      - `data_scientists`
-# MAGIC      - `business_users`
-# MAGIC      - `managers`
-# MAGIC    - After creating them, click on each group name, go to "Entitlements" and check all 3 boxes.
 # MAGIC 3. **Add Yourself to Groups (Optional):**
 # MAGIC    - Click on a group name
 # MAGIC    - Click **Add Members**
 # MAGIC    - Add your user email
-# MAGIC    - This allows you to test `is_member()` functions later
+# MAGIC    - This allows you to test `is_account_group_member()` later
 # MAGIC **Direct URL Pattern:**
 # MAGIC ```
 # MAGIC https://dbc-XXX.cloud.databricks.com/settings/workspace/identity-and-access/groups
@@ -233,16 +234,14 @@ display(spark.sql(f"DESCRIBE DETAIL {managed_table_name}"))
 
 # COMMAND ----------
 
-# Verify groups exist (run this after creating groups in Admin Console)
+# Verify groups exist (run this after creating groups in Settings > Identity and access)
 print("📋 Checking for required groups...")
 print("="*70)
 
 required_groups = [
     "data_engineers",
     "data_analysts",
-    "data_scientists",
-    "business_users",
-    "managers"
+    "data_scientists"
 ]
 
 try:
@@ -258,7 +257,7 @@ try:
 
     if missing_groups:
         print(f"\n⚠️  Missing groups: {', '.join(missing_groups)}")
-        print(f"⚠️  Please create these groups in the Admin Console before proceeding.")
+        print(f"⚠️  Please create these groups in Settings > Identity and access before proceeding.")
         print(f"⚠️  Navigate to: [Workspace URL]/settings/workspace/identity-and-access/groups")
     else:
         print(f"\n✅ All required groups exist!")
@@ -275,7 +274,7 @@ print("="*70)
 # MAGIC ### Checking Your Group Membership
 # MAGIC To see which groups you belong to, you can check your current user and group memberships.
 # MAGIC
-# MAGIC **Note:** Adding users to groups is done via the Admin Console UI, not SQL.
+# MAGIC **Note:** Adding users to groups is done in workspace settings, not SQL. `is_account_group_member()` checks membership at the account level, where Unity Catalog grants live. If you skipped the optional "Add yourself" step, every group shows `❌ Not a member`: expected, and the GRANT cells below still work.
 
 # COMMAND ----------
 
@@ -287,7 +286,7 @@ print(f"Current user: {current_user_email}")
 print("\nYour group memberships:")
 for group in required_groups:
     try:
-        is_member = spark.sql(f"SELECT is_member('{group}')").collect()[0][0]
+        is_member = spark.sql(f"SELECT is_account_group_member('{group}')").collect()[0][0]
         status = "✅ Member" if is_member else "❌ Not a member"
         print(f"  {group}: {status}")
     except Exception as e:
@@ -307,13 +306,12 @@ for group in required_groups:
 # MAGIC |-----------|----------------|
 # MAGIC | `SELECT` | Read data |
 # MAGIC | `MODIFY` | Insert, update, delete |
-# MAGIC | `CREATE` | Create new objects |
-# MAGIC | `USAGE` | Access child objects (prerequisite) |
+# MAGIC | `CREATE TABLE` / `CREATE SCHEMA` | Create tables in a schema / schemas in a catalog |
+# MAGIC | `USE CATALOG` / `USE SCHEMA` | Reach the objects inside (required to read anything) |
 # MAGIC | `ALL PRIVILEGES` | All permissions |
-# MAGIC ### The USAGE Privilege (Metastore Limitation)
-# MAGIC **Important Note**: In Unity Catalog metastore version 1.0, the `USAGE` privilege is not supported on catalogs and schemas.
-# MAGIC - In newer metastore versions, `USAGE` would be a prerequisite to access child objects
-# MAGIC - For metastore v1.0, you can grant privileges directly (e.g., `SELECT`, `ALL PRIVILEGES`) without `USAGE`
+# MAGIC ### Reaching a table takes three privileges
+# MAGIC To read a table, a principal needs `USE CATALOG` on the catalog, `USE SCHEMA` on the schema and `SELECT` on the table (or on the schema, which then covers every current and future table in it). `USE CATALOG` and `USE SCHEMA` grant no data access on their own; they only open the path. (`USAGE` is the legacy Hive metastore name and does not exist in Unity Catalog.)
+# MAGIC
 # MAGIC Let's implement persona-based access control.
 
 # COMMAND ----------
@@ -321,10 +319,14 @@ for group in required_groups:
 # Example: Grant full access to data engineers on bronze schema
 
 spark.sql(f"""
+    GRANT USE CATALOG ON CATALOG {CATALOG_NAME} TO `data_engineers`
+""")
+
+spark.sql(f"""
     GRANT ALL PRIVILEGES ON SCHEMA {CATALOG_NAME}.{BRONZE_SCHEMA} TO `data_engineers`
 """)
 
-print("✅ Granted full access to data_engineers on bronze schema")
+print("✅ Granted USE CATALOG and full access to data_engineers on bronze schema")
 
 # COMMAND ----------
 
@@ -333,24 +335,33 @@ print("✅ Granted full access to data_engineers on bronze schema")
 # MAGIC ### 🎯 EXERCISE 2: Grant Permissions for Data Analysts
 # MAGIC **Scenario**: Data analysts need read-only access to the Gold schema (business reports).
 # MAGIC **Your task**: Write GRANT statements for the `data_analysts` group.
+# MAGIC
+# MAGIC **Why**: Grant to groups, never people: when an analyst joins or leaves, one membership changes instead of every GRANT.
+# MAGIC
 # MAGIC **Requirements:**
-# MAGIC 1. Grant `SELECT` on the gold schema (read-only permission)
+# MAGIC 1. `USE CATALOG` on the catalog
+# MAGIC 2. `USE SCHEMA` on the gold schema
+# MAGIC 3. `SELECT` on the gold schema
+# MAGIC
 # MAGIC **SQL Syntax:**
 # MAGIC ```sql
 # MAGIC GRANT privilege ON object_type object_name TO `principal`
 # MAGIC ```
 # MAGIC **Hint**: Use `{CATALOG_NAME}` and `{GOLD_SCHEMA}` variables
-# MAGIC
-# MAGIC **Note**: We're skipping USAGE privilege due to metastore v1.0 limitations.
 
 # COMMAND ----------
 
+# ✏️ STUDENT EXERCISE
 # TODO: Grant read-only access to data analysts on Gold schema
 
-# Grant SELECT on gold schema
-spark.sql(f"""
+# 1. USE CATALOG on the catalog
 
-""")
+
+# 2. USE SCHEMA on gold schema
+
+
+# 3. SELECT on gold schema
+
 
 print("Granted read-only access to data_analysts on gold schema")
 
@@ -362,7 +373,15 @@ print("Granted read-only access to data_analysts on gold schema")
 
 # COMMAND ----------
 
-# ✅ SOLUTION: Data Analysts - Gold Read-Only
+# ✅ SOLUTION: Grant Permissions for Data Analysts
+
+# spark.sql(f"""
+#     GRANT USE CATALOG ON CATALOG {CATALOG_NAME} TO `data_analysts`
+# """)
+
+# spark.sql(f"""
+#     GRANT USE SCHEMA ON SCHEMA {CATALOG_NAME}.{GOLD_SCHEMA} TO `data_analysts`
+# """)
 
 # spark.sql(f"""
 #     GRANT SELECT ON SCHEMA {CATALOG_NAME}.{GOLD_SCHEMA} TO `data_analysts`
@@ -377,20 +396,28 @@ print("Granted read-only access to data_analysts on gold schema")
 # MAGIC ### 🎯 EXERCISE 3: Grant Permissions for Data Scientists
 # MAGIC **Scenario**: Data scientists need read-only access to BOTH Silver and Gold schemas.
 # MAGIC **Your task**: Write GRANT statements for the `data_scientists` group.
+# MAGIC
+# MAGIC **Why**: Grant to groups, never people: when a data scientist joins or leaves, one membership changes instead of every GRANT.
+# MAGIC
 # MAGIC **Requirements:**
-# MAGIC 1. Grant `SELECT` on silver schema
-# MAGIC 2. Grant `SELECT` on gold schema
-# MAGIC **Hint**: You'll need 2 GRANT statements total
-# MAGIC **Note**: We're skipping USAGE privilege due to metastore v1.0 limitations.
+# MAGIC 1. `USE CATALOG` on the catalog
+# MAGIC 2. `USE SCHEMA` + `SELECT` on silver
+# MAGIC 3. `USE SCHEMA` + `SELECT` on gold
+# MAGIC
+# MAGIC **Hint**: You'll need 5 GRANT statements total
 
 # COMMAND ----------
 
+# ✏️ STUDENT EXERCISE
 # TODO: Grant read-only access to data scientists on Silver and Gold
 
-# 1. SELECT on silver schema
+# 1. USE CATALOG on the catalog
 
 
-# 2. SELECT on gold schema
+# 2. USE SCHEMA and SELECT on silver schema
+
+
+# 3. USE SCHEMA and SELECT on gold schema
 
 
 print("Granted read-only access to data_scientists on silver and gold")
@@ -403,10 +430,22 @@ print("Granted read-only access to data_scientists on silver and gold")
 
 # COMMAND ----------
 
-# ✅ SOLUTION: Data Scientists - Silver and Gold Read-Only
+# ✅ SOLUTION: Grant Permissions for Data Scientists
+
+# spark.sql(f"""
+#     GRANT USE CATALOG ON CATALOG {CATALOG_NAME} TO `data_scientists`
+# """)
+
+# spark.sql(f"""
+#     GRANT USE SCHEMA ON SCHEMA {CATALOG_NAME}.{SILVER_SCHEMA} TO `data_scientists`
+# """)
 
 # spark.sql(f"""
 #     GRANT SELECT ON SCHEMA {CATALOG_NAME}.{SILVER_SCHEMA} TO `data_scientists`
+# """)
+
+# spark.sql(f"""
+#     GRANT USE SCHEMA ON SCHEMA {CATALOG_NAME}.{GOLD_SCHEMA} TO `data_scientists`
 # """)
 
 # spark.sql(f"""
@@ -417,8 +456,21 @@ print("Granted read-only access to data_scientists on silver and gold")
 
 # COMMAND ----------
 
-# View current grants on bronze schema
-display(spark.sql(f"SHOW GRANTS ON SCHEMA {CATALOG_NAME}.{BRONZE_SCHEMA}"))
+# MAGIC %md
+# MAGIC ### 🔍 Verify Your Results
+# MAGIC Run the cell below. You should see:
+# MAGIC - **Catalog**: `USE CATALOG` for `data_engineers`, `data_analysts` and `data_scientists`.
+# MAGIC - **Gold**: `USE SCHEMA` and `SELECT` for `data_analysts` and for `data_scientists`.
+# MAGIC - **Silver**: `USE SCHEMA` and `SELECT` for `data_scientists` only.
+# MAGIC
+# MAGIC A missing row means that GRANT did not run. Without the `USE CATALOG` and `USE SCHEMA` rows, the `SELECT` grant reads nothing.
+
+# COMMAND ----------
+
+# 🔍 Verify grants on the catalog, gold and silver
+display(spark.sql(f"SHOW GRANTS ON CATALOG {CATALOG_NAME}"))
+display(spark.sql(f"SHOW GRANTS ON SCHEMA {CATALOG_NAME}.{GOLD_SCHEMA}"))
+display(spark.sql(f"SHOW GRANTS ON SCHEMA {CATALOG_NAME}.{SILVER_SCHEMA}"))
 
 # COMMAND ----------
 
@@ -447,22 +499,21 @@ display(spark.sql(f"SHOW GRANTS ON SCHEMA {CATALOG_NAME}.{BRONZE_SCHEMA}"))
 # MAGIC Serverless compute eliminates cluster configuration and management.
 # MAGIC
 # MAGIC **Key characteristics:**
-# MAGIC - ⚡ Instant startup (no provisioning)
-# MAGIC - 📈 Auto-scaling based on workload
-# MAGIC - 💰 Pay only for resources used
-# MAGIC - 🔧 Pre-warmed and optimized
+# MAGIC - Starts in seconds for notebooks; serverless jobs offer a standard mode (cheaper, a few minutes to start) and a performance-optimized mode (faster start)
+# MAGIC - Autoscaling and Photon are on automatically, no cluster config
+# MAGIC - Billed on the DBUs the workload consumes, no idle cluster
 # MAGIC ### Serverless vs Custom Clusters
 # MAGIC | Feature | Serverless | Custom Clusters |
 # MAGIC |---------|------------|----------------|
-# MAGIC | **Startup Time** | Instant | 3-5 minutes |
+# MAGIC | **Startup** | Seconds (notebooks) | Minutes |
 # MAGIC | **Configuration** | Automatic | Manual |
 # MAGIC | **Scaling** | Auto | Manual/auto rules |
-# MAGIC | **Use Case** | Ad-hoc, development | Production, specific configs |
-# MAGIC | **Cost** | Per query | Per uptime |
+# MAGIC | **Use case** | Recommended for jobs and interactive work | Workloads needing custom Spark config, libraries or instance types serverless does not support |
+# MAGIC | **Billing** | DBUs consumed | DBUs while the cluster is up |
 # MAGIC ### Best Practices
 # MAGIC - ✅ Use for development and exploration
 # MAGIC - ✅ Use for ad-hoc queries
-# MAGIC - ❌ Not ideal for long-running batch jobs (use custom clusters)
+# MAGIC - ✅ Databricks recommends serverless for all job tasks; pick classic compute only when you need a config serverless does not allow
 # MAGIC
 # MAGIC ### We're going to use serverless for this lab, as this is the only option in Databricks Free Edition
 
@@ -483,17 +534,17 @@ display(spark.sql(f"SHOW GRANTS ON SCHEMA {CATALOG_NAME}.{BRONZE_SCHEMA}"))
 # MAGIC **4. Access Control**
 # MAGIC - GRANT/REVOKE for permissions
 # MAGIC - Persona-based patterns (engineers, analysts, scientists)
-# MAGIC - Privileges: SELECT, MODIFY, CREATE, USAGE, ALL PRIVILEGES
+# MAGIC - Privileges: SELECT, MODIFY, CREATE TABLE, USE CATALOG, USE SCHEMA, ALL PRIVILEGES
 # MAGIC **5. Serverless Compute**
-# MAGIC - Instant startup, auto-scaling
-# MAGIC - Best for development and ad-hoc queries
-# MAGIC - Community Edition limitations
+# MAGIC - Starts in seconds for notebooks, autoscaling and Photon automatic
+# MAGIC - Recommended for jobs and interactive work
+# MAGIC - The only compute in Databricks Free Edition
 # MAGIC ### ✅ Exam Checklist
 # MAGIC Can you:
 # MAGIC - [ ] Write three-level namespace references?
 # MAGIC - [ ] Create managed tables with saveAsTable()?
 # MAGIC - [ ] Write GRANT statements for different personas?
-# MAGIC - [ ] Understand the USAGE prerequisite?
+# MAGIC - [ ] Know that USE CATALOG + USE SCHEMA are required to reach a table?
 # MAGIC - [ ] Describe serverless compute benefits?
 # MAGIC ### 📚 Next Steps
 # MAGIC **Notebook 02** covers:

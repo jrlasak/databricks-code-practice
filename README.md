@@ -60,7 +60,7 @@ Multi-notebook, end-to-end medallion pipelines with a business scenario. Each ru
 
 | Lab                                                                      | What You Build                                                                                       | Focus                                                                                         |
 | ------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------- |
-| [Apparel Retail 360 (DLT)](pipeline-labs/apparel-streaming/)             | End-to-end retail analytics pipeline on Delta Live Tables with a full medallion architecture.        | DLT, Medallion, SCD Type 2, Streaming, Data Quality Expectations                              |
+| [Apparel Retail 360 (Lakeflow)](pipeline-labs/apparel-streaming/) | End-to-end retail analytics pipeline on Lakeflow Spark Declarative Pipelines with a full medallion architecture. | Lakeflow Declarative Pipelines, Medallion, SCD Type 2, Streaming, Data Quality Expectations |
 | [Fintech Transaction Monitoring](pipeline-labs/fintech-monitoring/)      | Real-time fraud-monitoring pipeline for a payment processor handling 500K+ transactions/day.         | Structured Streaming, Rescued Data, Watermarked Dedup, Stream-Static Joins, Liquid Clustering |
 | [DE Associate Certification Prep](pipeline-labs/de-associate-cert-prep/) | Production-grade pipeline covering every exam domain of the Databricks Data Engineer Associate cert. | Auto Loader, COPY INTO, Medallion, SCD2, Jobs, Unity Catalog                                  |
 | [PySpark Developer Cert Prep](pipeline-labs/pyspark-cert-zenith/)        | E-commerce analytics pipeline covering every domain of the Spark Developer Associate cert.           | DataFrame API, Structured Streaming, Data Skew, Performance Tuning                            |
@@ -86,7 +86,7 @@ Everything runs on Free Edition: serverless compute, Unity Catalog, Delta Lake. 
 
 - **New to Databricks?** Start with [DE Associate Cert Prep](pipeline-labs/de-associate-cert-prep/) - broadest fundamentals.
 - **Want quick reps on a specific concept?** [Delta Lake exercises](exercises/delta-lake/), [ELT exercises](exercises/elt/), or [Streaming exercises](exercises/streaming/) - drill one concept at a time.
-- **Comfortable with batch, new to streaming?** Start with [Streaming exercises](exercises/streaming/) for atomic concept drills, then [Apparel DLT](pipeline-labs/apparel-streaming/) and [Fintech Monitoring](pipeline-labs/fintech-monitoring/) for end-to-end pipelines.
+- **Comfortable with batch, new to streaming?** Start with [Streaming exercises](exercises/streaming/) for atomic concept drills, then [Apparel Lakeflow](pipeline-labs/apparel-streaming/) and [Fintech Monitoring](pipeline-labs/fintech-monitoring/) for end-to-end pipelines.
 - **Preparing for a cert?** [DE Associate](pipeline-labs/de-associate-cert-prep/) or [Spark Developer Associate](pipeline-labs/pyspark-cert-zenith/).
 - **Already shipping pipelines, want to go deeper on performance?** [Delta Optimization Techniques](deep-dives/optimization-techniques/).
 - **Want to ship natural-language analytics (Genie / AI/BI)?** [Build a Genie Space](deep-dives/genie-sales-analytics/) - connect Genie to a star schema, benchmark its accuracy, embed it in a dashboard.

@@ -19,7 +19,9 @@
 
 ## High-Level Overview
 
-This lab provides hands-on practice to prepare for the Databricks Certified Data Engineer Associate exam. You will build a production-grade, end-to-end data pipeline using real-world scenarios and datasets. The exercises are designed to be completed within the Databricks Free Community Edition, allowing you to develop practical skills without any cost.
+This lab provides hands-on practice to prepare for the Databricks Certified Data Engineer Associate exam. You will build a production-grade, end-to-end data pipeline using real-world scenarios and datasets. The exercises are designed to be completed in Databricks Free Edition, allowing you to develop practical skills without any cost.
+
+**The scenario.** You are the data engineer at CartHarborHQ, a fictional US online retailer with 10,000 customers and 1,000 products across Electronics, Clothing, Home & Garden, Sports & Outdoors and Books. Customer, catalog, order and clickstream files land in a Unity Catalog volume every day. Merchandising wants daily revenue by category, the loyalty team wants RFM segments to pick who to target, and category managers want their products ranked by revenue. You build that pipeline in notebooks 02 to 04 and schedule it in notebook 05.
 
 The lab covers the entire data engineering lifecycle, including:
 
@@ -53,9 +55,21 @@ This lab is structured to cover the key topics outlined in [the official Databri
 
 - **What you'll practice:** Understanding Unity Catalog's three-level namespace (catalog.schema.table), creating and managing catalogs, schemas, and volumes, creating managed tables, implementing access control with GRANT and REVOKE statements, and data quality validation patterns.
 
+## Prerequisites
+
+- Comfortable with the PySpark DataFrame API and basic SQL; Delta Lake basics.
+- A Databricks Free Edition workspace where you are the admin: notebook 01 has you create 3 groups (`data_engineers`, `data_analysts`, `data_scientists`) in Settings before its GRANT exercises.
+- About 4-5 hours in total; each notebook states its own time.
+
+> ⚠️ **Before you start**: Disable AI code suggestions in your Databricks workspace.
+> Go to **User Settings → Developer → AI-powered code completion** and turn **OFF**:
+> - **Autocomplete as you type**
+> - **Automatic Assistant Autocomplete**
+> This lab is designed to build muscle memory: auto-completions defeat the purpose.
+
 ## Additional Exam Topics
 
-This lab focuses on core data engineering workflows. If you want to practice additional exam topics such as **Delta Live Tables (DLT) pipelines** or **Delta table optimization techniques**, check out the other hands-on labs in this repo - the [Apparel DLT pipeline](../apparel-streaming/) and the [Delta Optimization deep-dive](../../deep-dives/optimization-techniques/).
+This lab focuses on core data engineering workflows. If you want to practice additional exam topics such as **Lakeflow Spark Declarative Pipelines (formerly DLT)** or **Delta table optimization techniques**, check out the other hands-on labs in this repo - the [Apparel DLT pipeline](../apparel-streaming/) and the [Delta Optimization deep-dive](../../deep-dives/optimization-techniques/).
 
 ## Get 50% Off Your Certification
 
@@ -67,18 +81,16 @@ Look for upcoming Databricks Festival here - https://community.databricks.com/t5
 
 1. **Create a Databricks Account**
    - Sign up for a [Databricks Free Edition account](https://www.databricks.com/learn/free-edition) if you don't already have one.
-   - Familiarize yourself with the workspace, clusters, and notebook interface.
+   - Familiarize yourself with the workspace, serverless compute and the notebook interface.
 
 2. **Import this repository to Databricks**
-   - In Databricks, go to the Workspace sidebar and click the "Repos" section, click "Add Repo".
-     - Alternatively, go to your personal folder, click "create" and select "git folder".
-   - Paste the GitHub URL for this repository.
+   - In your Workspace, click **Create** > **Git folder**, paste the repository URL and click **Create Git folder**.
    - Authenticate with GitHub if prompted, and select the main branch.
    - The repo will appear as a folder in your workspace, allowing you to edit, run notebooks, and manage files directly from Databricks.
-   - For more details, see the official Databricks documentation: [Repos in Databricks](https://docs.databricks.com/repos/index.html).
+   - For more details, see the official Databricks documentation: [Git folders](https://docs.databricks.com/aws/en/repos/).
 
 3. Open the `notebooks/` folder and run `00_Setup_Environment.py` to create the Unity Catalog infrastructure and generate data.
 
-4. Follow the numbered notebooks (`01` to `06`) to build the pipeline.
+4. Follow the numbered notebooks (`01` to `05`) to build the pipeline.
 
    Each exercise includes a `TODO` area for your code and a commented-out solution for verification.
