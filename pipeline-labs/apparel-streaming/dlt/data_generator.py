@@ -1,5 +1,5 @@
 """
-Databricks Apparel Lakeflow Pipeline Data Generator
+Apparel Retail 360: Data Generator
 
 This script generates continuous, simulated data streams for LoomLane Outfitters, a
 fictional apparel chain, designed to feed a Lakeflow Spark Declarative Pipelines
@@ -7,9 +7,8 @@ fictional apparel chain, designed to feed a Lakeflow Spark Declarative Pipelines
 transactions, customers, products (items), and stores. Each stream writes its rows to
 its own landing folder as a Delta table.
 
-The primary purpose is to produce realistic but imperfect data that mimics a real-world
-scenario, allowing the Lakeflow pipeline to be tested on its ability to handle data
-quality issues, transformations, and referential integrity.
+The data is realistic but imperfect on purpose: your pipeline has to handle its data
+quality issues, transformations and referential integrity.
 
 The backfill is paced like a real month (40 sales per store and day). The live stream
 runs at demo speed (500 sales every 30 seconds) so new data shows up in every pipeline
@@ -48,7 +47,7 @@ to int.
         *   A customer buys at their home store 80% of the time; low product IDs sell the
             most (a long-tail best-seller curve); stores 'Under Renovation' do not trade.
         *   Resumes `transaction_id` from the last known value in the target Delta table
-          to prevent key collisions across restarts.
+            to prevent key collisions across restarts.
 
 2.  **Customer Stream (`generate_customer_stream`)**
     *   **Description:** A dimension stream for customer data. It simulates both the creation
@@ -62,8 +61,8 @@ to int.
             are dated one day before the sales backfill starts, so every historic sale has
             a dimension version valid at its time.
         *   Each batch sends 1 to `CUSTOMER_BATCH_SIZE` records; 30% are changes to an existing
-            customer. A change copies the current record and changes only what changes in a
-            business: the address (50% of changes), the email (25%) or the phone number (15%),
+            customer. A change copies the current record and changes at most one contact
+            detail: the address (50% of changes), the email (25%) or the phone number (15%),
             and every change adds 5-120 loyalty points. Name, gender, age and join date never
             change.
 
@@ -93,21 +92,22 @@ to int.
             dated one day before the sales backfill starts, so every historic sale has a
             dimension version valid at its time (a store's `open_date` is earlier still).
         *   Each batch sends 0 to `STORE_BATCH_SIZE` (2) records; 95% are changes to an
-            existing store, so a new store opens every few minutes. A change sets a new
-            manager (50% of changes; 1 in 5 of those leaves the position vacant), changes the
-            status (30%: an open store goes 'Under Renovation' 1 time in 4, a store under
-            renovation reopens) or the phone number (20%). Name, address and open date never
-            change. Setting `STORE_BATCH_SIZE` to 0 stops store records entirely.
+            existing store, so at demo speed a new store opens about every 10 minutes. A
+            change sets a new manager (50% of changes; 1 in 5 of those leaves the position
+            vacant), changes the status (30%: an open store goes 'Under Renovation' 1 time
+            in 4, a store under renovation reopens) or the phone number (20%). Name, address
+            and open date never change. Setting `STORE_BATCH_SIZE` to 0 stops store records
+            entirely.
 
 ------------------------------------------------------------------------------------
 Expected Data Quality Issues & Constraints (For the Lakeflow Pipeline to Handle)
 ------------------------------------------------------------------------------------
 
-This generator intentionally introduces "dirty" data to test the robustness of the
-downstream Lakeflow pipeline. Rates are in `PLANTED` below. Defects are planted on the
-row the source writes, never in the generator's own memory of the record, so a later
-change record for the same ID arrives clean. New records carry every defect of their
-stream; change records carry only the defects of the attribute they change.
+The generator plants dirty data for your pipeline to catch. Rates are in `PLANTED`
+below. Defects are planted on the row the source writes, never in the generator's own
+memory of the record, so a later change record for the same ID arrives clean. New
+records carry every defect of their stream; change records carry only the defects of
+the attribute they change.
 
 1.  **Negative Values:**
     *   `sales.quantity`: Represents a product return (5% of sales).
@@ -130,23 +130,24 @@ stream; change records carry only the defects of the attribute they change.
     *   `products.price`: Cents typed as dollars, the price x 100 (1%).
     *   `stores.status`: 'open' in lowercase, from a second store system (3%).
     *   `sales.payment_method`: 'CARD' or 'Apple Pay' from an unmapped terminal (1%).
-    *   No business key is ever NULL: the bronze fail rules guard against it but nothing
-        plants it, because one such row would stop every pipeline update.
+    *   Business keys are never NULL. The bronze fail rules guard them anyway: a NULL
+        key fails the update for that table and everything downstream of it, and every
+        rerun stops on the same record until you change the rule, or remove the record
+        at the source and run a full refresh.
 
 4.  **Duplicates and Updates (Change Data Capture - CDC):**
     *   The customer, product, and store streams generate records with existing IDs but
         updated information and a new `last_update_time`. The Lakeflow pipeline must
-        correctly handle this CDC-like data, typically with AUTO CDC
-        (`dp.create_auto_cdc_flow` in Python, `AUTO CDC INTO` in SQL), to merge the latest
-        version of a record into the target dimension table.
+        handle this CDC-like data with AUTO CDC (`dp.create_auto_cdc_flow` in Python,
+        `AUTO CDC INTO` in SQL) and keep every version as SCD Type 2 (Tasks 9-11).
 
 5.  **Referential Integrity:**
     *   The script maintains referential integrity at the source: it loads the existing
         records from the Delta tables on startup (`load_current_records`), publishes a new
         ID to the sales stream only after its record is written, and only generates sales
-        for IDs that exist in the dimension streams. However, the Lakeflow pipeline should
-        still enforce this with constraints to catch any potential violations (e.g., a
-        dimension record is dropped or arrives late).
+        for IDs that exist in the dimension streams. The pipeline still has to cope with
+        a dimension record that is dropped or arrives late: that is why gold uses left
+        joins (Task 17).
 
 6.  **Event Time Skew:**
     *   The `event_time` in the sales stream and `last_update_time` in dimension streams
@@ -615,7 +616,7 @@ def generate_item_stream(path: str, config: dict):
             record["brand"] = rng.choice(brands)
 
     if not current:
-        print(f"[{datetime.now()}] Item stream: Bootstrapping initial {config['INITIAL_PRODUCT_COUNT']} products...")
+        print(f"[{datetime.now()}] Product stream: Bootstrapping initial {config['INITIAL_PRODUCT_COUNT']} products...")
         # Dated one day before the sales backfill starts, so every historic sale has a version
         start = datetime.now(timezone.utc) - timedelta(days=config["BACKFILL_DAYS"] + 1)
         rows = []
@@ -624,7 +625,7 @@ def generate_item_stream(path: str, config: dict):
             current[pid] = record
             rows.append(row)
         write_rows(rows, PRODUCT_SCHEMA, path)
-        print(f"[{datetime.now()}] Item stream: Initial bootstrap complete.")
+        print(f"[{datetime.now()}] Product stream: Initial bootstrap complete.")
 
     with state_lock:
         products.update(current)
@@ -650,7 +651,7 @@ def generate_item_stream(path: str, config: dict):
         current.update(changed)
         with state_lock:
             products.update(changed)
-        print(f"[{datetime.now()}] Item stream: Ingested {len(rows)} new/updated records.")
+        print(f"[{datetime.now()}] Product stream: Ingested {len(rows)} new/updated records.")
         stop.wait(config['BATCH_INTERVAL_S'])
 
 def new_store(store_id, ts, open_date, rng, fake):

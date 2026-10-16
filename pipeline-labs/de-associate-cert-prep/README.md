@@ -19,13 +19,13 @@
 
 ## High-Level Overview
 
-This lab provides hands-on practice to prepare for the Databricks Certified Data Engineer Associate exam. You will build a production-grade, end-to-end data pipeline using real-world scenarios and datasets. The exercises are designed to be completed in Databricks Free Edition, allowing you to develop practical skills without any cost.
+This lab provides hands-on practice to prepare for the Databricks Certified Data Engineer Associate exam. You build an end-to-end medallion pipeline on a synthetic retail dataset, entirely in Databricks Free Edition.
 
 **The scenario.** You are the data engineer at CartHarborHQ, a fictional US online retailer with 10,000 customers and 1,000 products across Electronics, Clothing, Home & Garden, Sports & Outdoors and Books. Customer, catalog, order and clickstream files land in a Unity Catalog volume every day. Merchandising wants daily revenue by category, the loyalty team wants RFM segments to pick who to target, and category managers want their products ranked by revenue. You build that pipeline in notebooks 02 to 04 and schedule it in notebook 05.
 
-The lab covers the entire data engineering lifecycle, including:
+The lab covers:
 
-- Ingesting raw data from various sources using Auto Loader and COPY INTO.
+- Ingesting JSON and CSV files from Unity Catalog volumes with Auto Loader and COPY INTO.
 - Implementing the Medallion Architecture (Bronze, Silver, Gold layers).
 - Performing data transformations, quality checks, and implementing SCD Type 2.
 - Orchestrating workflows with Databricks Jobs and multi-task dependencies.
@@ -37,11 +37,11 @@ This lab is structured to cover the key topics outlined in [the official Databri
 
 ### Section 1: Databricks Intelligence Platform
 
-- **What you'll practice:** Enabling features that simplify data layout decisions, understanding the value of the Data Intelligence Platform, and identifying the applicable compute for specific use cases.
+- **What you'll practice:** Choosing between serverless and classic compute (notebook 01) and laying out Gold tables with liquid clustering instead of partitions (notebook 04).
 
 ### Section 2: Development and Ingestion
 
-- **What you'll practice:** Leveraging Notebooks functionality, working with Auto Loader from various sources (JSON, CSV), using COPY INTO for batch incremental loads, and handling schema evolution.
+- **What you'll practice:** Sharing configuration across notebooks with `%run`, ingesting JSON and CSV files with Auto Loader, loading batch increments with COPY INTO, and handling schema evolution and `_rescued_data`.
 
 ### Section 3: Data Processing & Transformations
 
@@ -59,23 +59,24 @@ This lab is structured to cover the key topics outlined in [the official Databri
 
 - Comfortable with the PySpark DataFrame API and basic SQL; Delta Lake basics.
 - A Databricks Free Edition workspace where you are the admin: notebook 01 has you create 3 groups (`data_engineers`, `data_analysts`, `data_scientists`) in Settings before its GRANT exercises.
-- About 4-5 hours in total; each notebook states its own time.
+- About 4.5 hours in total: 15 minutes of setup, then 30 minutes to 1 hour per notebook, best done one notebook per sitting; each notebook states its own time.
 
 > ⚠️ **Before you start**: Disable AI code suggestions in your Databricks workspace.
-> Go to **User Settings → Developer → AI-powered code completion** and turn **OFF**:
+> Open your profile menu, go to **Settings → Developer**, and under **Code Editor** turn **OFF**:
+> - **Automatic Genie Code Autocomplete**
 > - **Autocomplete as you type**
-> - **Automatic Assistant Autocomplete**
+>
 > This lab is designed to build muscle memory: auto-completions defeat the purpose.
 
 ## Additional Exam Topics
 
-This lab focuses on core data engineering workflows. If you want to practice additional exam topics such as **Lakeflow Spark Declarative Pipelines (formerly DLT)** or **Delta table optimization techniques**, check out the other hands-on labs in this repo - the [Apparel DLT pipeline](../apparel-streaming/) and the [Delta Optimization deep-dive](../../deep-dives/optimization-techniques/).
+This lab focuses on core data engineering workflows. If you want to practice additional exam topics such as **Lakeflow Spark Declarative Pipelines (formerly DLT)** or **Delta table optimization techniques**, check out the other hands-on labs in this repo - the [Apparel declarative pipeline](../apparel-streaming/) and the [Delta Optimization deep-dive](../../deep-dives/optimization-techniques/).
 
 ## Get 50% Off Your Certification
 
-Register for a "Virtual Learning Festival", complete the required courses in the timeline provided to automatically receive 50% off the certification.
+Register for a Databricks Virtual Learning Festival and complete the required courses within its timeline to receive a 50%-off certification voucher.
 
-Look for upcoming Databricks Festival here - https://community.databricks.com/t5/events/eb-p/databricks-community-events
+Upcoming festivals: [Databricks Community events](https://community.databricks.com/t5/events/eb-p/databricks-community-events)
 
 ## How to Start
 
@@ -93,4 +94,6 @@ Look for upcoming Databricks Festival here - https://community.databricks.com/t5
 
 4. Follow the numbered notebooks (`01` to `05`) to build the pipeline.
 
-   Each exercise includes a `TODO` area for your code and a commented-out solution for verification.
+   Each exercise has a `TODO` cell for your code, a commented-out solution right after it, and a 🔍 cell that tells you what you should see. Try the exercise before you scroll to the solution.
+
+   Keep `data_contract.md` open while you code: it lists every table with its grain and key.

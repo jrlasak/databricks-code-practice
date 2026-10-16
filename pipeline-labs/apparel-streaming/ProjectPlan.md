@@ -15,42 +15,30 @@
   - Try to solve each task yourself first, then check the solution if needed!
   
 - **Configuration:**  
-  Many files in this repository rely on `dlt/variables.py` to configure your environment and determine where synthetic data is generated. To change the catalog name or other object names, simply update them in `dlt/variables.py`.
+  Many files in this repository rely on `dlt/variables.py` to configure your environment and determine where synthetic data is generated. To change the catalog name or other object names, update them in `dlt/variables.py`; a new catalog name must also go into the pipeline's **Default catalog** (step 4) and replace `apparel_store` in the [Check your work](#check-your-work) queries.
   
-- **Resource limits (Free Edition):** stop `dlt/data_generator.py` as soon as the four landing folders have data; it runs until you stop it. A transient "Resources exhausted" error clears after a short wait. If you exceed the daily compute quota, Free Edition shuts compute down for the rest of the day; your data and settings are kept.
+- **Resource limits (Free Edition):** `dlt/data_generator.py` runs until you stop it. About 20 minutes of generator time (about 30 live batches) gives clear counts in [Check your work](#check-your-work); stop it after that. A transient "Resources exhausted" error clears after a short wait. If you exceed the daily compute quota, Free Edition shuts compute down for the rest of the day; your data and settings are kept.
 
 ---
 
 ## Databricks Configuration Requirements
 
-> **Tip:** If you are new to Databricks, take time to explore the workspace UI and documentation. Understanding catalogs, schemas, and volumes will help you later.
-
 To run this project end-to-end, complete the following setup steps in your Databricks workspace:
 
-1. **Create a Databricks Account**
+1. **Create a Free Edition account and import this repository as a Git folder**: see [README.md > How to Start](README.md#5-how-to-start).
 
-   - Sign up for a [Databricks Free Edition account](https://www.databricks.com/learn/free-edition) if you don’t already have one.
-   - Familiarize yourself with the workspace, serverless compute and the notebook interface.
+2. **Run the `dlt/environment_setup.ipynb` notebook to set up a catalog, schemas and volumes for the synthetic data generator**. It will use the paths defined in `dlt/variables.py` for creating appropriate objects in Unity Catalog.
 
-2. **Import this repository to Databricks**
-
-   - In the sidebar click **Workspace**, open your home folder, then click **Create** > **Git folder**.
-   - Paste this repository's GitHub URL and click **Create Git folder** (a public repo needs no GitHub credentials).
-   - The repo will appear as a folder in your workspace, allowing you to edit, run notebooks, and manage files directly from Databricks.
-   - For details see [Git folders](https://docs.databricks.com/aws/en/repos/).
-
-3. **Run the `dlt/environment_setup.ipynb` notebook to set up a catalog, schemas and volumes for the synthetic data generator**. It will use the paths defined in `dlt/variables.py` for creating appropriate objects in Unity Catalog.
-
-4. **Run the synthetic data generator (`dlt/data_generator.py`) before you create the pipeline**
+3. **Run the synthetic data generator (`dlt/data_generator.py`) before you create the pipeline**
 
    - Open `dlt/data_generator.py` in the workspace editor and click **Run**. It installs `faker` first, then writes a batch to each of the four landing folders every 30 seconds and runs until you stop it. On its first run the sales stream also backfills 30 days of history (about 6,000 sales) before its first live batch of 500.
    - Nothing lands until `faker` installs and the first batches are written: about 5-6 minutes. Wait until the output shows `Sales stream: Ingested 500 new transactions.` at least twice.
    - Before you start the pipeline, run only the HEALTH CHECK cell of `dlt/environment_maintenance.ipynb` (the first code cell, right under the title; never use Run all, because the cells further down drop the tables and delete the generator's files): all four counts must be above 0 and `missing_customers`, `missing_products`, `missing_stores` at 0.
-   - Then stop the generator, or keep it running if you want later pipeline updates to pick up new data.
+   - Keep the generator running while you create the pipeline and work on the bronze tasks, and stop it after about 20 minutes in total: the rare rules in the Silver checks and the NULL product names in the Gold checks need that long to show above 0.
    - If a pipeline update fails with `DELTA_MISSING_TRANSACTION_LOG` (or `DELTA_TABLE_NOT_FOUND` on a `/Volumes/.../00_landing/streaming/...` path), one landing folder had no data yet: run the generator longer and re-run the update.
    - **Tip:** [SyntheticDataGenerator.md](SyntheticDataGenerator.md) documents the table schemas and the planted data quality issues.
 
-5. **Create and configure a Lakeflow pipeline**
+4. **Create and configure a Lakeflow pipeline**
 
    - In the sidebar click **New** > **ETL pipeline**, name it, and choose **Add existing assets** (not sample code: that adds its own sample tables to the pipeline). This creates a Lakeflow Spark Declarative Pipelines pipeline (formerly Delta Live Tables / DLT); the rest of this guide calls it the Lakeflow pipeline.
    - Under the pipeline name set **Default catalog** to `apparel_store` and **Default schema** to `02_silver`.
@@ -64,8 +52,7 @@ To run this project end-to-end, complete the following setup steps in your Datab
 
 ## How to Work on the Lakeflow Pipeline
 
-> **Your tasks are now organized in separate files!**  
-> Each file in the `dlt/` folder that starts with `0*` contains specific tasks for that layer of the pipeline. Work through them in order.
+> **Your tasks live in the six `dlt/0*.py` files: one bronze, four silver, one gold.** Work through them in order.
 
 ### Working Approach
 
@@ -99,7 +86,7 @@ To run this project end-to-end, complete the following setup steps in your Datab
    - SCD Type 2 logic for dimensions
    
    **Each task includes:**
-   - Clear requirements with checkboxes `[ ]`
+   - Requirements as checkboxes `[ ]`
    - Business logic explanations
    - A "Solution Is Below" section with commented code you can review or uncomment
 
@@ -110,14 +97,11 @@ To run this project end-to-end, complete the following setup steps in your Datab
    - Check the pipeline UI for data quality metrics and lineage
    - To watch increments, keep `dlt/data_generator.py` running and start another update: each update processes only the data that landed since the previous one
 
-6. **Need help?**: 
-   - **First**: Scroll down below each task to find the "Solution Is Below" section with working code (commented out)
-   - **Second**: Review the complete pipeline in `final_code/final_dlt.py` for the full reference implementation
-   - **Tip**: Try solving each task yourself first to maximize learning!
+6. **Stuck?** See [Getting Help When Stuck](#information) above.
 
 7. **See it run incrementally** (after the Gold checks pass):
    - Note the result of `` SELECT COUNT(*) FROM apparel_store.`01_bronze`.bronze_sales `` and of the SCD2 versions query in [Check your work](#check-your-work).
-   - Start the generator for about 1 minute (two live batches; longer if `faker` has to install again), stop it, then run one pipeline update. The restart does not backfill again, because the sales table is no longer empty.
+   - Start the generator and stop it once the output shows `Sales stream: Ingested 500 new transactions.` twice (a minute or two after it starts, longer if `faker` has to install again), then run one pipeline update. The restart does not backfill again, because the sales table is no longer empty.
    - `bronze_sales` grows by about 1,000 rows (500 per batch), and the update's metrics for `bronze_sales` show about 1,000 rows written, not the whole table: a streaming table reads only the rows that arrived since the previous update.
    - `silver_customers` gains rows: each batch changes about 4-5 existing customers (30% of 1-30 records), and most changes open a new version, so the re-sent `customer_id`s now have one more version and the previous one has `__END_AT` set.
    - The gold materialized views are recomputed and now include the new sales.
@@ -146,11 +130,16 @@ FROM apparel_store.`01_bronze`.bronze_sales
 
 - `row_count`: about 6,000 backfilled rows plus 500 per live batch.
 - `return_share` about 0.05, `bad_discount_share` about 0.02, `bad_payment_share` about 0.01.
-- `` DESCRIBE TABLE apparel_store.`01_bronze`.bronze_sales `` shows `transaction_id` int, `event_time` timestamp, `unit_price` double, `ingest_timestamp` timestamp and `source_file_path` string. `bronze_customers`, `bronze_products` and `bronze_stores` are non-empty.
+- `` DESCRIBE TABLE apparel_store.`01_bronze`.bronze_sales `` shows `transaction_id` int, `event_time` timestamp, `unit_price` double, `ingest_timestamp` timestamp and `source_file_path` string. `bronze_customers`, `bronze_products` and `bronze_stores` are non-empty, and `DESCRIBE TABLE` on each shows its IDs and counts as int (`customer_id`, `loyalty_points`, `age`; `product_id`, `stock_quantity`; `store_id`), not the landing tables' bigint, and its dates as timestamp.
 
 ### Silver data quality (02A views, checked after 02B and 02C)
 
-The four views are pipeline-only, and nothing reads them until `02B_silver.py` (customers, products, stores) and `02C_silver.py` (sales) do, so right after 02A only confirm the update succeeds. Once 02B and 02C run, the views' expectations run too, and the update usually records their pass/fail counts: click the view, or the table that reads it, in the pipeline graph and open the **Data quality** tab. Databricks documents that metrics for a view may be missing, or may appear once per table that reads it (`sales_cleaned_stream` feeds two tables), so the table queries below are the check that counts. Warn rules keep the row, drop rules remove it. The rates below are over all of a view's records, new and changed together:
+Right after `02A_silver.py`, only confirm the update succeeds: the four views are pipeline-only, and nothing reads them until `02B_silver.py` (customers, products, stores) and `02C_silver.py` (sales). After 02B and 02C:
+
+1. Run the table queries below. They are the check that counts.
+2. Optionally, click a view (or the table that reads it) in the pipeline graph and open the **Data quality** tab. Metrics for a view may be missing, or may appear once per table that reads it (`sales_cleaned_stream` feeds two tables).
+
+Warn rules keep the row, drop rules remove it. The rates below are over all of a view's records, new and changed together:
 
 - `customers_cleaned_stream`: `valid_gender` fails on about 1.5% of records, `realistic_age` and `valid_email` on under 1%, `realistic_loyalty_points` on about 1% (only new records carry the gender and age defects).
 - `products_cleaned_stream`: `valid_product_price` drops just under 1% (cents typed as dollars); `non_negative_stock` fails on just under 2%, `valid_brand` on about 1.5%, `valid_category` on under 1%.
@@ -175,7 +164,7 @@ SELECT COUNT_IF(payment_method NOT IN ('Cash', 'Credit Card', 'Debit Card', 'Mob
 FROM apparel_store.`02_silver`.silver_sales_transactions;
 ```
 
-- `bad_gender`, `bad_email`, `unknown_category` and `missing_brand` are warned and kept, but rare: they may show 0 after a short run (the 6-minute setup run writes only a few live batches) and are reliably above 0 after about 20 minutes of generator time (about 30 live batches). `price_typos_kept` is always 0 (dropped).
+- `bad_gender`, `bad_email`, `unknown_category` and `missing_brand` are warned and kept, but rare: they may show 0 after a short run (a 6-minute run writes only a few live batches) and are reliably above 0 after about 20 minutes of generator time (about 30 live batches). `price_typos_kept` is always 0 (dropped).
 - `vacant_manager_rows`, `bad_status` and `bad_payment` are warn rules too, so these rows are kept: `vacant_manager_rows` is above 0 after a longer run, `bad_status` usually stays 0 (see `valid_status` above), and `bad_payment` is about 1% of the sales rows.
 
 ### Silver SCD2 dimensions (`02B_silver.py`)
@@ -248,8 +237,6 @@ ORDER BY sale_date;
 
 - `denormalized` equals `silver_sales`; `daily_revenue` matches `fact_revenue` within a few cents (each daily row is rounded to the cent).
 - Every `duplicate_ids` is 0: one row per customer, per product and per store-day.
-- About 31 dates: 30 backfilled days plus today (a run across midnight UTC adds one). Each backfilled day has 5 stores with about 37 transactions each (40 sales per store-day, minus returns and invalid discounts); today holds the live batches at demo speed, so its store rows are many times larger than a backfilled day: compare backfilled days with each other.
+- About 31 dates: 30 backfilled days plus today (a run across midnight UTC adds one). Each backfilled day has 5 stores with about 37 transactions each (40 sales per store-day, minus returns and invalid discounts). Today can show a 6th store or more: the live generator opens a new store about every 10 minutes. Today also holds the live batches at demo speed, so its store rows are many times larger than a backfilled day: compare backfilled days with each other.
 - `` SELECT COUNT(*) FROM apparel_store.`03_gold`.gold_product_performance WHERE product_name IS NULL `` returns about 1-2 after 20 minutes of generator time (sometimes 0) and grows by about one for every 10 more minutes: products whose only record was dropped for a bad price (Task 6).
-- In `gold_customer_lifetime_value`, `first_purchase_date` is spread over the last 30 days; in `gold_product_performance` the lowest `product_id`s have the highest `total_quantity_sold` (the generator's best-seller curve).
-
-**Ready to start?** Open `dlt/01_bronze.py` and begin with the Bronze layer tasks!
+- In `gold_customer_lifetime_value`, almost every one of the 50 starting customers (`customer_id` 1-50) has the first backfilled day as `first_purchase_date`. Each of them shops about 4 times a backfilled day at this demo scale, so one or two may start a day later. Every customer created live has today's date; in `gold_product_performance` the lowest `product_id`s have the highest `total_quantity_sold` (the generator's best-seller curve).

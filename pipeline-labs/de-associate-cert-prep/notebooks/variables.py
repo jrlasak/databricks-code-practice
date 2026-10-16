@@ -2,7 +2,7 @@
 # MAGIC %md
 # MAGIC # Configuration Variables
 # MAGIC
-# MAGIC Central configuration file for the Databricks Data Engineer Certification Lab.
+# MAGIC Central configuration file for the Databricks Data Engineer Associate Certification Lab.
 # MAGIC
 # MAGIC **Usage**: Import this file in all notebooks to maintain consistent naming.
 # MAGIC
@@ -27,7 +27,7 @@ BRONZE_SCHEMA = "01_bronze"
 SILVER_SCHEMA = "02_silver"
 GOLD_SCHEMA = "03_gold"
 
-# Schema reserved for Lakeflow Spark Declarative Pipelines (formerly DLT); no notebook here uses it
+# Spare schema if you extend the lab with a Lakeflow Spark Declarative Pipelines (formerly DLT) pipeline; notebooks 01-05 do not use it
 DLT_SCHEMA = "dlt_pipeline"
 
 # COMMAND ----------
@@ -115,8 +115,7 @@ DATA_GEN_CONFIG = {
     "null_rate_high": 0.20,   # 20% nulls
 
     # Streaming settings
-    "streaming_batch_size": 5000,  # Records per batch (optimized for ~2 min generation)
-    "streaming_delay_seconds": 0,  # No delay between batches
+    "streaming_batch_size": 5000,  # Records per batch
 
     # Skew settings (truncated Lomax distribution, index 0 = most popular)
     "product_skew_factor": 0.8,  # ~77% of line items from the top 20% of products
@@ -162,7 +161,7 @@ CATEGORY_WEIGHTS = {
     "Books": 0.10
 }
 
-# Catalog price range per category in USD (min, max): a paperback does not cost $1,900
+# Catalog price range per category in USD (min, max)
 CATEGORY_PRICE_RANGES = {
     "Electronics": (20, 1500),
     "Clothing": (10, 150),
@@ -361,9 +360,6 @@ def validate_configuration():
     print("✅ Configuration validation passed")
     return True
 
-# Run validation (comment out if not needed)
-# validate_configuration()
-
 # COMMAND ----------
 
 # MAGIC %md
@@ -376,7 +372,7 @@ def print_config_summary():
     Print a summary of the current configuration.
     """
     print("=" * 60)
-    print("DATABRICKS DATA ENGINEER CERTIFICATION LAB")
+    print("DATABRICKS DATA ENGINEER ASSOCIATE CERTIFICATION LAB")
     print("Configuration Summary")
     print("=" * 60)
     print(f"\nCatalog: {CATALOG_NAME}")
@@ -398,6 +394,3 @@ def print_config_summary():
     print(f"  - Sales:     {DATA_GEN_CONFIG['num_sales']:,}")
     print(f"  - Events:    {DATA_GEN_CONFIG['num_events']:,}")
     print("=" * 60)
-
-# Uncomment to display configuration
-# print_config_summary()

@@ -4,7 +4,7 @@
 # MAGIC
 # MAGIC **Zenith Online pipeline, notebook 1 of 3.** This notebook ingests the raw files that `00_Setup_Environment` generated into three managed Delta tables in Unity Catalog: `bronze_user_events` (streaming JSON through Auto Loader), `bronze_customer_profiles` (CSV) and `bronze_product_details` (Parquet). Run `00_Setup_Environment` first.
 # MAGIC
-# MAGIC **Duration**: ~30 min
+# MAGIC **Duration**: ~1 h
 # MAGIC
 # MAGIC ---
 # MAGIC ## Learning Objectives
@@ -26,8 +26,6 @@
 import pyspark.sql.functions as F
 from pyspark.sql.types import StructType, StructField, StringType, IntegerType
 
-# In Databricks, the SparkSession `spark` is already created for you.
-
 # COMMAND ----------
 
 # MAGIC %run ./variables
@@ -35,7 +33,7 @@ from pyspark.sql.types import StructType, StructField, StringType, IntegerType
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## 01 - Bronze Layer: Raw Data Ingestion
+# MAGIC ## Bronze Layer Overview
 # MAGIC
 # MAGIC **Goal:** Ingest raw data from landing zone volumes into managed Delta tables with minimal transformation, adding necessary metadata for traceability.
 # MAGIC
@@ -55,13 +53,14 @@ from pyspark.sql.types import StructType, StructField, StringType, IntegerType
 # MAGIC ---
 # MAGIC ### 🎯 TASK 1: Create `bronze_user_events` Streaming Table
 # MAGIC
-# MAGIC **Why:** Establishes a governed, append-only raw fact table capturing every user interaction with minimal transformation so downstream layers can always trace back to the original event. Using Auto Loader plus an explicit schema guarantees schema drift control and reliable incremental ingestion even as new files arrive.
+# MAGIC **Why:** Bronze keeps every raw event, append-only and barely transformed, so later layers can always trace back to it. Auto Loader reads only the files it has not ingested yet; the explicit schema fixes each column's type instead of inferring it.
 # MAGIC
-# MAGIC **End Goal:** A durable Delta table (`bronze_user_events`) in the Bronze schema that faithfully mirrors the raw JSON feed with added timestamps for lineage, enabling reproducible enrichment and time-aware processing in Silver.
+# MAGIC **End Goal:** A Delta table (`bronze_user_events`) in the Bronze schema that holds every raw JSON event plus two added columns, `ingestion_timestamp` and `event_dt`, which notebook 02 reads as a stream.
 # MAGIC
 # MAGIC **Key Concepts:**
 # MAGIC - **Auto Loader (`cloudFiles`)**: Incrementally processes new files as they arrive
-# MAGIC - **Explicit Schema**: Prevents schema drift and ensures data quality
+# MAGIC - **Schema location (`cloudFiles.schemaLocation`)**: Where Auto Loader stores the schema it infers and tracks how it evolves. Required only when Auto Loader infers the schema. With an explicit schema it is optional; setting it anyway lets you switch to inference later without changing the stream
+# MAGIC - **Explicit Schema**: Fixes each column's type up front instead of inferring it (it does not reject nulls)
 # MAGIC - **Checkpointing**: Enables fault-tolerant stream processing
 # MAGIC - **Metadata Columns**: Add timestamps for data lineage
 # MAGIC - **availableNow Trigger**: Processes every file already in the landing volume, then stops on its own. Starting the stream does not block, though: the write returns a running StreamingQuery at once, so you wait for it with `awaitTermination` before anything reads the table
@@ -151,8 +150,9 @@ from pyspark.sql.types import StructType, StructField, StringType, IntegerType
 
 # 🔍 Verification: read the Bronze events back as a batch table
 bronze_events = spark.read.table(BRONZE_EVENTS_TABLE)
-print(f"✅ {BRONZE_EVENTS_TABLE}: {bronze_events.count():,} rows")
-print(f"Rows with a null event_dt: {bronze_events.filter(F.col('event_dt').isNull()).count()}")
+n_files = len([f for f in dbutils.fs.ls(RAW_STREAMING_PATH) if f.name.endswith(".json")])
+print(f"✅ {BRONZE_EVENTS_TABLE} rows: {bronze_events.count():,} (expect {50500 * n_files:,}: 50,500 per setup run)")
+print(f"Rows with a null event_dt: {bronze_events.filter(F.col('event_dt').isNull()).count()} (expect 0)")
 display(bronze_events.groupBy("event_type").count().orderBy(F.col("count").desc()))
 
 # COMMAND ----------
@@ -166,11 +166,11 @@ display(bronze_events.groupBy("event_type").count().orderBy(F.col("count").desc(
 # MAGIC
 # MAGIC **Why:** Converts a periodically refreshed dimension snapshot (customers) into a managed Delta table so it can be efficiently joined with streaming facts. Without a schema the CSV reader types every column as a string (`inferSchema` is off by default, and turning it on costs an extra pass over the file). Declaring `customer_id` as an integer up front gives the join key the same type as `user_id` in the events, so the Silver join compares integers instead of relying on an implicit cast.
 # MAGIC
-# MAGIC **End Goal:** A clean, type-consistent customer dimension (`bronze_customer_profiles`) ready for enrichment joins that preserves referential integrity with events.
+# MAGIC **End Goal:** A typed customer dimension (`bronze_customer_profiles`) that the Silver layer joins to the events on `customer_id` = `user_id`.
 # MAGIC
 # MAGIC **Key Concepts:**
 # MAGIC - **Batch Loading**: Read static files with explicit schemas
-# MAGIC - **Schema Enforcement**: Define data types to prevent inference errors
+# MAGIC - **Explicit Schema**: declare the column types up front so the CSV reader does not type every column as a string (Delta's schema enforcement is a different feature: it checks writes against the table's schema)
 # MAGIC - **Delta Overwrite**: Replace existing data with new snapshots
 # MAGIC
 # MAGIC **Requirements:**
@@ -225,7 +225,7 @@ display(bronze_events.groupBy("event_type").count().orderBy(F.col("count").desc(
 
 # 🔍 Verification: read the customer dimension back
 bronze_customers = spark.read.table(BRONZE_CUSTOMERS_TABLE)
-print(f"✅ {BRONZE_CUSTOMERS_TABLE}: {bronze_customers.count():,} rows")
+print(f"✅ {BRONZE_CUSTOMERS_TABLE} rows: {bronze_customers.count():,} (expect 1,000)")
 bronze_customers.printSchema()
 display(bronze_customers.limit(10))
 
@@ -235,9 +235,9 @@ display(bronze_customers.limit(10))
 # MAGIC ---
 # MAGIC ### 🎯 TASK 3: Create `bronze_product_details` Batch Table
 # MAGIC
-# MAGIC **Why:** Provides a governed product dimension (names, categories, prices) required to translate low-level product_id references in events into analytics-friendly attributes and monetary values.
+# MAGIC **Why:** Turns each event's `product_id` into a name, a category and a price, which the Gold revenue and category metrics need.
 # MAGIC
-# MAGIC **End Goal:** A Delta product dimension (`bronze_product_details`) enabling category/revenue calculations and later skew-mitigated aggregations.
+# MAGIC **End Goal:** A Delta product dimension (`bronze_product_details`) that notebook 02 joins to every event.
 # MAGIC
 # MAGIC **Requirements:**
 # MAGIC - `bronze_product_details` is a Delta table loaded from the product Parquet file (Parquet carries its own schema, so you do not define one here)
@@ -271,7 +271,7 @@ display(bronze_customers.limit(10))
 # MAGIC Run the cell below to inspect the product dimension. You should see:
 # MAGIC - **Row count**: exactly 500 rows, one per generated product (`product_id` 1 to 500).
 # MAGIC - **Key columns**: `product_id`, `product_name` (unique, ending in a model code such as `Z101`), `category` (Furniture, Home Decor, Electronics or Office Supplies) and `price` (between 15.50 and 899.99; each category has its own price band, so a stapler never costs more than a sofa).
-# MAGIC - **What to look for**: four categories with 105 to 141 products each; the printed schema shows the column types taken from the Parquet file without a schema of your own (`product_id` as `long`, `price` as `double`); the price range sits inside 15.50 to 899.99 (about 15.66 to 885.70).
+# MAGIC - **What to look for**: four categories with 105 to 141 products each; the printed schema shows the column types the Parquet file carries, with no schema of your own (`product_id` as `long`, `price` as `double`); the min and max price come out at about 15.66 and 885.70.
 # MAGIC
 # MAGIC **What this means**: almost every event's `product_id` exists here, so notebook 02 can turn a bare ID into a name, a category and a price, and the Gold layer can compute revenue from it. About 0.2% of events point at products delisted before this catalog export (`product_id` 501-505); notebook 02 drops them, because they cannot be priced.
 
@@ -279,7 +279,7 @@ display(bronze_customers.limit(10))
 
 # 🔍 Verification: read the product dimension back
 bronze_products = spark.read.table(BRONZE_PRODUCTS_TABLE)
-print(f"✅ {BRONZE_PRODUCTS_TABLE}: {bronze_products.count():,} rows")
+print(f"✅ {BRONZE_PRODUCTS_TABLE} rows: {bronze_products.count():,} (expect 500)")
 bronze_products.printSchema()
 display(bronze_products.agg(F.min("price").alias("min_price"), F.max("price").alias("max_price")))
 display(bronze_products.groupBy("category").count().orderBy("category"))

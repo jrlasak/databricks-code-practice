@@ -1,8 +1,8 @@
-# E-commerce User Behavior Analytics Pipeline
+# Zenith Online Analytics Pipeline
 
 > Independent educational resource; not endorsed by Databricks, Inc. "Databricks" and "Delta Lake" are trademarks of their respective owners.
 
-### Author
+## Author
 
 <img src="https://dataengineer.wiki/download/profilepicture.jpg?utm_source=github&utm_medium=readme&utm_campaign=databricks-code-practice" alt="Jakub Lasak" width="80" style="border-radius: 50%;" />
 
@@ -14,58 +14,58 @@
 - 🌐 [DataEngineer.wiki](https://dataengineer.wiki/?utm_source=github&utm_medium=readme&utm_campaign=databricks-code-practice) - Training materials and resources
 - 🚀 [More Practice Labs](https://github.com/jrlasak/databricks-code-practice) - more pipeline labs, deep-dives, and exercises in this repo
 
-### Project Overview
+## Project Overview
 
-This project is a comprehensive, hands-on lab designed to prepare you for the **[Databricks Certified Associate Developer for Apache Spark](https://www.databricks.com/learn/certification/apache-spark-developer-associate)** certification exam. Instead of studying abstract concepts, you will build a realistic, end-to-end data pipeline that solves a real-world business problem, applying dozens of the specific skills tested on the exam.
+This lab prepares you for the **[Databricks Certified Associate Developer for Apache Spark](https://www.databricks.com/learn/certification/apache-spark-developer-associate)** exam: you build one end-to-end pipeline for a business problem, using dozens of the skills the exam tests.
 
 ---
 
-### **Why Complete This Project?**
+### Why Complete This Project?
 
-Passing a certification exam requires more than just memorizing documentation. It requires understanding _how_ and _why_ specific tools and techniques are used in practice. This project bridges that gap by providing:
+The exam tests how and why you use each API, not whether you memorized the docs. This lab gives you:
 
-- **A Realistic Scenario:** You aren't just running random code snippets. You are building a complete solution from raw data to valuable business insights, following the industry-standard Medallion Architecture.
-- **Purposeful Complexity:** The project is intentionally designed to include common data engineering challenges. The synthetic data generator creates **data skew** - a frequent source of performance bottlenecks - which you will measure in the Gold notebook and handle with the two-stage salting pattern, learning when that pattern pays off. It also plants three data quality issues real event feeds carry: client retries re-sent as exact duplicates, events from customers who signed up after the last CRM export, and events for products delisted from the catalog.
-- **Comprehensive Certification Coverage:** The pipeline is carefully crafted to touch upon topics from all major sections of the certification exam, from Spark architecture and the DataFrame API to Structured Streaming and performance tuning.
+- **A Realistic Scenario:** You build one pipeline from raw files to Gold tables that answer the business's questions, following the medallion architecture (Bronze, Silver, Gold).
+- **Real Data Problems:** The synthetic data carries the problems real feeds carry. The generator creates **data skew** - a frequent source of performance bottlenecks - which you will measure in the Gold notebook and handle with the two-stage salting pattern, learning when that pattern pays off. It also plants three data quality issues: client retries re-sent as exact duplicates, events from customers who signed up after the last CRM export, and events for products delisted from the catalog.
+- **Exam Coverage:** The pipeline practices six of the seven exam sections, from Spark architecture and the DataFrame API to Structured Streaming and performance tuning (Spark Connect is the one it leaves out).
 - **Serverless-Ready Code:** The entire project is designed to run on **Databricks Free Edition**, so you can complete it at no cost while learning to work within the constraints of a serverless Spark environment.
 
 ---
 
-#### **1. Project Context and Scenario**
+### 1. Project Context and Scenario
 
-You are a Data Engineer at **"Zenith Online,"** a rapidly growing e-commerce platform. The marketing and product teams are struggling to make data-driven decisions because their raw user data is disconnected and hard to analyze. They have come to you with a critical business need:
+You are a Data Engineer at **"Zenith Online,"** a rapidly growing e-commerce platform. The marketing and product teams cannot answer basic questions about their users, because raw events, customer profiles and product details sit in three disconnected files. They have come to you with a critical business need:
 
 _"We need to understand our user journey. What products are people looking at, and which of them do they actually buy? How does revenue split across categories? Who are our most valuable customers? We need reliable, aggregated data to answer these questions."_
 
-Your mission is to take on this request and build an automated, scalable data pipeline. You will process raw, messy user event data, combine it with customer and product information, and produce clean, aggregated "Gold" tables ready for the analytics team. This pipeline will be the single source of truth for user behavior analytics at Zenith Online.
+Build the pipeline: ingest the raw, messy event data, combine it with customer and product information, and publish clean, aggregated Gold tables the analytics team queries directly.
 
 ---
 
-#### **2. Data Sources (To be generated synthetically)**
+### 2. Data Sources (synthetic, generated by `00_Setup_Environment`)
 
-- **Raw User Events (JSON Lines, Streaming):** A continuous stream of JSON files, one event per line, representing user actions on the website. Each event has a timestamp, user ID, event type (`view_product`, `add_to_cart`, `purchase`), and associated data like `product_id`. This dataset is **intentionally skewed** across all event types: 5 specific products draw 75% of all events (views, add-to-carts and purchases alike), so they are both the most viewed and the best-selling products. One setup run writes a compressed sample: 50,000 events stamped within 30 seconds stand in for a day of storefront traffic from 1,000 customers. The window is tight on purpose, so the 3-minute watermark in the Silver layer never drops a re-run's file as late data.
+- **Raw User Events (JSON Lines, Streaming):** A continuous stream of JSON files, one event per line, representing user actions on the website. Each event has a timestamp, user ID, event type (`view_product`, `add_to_cart`, `purchase`), and associated data like `product_id`. This dataset is **intentionally skewed** across all event types: the 5 products in this week's flash sale (`product_id` 101, 210, 315, 420 and 55) draw 75% of all events (views, add-to-carts and purchases alike), so they are both the most viewed and the best-selling products. One setup run writes a compressed sample: 50,000 events stamped within 30 seconds stand in for a day of storefront traffic from 1,000 customers. The sample is also denser than a real storefront: 1 event in 10 is a purchase, so nearly every customer appears in the Gold summary. Read the Gold numbers for their proportions, not as real daily revenue.
 - **Customer Profiles (CSV, Batch):** A CSV file containing customer details like `customer_id`, `signup_date`, and `location`. This is a dimension table that is updated periodically.
 - **Product Details (Parquet, Batch):** A Parquet file containing product information like `product_id`, `product_name`, `category`, and `price`. This is another dimension table.
 
 ---
 
-### **How This Project Prepares You for the Certification Exam**
+## How This Project Prepares You for the Certification Exam
 
-This project provides practical, hands-on experience covering the majority of the topics in the **Databricks Certified Associate Developer for Apache Spark** exam outline.
+Each exam section below lists what the lab practices for it.
 
-#### **Section 1: Apache Spark Architecture and Components**
+### Section 1: Apache Spark Architecture and Components
 
-- Every task builds transformations that run only when an action (`count`, a write, `display`) fires. On serverless, the **See performance** link under a cell lists the queries that cell ran, and it appears only on cells that trigger an action.
-- You will use key features from multiple Spark Modules, including **Spark SQL**, **DataFrames**, **Structured Streaming** and **Pandas UDFs**. The pandas API on Spark (`pyspark.pandas`) is not used here.
+- Every task builds transformations that run only when an action (`count`, a write, `display`) fires. On serverless, the **See performance** link under a cell lists the queries that cell ran, and it appears only on cells that trigger an action (the Gold notebook's skew cell points it out).
+- You will use features from three of the Spark modules the exam lists (**Spark SQL**, **DataFrames** and **Structured Streaming**), plus **Pandas UDFs**, which belong to PySpark SQL and not to the separate Pandas API on Spark module.
 
-#### **Section 2: Using Spark SQL**
+### Section 2: Using Spark SQL
 
 - **Reading Multiple Formats:** The Bronze layer ingests data from three different file formats: **JSON** (with Auto Loader), **CSV**, and **Parquet**.
-- **Writing to Delta Tables:** You will write data to Delta tables using different save modes (`append` for streaming, `overwrite` for batch).
-- **Partitioning on write:** The Gold daily table is written with `partitionBy()`, the DataFrameWriter API the exam covers. On Databricks you would not partition a table this small: Databricks recommends no partitioning under 1 TB and liquid clustering for managed tables.
+- **Writing to Delta Tables:** You will write Delta tables in batch with the save mode `overwrite` (`DataFrameWriter.mode`) and stream into them with the output mode `append` (`DataStreamWriter.outputMode`). These are two separate settings, and the exam tests them in different sections.
+- **Partitioning on write:** The Gold daily table is written with `partitionBy()`, the DataFrameWriter API the exam covers (Section 4 below covers when not to partition on Databricks).
 - **Executing SQL Queries:** The final step of the project uses `spark.sql()` to query the Gold layer Delta tables directly, demonstrating how to use SQL for analytics.
 
-#### **Section 3: Developing Apache Spark™ DataFrame/DataSet API Applications**
+### Section 3: Developing Apache Spark™ DataFrame/DataSet API Applications
 
 - **Manipulating Columns:** The Silver layer extensively uses functions like `withColumn()`, `withColumnRenamed()`, and `select()` to clean and structure the data.
 - **Data Deduplication:** You will de-duplicate a single event stream on `event_id` and its event time, under a watermark that bounds the deduplication state.
@@ -77,33 +77,38 @@ This project provides practical, hands-on experience covering the majority of th
 - **User-Defined Functions (UDFs):** You will create and apply a **Pandas UDF** that maps cities to regions. The same mapping is a one-line built-in (`F.when` with `isin`) that avoids the Python worker entirely; the UDF is here to practice the API the exam tests, and in production built-in functions come first.
 - **Window Functions:** The Gold layer ranks products by revenue within each day and category with `rank()` over a window spec, on the batch Gold DataFrame.
 
-#### **Section 4: Troubleshooting and Tuning Apache Spark DataFrame API Applications**
+### Section 4: Troubleshooting and Tuning Apache Spark DataFrame API Applications
 
 - **Handling Data Skew:** The data is intentionally skewed, and you will implement the two-stage **salting** pattern in the Gold layer and learn when it pays off: Spark pre-aggregates counts and sums on every task before the shuffle, so salting a `groupBy` matters only where Spark has no map-side partial step, such as a grouped-aggregate Pandas UDF.
 - **Partitioning:** You will use `partitionBy` on the Gold write (one directory per `event_date`), check it with `DESCRIBE DETAIL` (`partitionColumns`), and learn why Databricks recommends against it below 1 TB, where liquid clustering (`CLUSTER BY`) is the default choice.
 - **Adaptive Query Execution (AQE):** AQE is enabled by default on Databricks. Its skew handling splits skewed partitions in sort-merge and shuffle hash joins. It does not apply to a `groupBy` aggregation like the Gold one, so the skew decision there is yours.
 
-#### **Section 5: Structured Streaming**
+### Section 5: Structured Streaming
 
 - **End-to-End Streaming Pipeline:** The Bronze-to-Silver pipeline is a complete Structured Streaming application.
 - **Streaming Sources and Sinks:** You will use Auto Loader (`cloudFiles`) as a streaming source and Delta Lake as a streaming sink.
 - **Streaming Deduplication with Watermarks:** You will combine `withWatermark()` with `dropDuplicates()` on the event ID and the event-time column. The watermark evicts dedup state only when the event-time column is in the key (`dropDuplicatesWithinWatermark` covers copies whose timestamps differ).
 
-#### **Section 7: Using Pandas API on Spark**
+### Section 6: Using Spark Connect to Deploy Applications
 
-- **Creating and Invoking Pandas UDFs:** You will define a Pandas UDF with the `@pandas_udf` decorator and apply it to a Spark DataFrame column. That is the part of this exam section the lab practises; the pandas API on Spark itself (`pyspark.pandas`) is not used here.
+- Not covered by this lab.
+
+### Section 7: Using Pandas API on Spark
+
+- **Creating and Invoking Pandas UDFs:** You will define a Pandas UDF with the `@pandas_udf` decorator and apply it to a Spark DataFrame column. That is the part of this exam section the lab practices; the pandas API on Spark itself (`pyspark.pandas`) is not used here.
 
 ## Prerequisites
 
 - Python and the PySpark DataFrame API at a working level (select, filter, groupBy, joins)
 - Delta tables and Unity Catalog three-level names (`catalog.schema.table`)
 - A Databricks Free Edition workspace with serverless compute
-- About 1.5 hours, best split by notebook: 01 ~30 min, 02 ~30 min, 03 ~30 min
+- About 3 hours in total, best split by notebook: 01 takes about 1 h (setup run included), 02 about 45 min and 03 about 1 h
 
 > ⚠️ **Before you start**: Disable AI code suggestions in your Databricks workspace.
-> Go to **User Settings → Developer → AI-powered code completion** and turn **OFF**:
+> Open your profile menu, go to **Settings → Developer**, and under **Code Editor** turn **OFF**:
+> - **Automatic Genie Code Autocomplete**
 > - **Autocomplete as you type**
-> - **Automatic Assistant Autocomplete**
+>
 > This lab is designed to build muscle memory: auto-completions defeat the purpose.
 
 ## How to Start

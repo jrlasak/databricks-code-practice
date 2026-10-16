@@ -8,7 +8,7 @@ BRONZE_SCHEMA = "01_bronze"
 SILVER_SCHEMA = "02_silver"
 GOLD_SCHEMA = "03_gold"
 
-# The data generator wrote data to these UC Volume paths
+# The data generator writes the raw files to these UC Volume paths
 RAW_STREAMING_PATH = f"/Volumes/{CATALOG_NAME}/{LANDING_SCHEMA}/streaming/user_events"
 RAW_BATCH_CUSTOMERS_PATH = f"/Volumes/{CATALOG_NAME}/{LANDING_SCHEMA}/batch/customers"
 RAW_BATCH_PRODUCTS_PATH = f"/Volumes/{CATALOG_NAME}/{LANDING_SCHEMA}/batch/products"

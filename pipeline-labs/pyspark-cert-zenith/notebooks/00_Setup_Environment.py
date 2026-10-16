@@ -4,7 +4,7 @@
 # MAGIC
 # MAGIC This notebook prepares everything the Zenith Online pipeline needs: it creates the `zenith_online` catalog, its five schemas (`_system`, `00_landing`, `01_bronze`, `02_silver`, `03_gold`), the landing and system volumes, and then generates the raw data (1,000 customers as CSV, 500 products as Parquet, one JSON Lines file of 50,000 user events plus 500 retried copies). Run it once, top to bottom, before notebook 01.
 # MAGIC
-# MAGIC One setup run writes a compressed sample: 50,000 events stamped within 30 seconds stand in for a day of storefront traffic from 1,000 customers. The window is tight on purpose, so the 3-minute watermark in the Silver layer never drops a re-run's file as late data.
+# MAGIC One setup run writes a compressed sample: 50,000 events stamped within 30 seconds stand in for a day of storefront traffic from 1,000 customers. The sample is also denser than a real storefront: 1 event in 10 is a purchase, so nearly every customer appears in the Gold summary. Read the Gold numbers for their proportions, not as real daily revenue.
 
 # COMMAND ----------
 
@@ -12,13 +12,13 @@
 
 # COMMAND ----------
 
-# Create the Catalog and Schemas if they do not exist
+# Create the catalog
 spark.sql(f"CREATE CATALOG IF NOT EXISTS {CATALOG_NAME}")
 spark.sql(f"USE CATALOG {CATALOG_NAME}")
 
 # COMMAND ----------
 
-# CREATE SCHEMAS
+# Create the schemas
 spark.sql(f"CREATE SCHEMA IF NOT EXISTS {SYSTEM_SCHEMA}")
 spark.sql(f"CREATE SCHEMA IF NOT EXISTS {LANDING_SCHEMA}")
 spark.sql(f"CREATE SCHEMA IF NOT EXISTS {BRONZE_SCHEMA}")
@@ -27,13 +27,13 @@ spark.sql(f"CREATE SCHEMA IF NOT EXISTS {GOLD_SCHEMA}")
 
 # COMMAND ----------
 
-# CREATE VOLUMES FOR RAW DATA GENERATOR
+# Create the landing volumes for the raw data
 spark.sql(f"CREATE VOLUME IF NOT EXISTS {CATALOG_NAME}.{LANDING_SCHEMA}.batch")
 spark.sql(f"CREATE VOLUME IF NOT EXISTS {CATALOG_NAME}.{LANDING_SCHEMA}.streaming")
 
 # COMMAND ----------
 
-# CREATE DIRECTORIES FOR THE RAW DATA GENERATOR
+# Create the landing directories for the raw data
 for path in [RAW_STREAMING_PATH, RAW_BATCH_CUSTOMERS_PATH, RAW_BATCH_PRODUCTS_PATH]:
     try:
         dbutils.fs.ls(path)
@@ -42,7 +42,7 @@ for path in [RAW_STREAMING_PATH, RAW_BATCH_CUSTOMERS_PATH, RAW_BATCH_PRODUCTS_PA
 
 # COMMAND ----------
 
-# CREATE VOLUMES FOR CHECKPOINTS AND SCHEMA METADATA
+# Create the volumes for checkpoints and schema metadata
 spark.sql(f"CREATE VOLUME IF NOT EXISTS {CATALOG_NAME}.{SYSTEM_SCHEMA}.checkpoints")
 spark.sql(f"CREATE VOLUME IF NOT EXISTS {CATALOG_NAME}.{SYSTEM_SCHEMA}.schemas")
 

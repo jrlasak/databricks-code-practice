@@ -37,8 +37,8 @@ Task 5: Create the `customers_cleaned_stream` View
 Business Logic:
     Cleanse customer data by enforcing valid IDs, and flag invalid emails, outlier ages,
     negative loyalty points, and invalid gender values. Only drop records with missing
-    IDs. This ensures only usable customer records are tracked, while allowing for
-    business review of questionable but not fatal data issues.
+    IDs. Questionable values stay in the table and show up in the data quality metrics
+    for review.
 
 Requirements:
     [ ] Read the bronze customers stream with `spark.readStream.table` - use the
@@ -47,8 +47,6 @@ Requirements:
         pipeline's default schema `02_silver` and is not found).
 
     [ ] Add `comment`: "QC for customers stream".
-        Business logic: Documenting the purpose of this view helps future users 
-        understand its role in the pipeline.
     
     [ ] Apply Expectations:
         - Drop (`valid_customer_id`) if `customer_id` is NULL.
@@ -56,20 +54,22 @@ Requirements:
           or marketing.
         
         - Warn (`valid_email`) if `email` is not NULL and does not match the pattern `%@%.%`.
-          Business logic: Invalid emails impact communication and customer engagement.
+          Business logic: An address without '@' bounces every marketing email; a NULL
+          email is allowed, because giving one is optional.
         
         - Warn (`realistic_age`) if `age` is not between 18 and 100.
-          Business logic: Age outliers may indicate data entry errors or special cases.
+          Business logic: An age of 0, 7 or 142 is a birth year's digits typed into the age
+          field; it lands in the wrong age band in marketing reports.
         
         - Warn (`realistic_loyalty_points`) if `loyalty_points` are less than 0.
-          Business logic: Negative loyalty points are not possible in a real program.
+          Business logic: A negative balance is a points reversal applied twice; the loyalty
+          team has to correct it at the source.
         
         - Warn (`valid_gender`) if `gender` is not one of ('Male', 'Female', 'Other').
           Business logic: A 3-value allow-list catches legacy till codes ('M', 'F') and
           blanks that would otherwise split gender reports into extra groups.
 
-Tip:
-    - If stuck, see the solution below.
+Tip: if stuck, see the solution below.
 """
 ### ---------------------
 ### Write Your Code Here ###
@@ -95,16 +95,14 @@ Task 6: Create the `products_cleaned_stream` View
 
 Business Logic:
     Cleanse product data by enforcing valid IDs and realistic prices, and warn on 
-    negative stock, invalid categories, or missing brands. Only drop records with 
-    missing IDs or out-of-range prices, ensuring inventory and sales analytics are 
-    based on trustworthy product records.
+    negative stock, invalid categories, or missing brands. Drop only records with a
+    missing ID or an out-of-range price; everything else is kept and flagged.
 
 Requirements:
     [ ] Read the bronze products stream - use the `BRONZE_PRODUCTS` variable (the
         schema-qualified name `01_bronze.bronze_products`).
     
     [ ] Add `comment`: "QC for products stream".
-        Business logic: Comments clarify the business role of the cleaned product view.
     
     [ ] Apply Expectations:
         - Drop (`valid_product_id`) if `product_id` is NULL.
@@ -120,14 +118,19 @@ Requirements:
           would corrupt revenue, is a drop rule.
 
         - Warn (`non_negative_stock`) if `stock_quantity` is less than 0.
-          Business logic: Negative stock is not possible in a real inventory system.
+          Business logic: Negative stock is an oversold item; keep the row so merchandising
+          sees it.
         
         - Warn (`valid_category`) if `category` is not one of ('Casual Wear', 'Formal Wear', 'Sportswear', 
           'Accessories', 'Footwear').
-          Business logic: Ensures products are categorized for reporting and merchandising.
+          Business logic: 'Kidswear' is a real product line the reference list does not
+          know yet. Warn and keep the row: dropping it would leave the product without a name
+          in gold (see the price rule above), and the count tells merchandising to add the
+          category.
         
         - Warn (`valid_brand`) if `brand` is NULL.
-          Business logic: Brand is important for marketing and product analysis.
+          Business logic: A product without a brand still sells; keep it and flag the gap in
+          the catalog feed.
 
 Tips:
     - Run the pipeline after this step to check it succeeds; the cleaned and flagged
@@ -159,18 +162,16 @@ Task 7: Create the `stores_cleaned_stream` View
 Business Logic:
     Cleanse store data by enforcing valid IDs, and replace missing manager names with
     'Unknown' for reporting consistency. Flag vacant manager positions and invalid
-    status, but only drop records with missing IDs. This ensures store-level
-    analytics are reliable.
+    status, but only drop records with missing IDs.
 
 Requirements:
     [ ] Read the bronze stores stream - use the `BRONZE_STORES` variable (the
         schema-qualified name `01_bronze.bronze_stores`).
 
     [ ] Add `comment`: "QC for stores stream".
-        Business logic: Comments clarify the business context of the cleaned store view.
 
     [ ] Apply Transformation: Replace NULL values in the `manager` column with the string 'Unknown'.
-        Business logic: Missing manager names can be handled gracefully for reporting.
+        Business logic: Reports show 'Unknown' instead of a blank manager.
         The fill also turns a vacancy into a tracked change: `ignore_null_updates` in
         Task 11 never sees a NULL here, so a vacancy opens a new SCD2 version on purpose
         (a vacant position is a business event).
@@ -186,7 +187,9 @@ Requirements:
           operations team must see in the data quality metrics.
         
         - Warn (`valid_status`) if `status` is not one of ('Open', 'Under Renovation').
-          Business logic: Store status affects operational reporting and analysis.
+          Business logic: A second store system sends 'open' in lowercase; any report that
+          filters `status = 'Open'` silently misses that store, so the count tells you when
+          to normalize the value at the source or here.
 
 Tips:
     - Run the pipeline after this step to check it succeeds; the store data quality
@@ -225,10 +228,9 @@ Requirements:
         schema-qualified name `01_bronze.bronze_sales`).
 
     [ ] Add `comment`: "QC for sales stream (fact)".
-        Business logic: Comments clarify the business role of the cleaned sales view.
 
     [ ] Apply Transformation: Add a `date` column by casting `event_time` to a date type.
-        Business logic: Date columns are essential for time-based reporting and analysis.
+        Business logic: Every daily report groups by this date, so derive it once here.
         Gold carries it through as `sale_date` (Tasks 17-18).
 
     [ ] Apply Watermarking: Set a 10-minute watermark on the `event_time` column.
@@ -242,10 +244,14 @@ Requirements:
     [ ] Apply Expectations:
         - Warn (`valid_payment_method`) if `payment_method` is not one of ('Cash', 'Credit Card', 'Debit Card', 
           'Mobile Pay', 'Gift Card').
-          Business logic: Invalid payment methods may indicate data entry errors or fraud.
+          Business logic: 'CARD' and 'Apple Pay' come from a terminal whose codes are not
+          mapped to the five reporting values yet. The sale is real, so the rule warns and
+          keeps it, and the count tells you when to extend the mapping before those sales
+          fall out of payment-mix reports.
         
         - Warn (`realistic_discount`) if `discount_applied` is less than 0.
-          Business logic: Negative discounts are not possible in real sales.
+          Business logic: A negative discount is a sign error at the till; summed into a
+          discount report, it cancels out real discounts. Warn here; Tasks 12-13 drop it.
 
 Tips:
     - Run the pipeline after this step to check it succeeds; the cleaned and flagged

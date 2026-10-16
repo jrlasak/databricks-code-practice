@@ -4,7 +4,7 @@
 # MAGIC
 # MAGIC **Exam Coverage**: Section 3 (Data Processing & Transformations)
 # MAGIC
-# MAGIC **Duration**: 60-75 minutes
+# MAGIC **Duration**: about 1 hour
 # MAGIC
 # MAGIC ---
 # MAGIC ## Learning Objectives
@@ -63,7 +63,7 @@ from delta.tables import DeltaTable
 # MAGIC ## Section 2: Daily Sales Summary with Rolling Windows
 # MAGIC CartHarborHQ's merchandising team wants daily revenue by category on its dashboard: this section builds that table.
 # MAGIC
-# MAGIC Revenue counts completed orders only: pending orders can still fail payment and cancelled ones were never paid (15% of orders in this data).
+# MAGIC Revenue counts completed orders only: pending orders can still fail payment and cancelled ones were never paid (pending and cancelled orders together are 15% of this data: 10% pending, 5% cancelled).
 # MAGIC ### Metrics to Calculate
 # MAGIC - Total sales by day and category
 # MAGIC - Revenue, order counts, unique customers
@@ -97,14 +97,14 @@ sales_silver.printSchema()
 # MAGIC 1. Add `sale_date` column (convert `order_timestamp` to date)
 # MAGIC 2. Group by `sale_date` and `category`
 # MAGIC 3. Calculate aggregations:
-# MAGIC   - `total_revenue`: Sum of total_amount
-# MAGIC   - `order_count`: number of DISTINCT order_id (each row of sales_clean is one line item, not one order)
-# MAGIC   - `unique_customers`: Count distinct customer_id
-# MAGIC   - `total_units_sold`: Sum of quantity
+# MAGIC    - `total_revenue`: Sum of total_amount
+# MAGIC    - `order_count`: number of DISTINCT order_id (each row of sales_clean is one line item, not one order)
+# MAGIC    - `unique_customers`: Count distinct customer_id
+# MAGIC    - `total_units_sold`: Sum of quantity
 # MAGIC 4. Add calculated columns:
-# MAGIC   - `avg_order_value`: total_revenue / order_count
-# MAGIC   - `revenue_per_customer`: total_revenue / unique_customers
-# MAGIC   - `units_per_order`: total_units_sold / order_count
+# MAGIC    - `avg_order_value`: total_revenue / order_count
+# MAGIC    - `revenue_per_customer`: total_revenue / unique_customers
+# MAGIC    - `units_per_order`: total_units_sold / order_count
 # MAGIC
 # MAGIC **Functions needed:**
 # MAGIC ```python
@@ -178,13 +178,13 @@ display(daily_sales_summary.orderBy("sale_date", "category"))
 # MAGIC
 # MAGIC **Requirements:**
 # MAGIC 1. Create window specs, partitioned by category and ordered by a day number (days since 1970-01-01 of `sale_date`):
-# MAGIC - 7-day: the current day and the 6 calendar days before it
-# MAGIC - 30-day: the current day and the 29 calendar days before it
+# MAGIC    - 7-day: the current day and the 6 calendar days before it
+# MAGIC    - 30-day: the current day and the 29 calendar days before it
 # MAGIC 2. Calculate rolling metrics:
-# MAGIC - `revenue_7day_avg`: 7-day average revenue
-# MAGIC - `revenue_30day_avg`: 30-day average revenue
-# MAGIC - `orders_7day_total`: 7-day total orders
-# MAGIC - `orders_30day_total`: 30-day total orders
+# MAGIC    - `revenue_7day_avg`: 7-day average revenue
+# MAGIC    - `revenue_30day_avg`: 30-day average revenue
+# MAGIC    - `orders_7day_total`: 7-day total orders
+# MAGIC    - `orders_30day_total`: 30-day total orders
 # MAGIC
 # MAGIC **Hint**: `rowsBetween(-6, 0)` counts 7 ROWS, which is 7 days only if every date has a row. `rangeBetween(-6, 0)` over a day number covers 7 calendar days even when a day has no sales.
 # MAGIC
@@ -267,7 +267,7 @@ print(f"Categories whose first-date averages differ from total_revenue: {first_o
 
 # MAGIC %md
 # MAGIC ## Section 3: Customer Lifetime Value with RFM Segmentation
-# MAGIC CartHarborHQ's loyalty team wants RFM segments to pick who gets a retention offer. Calculate comprehensive customer metrics.
+# MAGIC CartHarborHQ's loyalty team wants RFM segments to pick who gets a retention offer. You build one row per customer with spend, order and recency metrics.
 # MAGIC
 # MAGIC Orders from customers missing from the Silver `customers_clean` table (`customer_name` = `Unknown customer`) still count as revenue in the daily summary, but they are left out here: the loyalty team cannot target a customer the CRM does not have.
 # MAGIC ### What is RFM?
@@ -298,7 +298,7 @@ print(f"Categories whose first-date averages differ from total_revenue: {first_o
 # MAGIC ### 🎯 EXERCISE 3: Calculate Customer Lifetime Value
 # MAGIC **Your task**: Aggregate customer purchase history and calculate time-based metrics.
 # MAGIC
-# MAGIC **Why**: every RFM score in Exercise 4 is a ranking of these columns: a wrong `days_since_last_purchase` sends the retention offer to the wrong customers, and measuring it against today instead of `as_of_date` ages every customer each time the report re-runs.
+# MAGIC **Why**: every RFM score in Exercise 4 ranks these columns: a wrong `days_since_last_purchase` sends the retention offer to the wrong customers.
 # MAGIC
 # MAGIC **Part 1 - Aggregations:**
 # MAGIC Group by customer (the provided start already drops the `Unknown customer` lines) and calculate:
@@ -397,12 +397,12 @@ display(customer_ltv.orderBy(F.desc("total_spend")).limit(20))
 # MAGIC %md
 # MAGIC ---
 # MAGIC ### 🎯 EXERCISE 4: Calculate RFM Scores and Segments
-# MAGIC **Your task**: Starting from `customer_ltv`, write `customer_ltv_rfm` yourself: three RFM scores with `ntile(5)` and their sum. The work cell is empty on purpose.
+# MAGIC **Your task**: Starting from `customer_ltv`, write `customer_ltv_rfm` yourself: three RFM scores with `ntile(5)` and their sum. The work cell below lists only the requirements, as comments.
 # MAGIC
 # MAGIC **Why**: RFM decides who gets a retention offer; reverse the recency score and the offer goes to your most active customers.
 # MAGIC
 # MAGIC **Requirements:**
-# MAGIC - `recency_score`, `frequency_score`, `monetary_score`: 5 quintiles each, 5 = best (most recent buyer, most orders, highest spend); break ties on `customer_id` ascending so the scores are repeatable
+# MAGIC - `recency_score`, `frequency_score`, `monetary_score`: 5 quintiles each, 5 = best (most recent buyer, most orders, highest spend); add `customer_id` ascending as the second sort key in each of the three windows. `ntile` splits rows by position, so customers with the same value can land in different buckets; the second key fixes their order, so each customer gets the same score on every run.
 # MAGIC - `rfm_score`: recency_score + frequency_score + monetary_score
 # MAGIC - Display the top 20 customers by `rfm_score`
 # MAGIC
@@ -526,6 +526,7 @@ print(f"Buyers on as_of_date without recency_score 5: "
 # MAGIC | `RANK()` | Gaps in ranking for ties | Competition ranking |
 # MAGIC | `DENSE_RANK()` | No gaps for ties | Consecutive ranks |
 # MAGIC | `ROW_NUMBER()` | Unique numbers, no ties | Pagination |
+# MAGIC
 # MAGIC **Example:**
 # MAGIC ```
 # MAGIC Revenue: [100, 100, 90, 80]
@@ -571,7 +572,7 @@ display(product_performance.orderBy(F.desc("total_revenue")).limit(20))
 # MAGIC
 # MAGIC **Hint**: one window spec serves both columns; `rank` and `row_number` differ only in what they do with two products on the same revenue.
 # MAGIC
-# MAGIC **🔍 Check your output**: one row per product, `revenue_rank_in_category` = 1 appears once per category unless two products tie, and `revenue_row_number` never repeats within a category.
+# MAGIC **🔍 Check your output**: one row per product, `revenue_rank_in_category` = 1 appears once per category unless two products tie, and `revenue_row_number` never repeats within a category. The 🔍 cell after the Gold write prints these checks as counts.
 
 # COMMAND ----------
 
@@ -649,6 +650,16 @@ print(f"✅ Created Gold table: {PRODUCT_PERFORMANCE_TABLE}")
 
 # COMMAND ----------
 
+# 🔍 Verify Exercise 5: the "Check your output" rules, as counts
+pp = spark.table(PRODUCT_PERFORMANCE_TABLE)
+print(f"Repeated product_id rows: {pp.count() - pp.select('product_id').distinct().count()} (expect 0)")
+print(f"Categories with a rank-1 product: {pp.filter('revenue_rank_in_category = 1').select('category').distinct().count()} (expect 5)")
+print(f"Repeated row numbers within a category: {pp.count() - pp.select('category', 'revenue_row_number').distinct().count()} (expect 0)")
+top = pp.filter('revenue_row_number = 1')
+print(f"Row-number-1 products below their category's top revenue: {top.join(pp.groupBy('category').agg(F.max('total_revenue').alias('mx')), 'category').filter(F.col('total_revenue') < F.col('mx')).count()} (expect 0)")
+
+# COMMAND ----------
+
 # MAGIC %md
 # MAGIC ## Section 5: Data Layout with Liquid Clustering
 # MAGIC **Liquid clustering** co-locates rows with similar values of the clustering keys, so queries that filter on those keys skip files.
@@ -699,7 +710,7 @@ display(spark.sql(f"""
 # COMMAND ----------
 
 # View optimization details
-# Take a look at "clusteringColumns", "numFiles", "sizeInBytes", etc
+# Check clusteringColumns, numFiles and sizeInBytes
 display(spark.sql(f"DESCRIBE DETAIL {DAILY_SALES_SUMMARY_TABLE}"))
 
 # COMMAND ----------
@@ -720,12 +731,13 @@ display(spark.sql(f"DESCRIBE DETAIL {DAILY_SALES_SUMMARY_TABLE}"))
 # Best Practice: VACUUM to remove old file versions
 # Removes files not required by versions older than retention threshold
 # Default retention is 7 days (168 hours) - balance time travel vs storage costs
+# Note: VACUUM permanently deletes files - cannot time travel beyond retention period
 
 spark.sql(f"""
     VACUUM {DAILY_SALES_SUMMARY_TABLE} RETAIN 168 HOURS
 """
 )
-print(f"✅ Cleaned old files from {DAILY_SALES_SUMMARY_TABLE}")
+print(f"✅ VACUUM ran on {DAILY_SALES_SUMMARY_TABLE}: removed unreferenced files older than 168 hours")
 
 
 
@@ -743,8 +755,6 @@ display(
         .filter("col_name = 'Statistics'")
 )
 
-# Note: VACUUM permanently deletes files - cannot time travel beyond retention period
-
 # COMMAND ----------
 
 # MAGIC %md
@@ -754,20 +764,24 @@ display(
 # MAGIC - Business-level aggregations
 # MAGIC - Denormalized for query performance
 # MAGIC - Pre-calculated metrics
+# MAGIC
 # MAGIC **2. Advanced Aggregations**
 # MAGIC - GROUP BY with multiple agg functions
 # MAGIC - Rolling window calculations
 # MAGIC - Time-series summaries
+# MAGIC
 # MAGIC **3. Window Functions**
 # MAGIC - `RANK()`, `ROW_NUMBER()`, `DENSE_RANK()`
 # MAGIC - `NTILE()` for quintile scoring
 # MAGIC - Cumulative calculations
 # MAGIC - Partitioned windows
+# MAGIC
 # MAGIC **4. Business Analytics**
 # MAGIC - Customer lifetime value (LTV)
 # MAGIC - RFM segmentation
 # MAGIC - Product performance ranking
 # MAGIC - Market share analysis
+# MAGIC
 # MAGIC **5. Optimization**
 # MAGIC - Liquid clustering (CLUSTER BY), OPTIMIZE and VACUUM
 # MAGIC ### ✅ Exam Checklist
@@ -785,4 +799,4 @@ display(
 # MAGIC - Wiring notebooks 02-04 into a 3-task job
 # MAGIC ---
 # MAGIC **🎉 Notebook Complete!**
-# MAGIC The Gold layer is complete with optimized analytics tables ready for BI tools and dashboards. Proceed to Notebook 05.
+# MAGIC Your three Gold tables are written and clustered: `daily_sales_summary`, `customer_lifetime_value` and `product_performance`. Next: Notebook 05 turns notebooks 02 to 04 into a 3-task job.

@@ -62,8 +62,8 @@ Multi-notebook, end-to-end medallion pipelines with a business scenario. Each ru
 | ------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------- |
 | [Apparel Retail 360 (Lakeflow)](pipeline-labs/apparel-streaming/) | End-to-end retail analytics pipeline on Lakeflow Spark Declarative Pipelines with a full medallion architecture. | Lakeflow Declarative Pipelines, Medallion, SCD Type 2, Streaming, Data Quality Expectations |
 | [Fintech Transaction Monitoring](pipeline-labs/fintech-monitoring/)      | Real-time fraud-monitoring pipeline for a payment processor handling 500K+ transactions/day.         | Structured Streaming, Rescued Data, Watermarked Dedup, Stream-Static Joins, Liquid Clustering |
-| [DE Associate Certification Prep](pipeline-labs/de-associate-cert-prep/) | Production-grade pipeline covering every exam domain of the Databricks Data Engineer Associate cert. | Auto Loader, COPY INTO, Medallion, SCD2, Jobs, Unity Catalog                                  |
-| [PySpark Developer Cert Prep](pipeline-labs/pyspark-cert-zenith/)        | E-commerce analytics pipeline covering every domain of the Spark Developer Associate cert.           | DataFrame API, Structured Streaming, Data Skew, Performance Tuning                            |
+| [DE Associate Certification Prep](pipeline-labs/de-associate-cert-prep/) | Production-grade pipeline drilling the core topics of the Databricks Data Engineer Associate cert. | Auto Loader, COPY INTO, Medallion, SCD2, Jobs, Unity Catalog                                  |
+| [PySpark Developer Cert Prep](pipeline-labs/pyspark-cert-zenith/)        | E-commerce analytics pipeline covering six of the seven Spark Developer Associate exam sections.           | DataFrame API, Structured Streaming, Data Skew, Performance Tuning                            |
 
 ### Deep-Dives (`deep-dives/`)
 

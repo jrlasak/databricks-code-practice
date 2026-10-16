@@ -2,7 +2,9 @@
 # MAGIC %md
 # MAGIC # 02: Enrich With Dimensions  -  "Stream-Static Joins: Adding Business Context"
 # MAGIC **Exam Coverage**: DE Associate (Medallion, MERGE) + DE Professional (Stream-Static Joins)
-# MAGIC **Duration**: 60 minutes
+# MAGIC
+# MAGIC **Duration**: 75 minutes
+# MAGIC
 # MAGIC ---
 # MAGIC ## Learning Objectives
 # MAGIC By the end of this notebook, you will be able to:
@@ -47,9 +49,9 @@ from pyspark.sql.types import *
 # MAGIC **Requirements:**
 # MAGIC - Load customers from `CUSTOMERS_RAW_PATH` (CSV with headers) using schema `customer_id STRING, name STRING, email STRING, country STRING, risk_tier STRING, created_at DATE`. Load the Bronze transaction stream from `TABLE_BRONZE_TRANSACTIONS`.
 # MAGIC - Perform a **left join** on `customer_id` so transactions with unknown customers are preserved.
-# MAGIC - Keep only `customer_id`, `customer_name` (renamed from `name`), `customer_country` (renamed from `country`) and `risk_tier` in `customers_df` before joining. After the join, fill nulls: "Unknown Customer" for `customer_name`, "Unknown" for `customer_country`.
+# MAGIC - Keep only `customer_id`, `customer_name` (renamed from `name`), `customer_country` (renamed from `country`) and `risk_tier` in `customers_df` before joining. After the join, fill nulls: "Unknown Customer" for `customer_name`, "Unknown" for `customer_country`. `risk_tier` stays as it is.
 # MAGIC
-# MAGIC **Aha Moment**: In Fintech, dropping a transaction because a customer isn't in your DB yet is a compliance gap  -  every transaction must be traceable, even if the customer profile is incomplete.
+# MAGIC **Aha Moment**: In fintech, dropping a transaction because a customer isn't in your DB yet is a compliance gap  -  every transaction must be traceable, even if the customer profile is incomplete.
 # MAGIC
 # MAGIC **Hint**: Remember that `spark.read` creates a static DataFrame, while `spark.readStream` creates a streaming DataFrame.
 # MAGIC
@@ -100,10 +102,10 @@ from pyspark.sql.types import *
 # MAGIC
 # MAGIC **Requirements:**
 # MAGIC - Load merchants from `MERCHANTS_RAW_PATH` (JSON) into `merchants_df` using schema `merchant_id STRING, name STRING, category_code STRING, country STRING, risk_score INT, onboarded_at DATE`.
-# MAGIC - Rename inside `merchants_df` (`name` to `merchant_name`, `country` to `merchant_country`, `risk_score` to `merchant_risk_score`; the cell before Exercise 3 saves this DataFrame as the Silver merchants table) and keep exactly `merchant_id`, `merchant_name`, `category_code`, `merchant_country`, `merchant_risk_score`. `merchant_risk_score` feeds the risk score in Notebook 03; `category_code` feeds the daily report in Notebook 04.
+# MAGIC - Rename `name` to `merchant_name`, `country` to `merchant_country` and `risk_score` to `merchant_risk_score`, then keep exactly `merchant_id`, `merchant_name`, `category_code`, `merchant_country`, `merchant_risk_score` in `merchants_df`. The cell before Exercise 3 saves this DataFrame as the Silver merchants table; `merchant_risk_score` feeds the risk score in Notebook 03 and `category_code` the daily report in Notebook 04.
 # MAGIC - Left join `enriched_txns_df` to `merchants_df` on `merchant_id`, then fill missing `merchant_name` with "Unknown Merchant" and `merchant_country` with "Unknown".
 # MAGIC
-# MAGIC **Aha Moment**: About 1% of payments go to merchants onboarded after the last dimension export (ids `5000`-`5009`). An inner join silently drops them, so they vanish from the rules engine and every downstream total, and a fraudster who finds that gap has an unmonitored channel. Keeping them as "Unknown Merchant" means they still reach the rules engine and the daily report, ops can pull `merchant_name = 'Unknown Merchant'` as a review queue, and the next dimension refresh fills them in.
+# MAGIC **Aha Moment**: About 1% of payments go to merchants onboarded after the last dimension export (ids `5000`-`5009`). An inner join silently drops them, so they vanish from the rules engine and every downstream total, and a fraudster who finds that gap has an unmonitored channel. Keeping them as "Unknown Merchant" means they still reach the rules engine and the daily report, and ops can pull `merchant_name = 'Unknown Merchant'` as a review queue. Once a merchant reaches the dimension, its new payments pick up the details; the rows already in Silver keep "Unknown Merchant" until a backfill (a MERGE from the refreshed dimension) repairs them.
 # MAGIC
 # MAGIC **Quick check before you go on**: count the rows of `merchants_df` in your work cell: 5,000, one per `merchant_id`. The provided cell before Exercise 3 prints the same 5,000 when it saves this DataFrame.
 
@@ -226,7 +228,7 @@ display(merchant_updates_df.orderBy(F.col("merchant_id").cast("int")))
 # MAGIC - **MERGE metrics** (second grid): the latest table history entry has `operation` = `MERGE`, and its `operationMetrics` show `numSourceRows` = 13, `numTargetRowsUpdated` = 3 and `numTargetRowsInserted` = 10: the MERGE changed 13 rows, not 5,010. `numTargetRowsCopied` counts unchanged rows that were rewritten only because they share a file with an updated row: 0 when the table has deletion vectors on, the rest of that file when it does not.
 # MAGIC - **Ran your MERGE twice?** The second run matches all 13 merchants, so history shows `numTargetRowsUpdated` = 13 and `numTargetRowsInserted` = 0. The table is still right: this MERGE is idempotent because it replaces values on a stable key and you fed it the same 13 rows. A MERGE that adds to a value (`SET total = total + source.total`) would double count on the second run. To see the 3 / 10 split again, re-run the two provided cells above (they reset the table to the export), then your MERGE once.
 # MAGIC
-# MAGIC **What this means**: Your Silver merchants table is now an updateable dimension. When merchants onboard or risk scores change, one MERGE applies the inserts and updates in a single atomic transaction. Only files holding a matched row are in play: without deletion vectors MERGE rewrites each of those files, unchanged rows included; with deletion vectors it marks the old rows and leaves the file rewrite to a later `OPTIMIZE`. Either way, a source that holds just today's changes keeps that set small. When the source is a full snapshot instead, an unconditional update-all matches every merchant, so production MERGEs add a change condition to touch only the rows that actually changed.
+# MAGIC **What this means**: Your Silver merchants table is now an updateable dimension: one MERGE applies today's inserts and updates in a single atomic transaction, and only the files that hold a matched row are touched (with deletion vectors MERGE marks the old rows and leaves the rewrite to a later `OPTIMIZE`). A source that holds just today's changes keeps that set small. When the source is a full snapshot instead, an unconditional update-all matches every merchant, so production MERGEs add a change condition to touch only the rows that actually changed.
 
 # COMMAND ----------
 
@@ -302,17 +304,20 @@ display(spark.sql(f"DESCRIBE HISTORY {TABLE_SILVER_MERCHANTS} LIMIT 1").select("
 # MAGIC - **Row count**: 50,141 if you ran each cell once: your Bronze count (50,155) minus the 14 rescued rows you counted in Notebook 01 Exercise 4. The left joins drop nothing else.
 # MAGIC - **New columns**: `customer_name`, `customer_country`, `risk_tier`, `merchant_name`, `category_code`, `merchant_country`, `merchant_risk_score`, `is_geo_mismatch`.
 # MAGIC - **`_rescued_data`**: not among Silver's columns in the grid (you dropped it in requirement 1). If you still see it, add the drop to your work cell and follow the README's recovery step: re-run `00_Setup_Environment.py`, then the notebooks in order. Re-running only the corrected streaming cell does nothing, because its checkpoint already marked the files as processed.
-# MAGIC - **`is_geo_mismatch`**: about 1 row in 20 shows `true` (travel, VPNs, cross-border online shopping): the customer's registered country differs from the IP country. On its own that is a weak signal, which is why Notebook 03 combines it with other rules.
-# MAGIC - **Null handling**: Look for `"Unknown Merchant"` on about 1% of rows (about 500): payments at merchants `5000`-`5009`, onboarded after the export you joined against (Exercise 3 inserted them into the Silver merchants table, but this join read the export). `"Unknown Customer"` should not appear here, because every customer id in this data exists in the dimension; the left join is what protects you on the day one doesn't. In Fintech, we preserve these rows instead of dropping them.
-# MAGIC - **`currency`**: `USD` on every row. The gateway settles in USD, and the lowercase `usd` some integrations send is now standardized.
+# MAGIC - **`is_geo_mismatch`**: the printed geo-mismatch count is about 2,500 (1 payment in 20): the customer's registered country differs from the IP country, usually travel, VPNs or cross-border online shopping. On its own that is a weak signal, which is why Notebook 03 combines it with other rules.
+# MAGIC - **Null handling**: the printed `'Unknown Merchant'` count is about 500 (about 1% of rows): payments at merchants `5000`-`5009`, onboarded after the export you joined against (Exercise 3 inserted them into the Silver merchants table, but this join read the export). `"Unknown Customer"` should not appear here, because every customer id in this data exists in the dimension; the left join is what protects you on the day one doesn't.
+# MAGIC - **`currency`**: the printed list is `['USD']`. The gateway settles in USD, and the lowercase `usd` some integrations send is now standardized.
 # MAGIC
-# MAGIC **What this means**: Your Silver layer now has business-ready, enriched transactions. Every row carries the context needed for fraud detection  -  who the customer is, who the merchant is, and whether the geography looks suspicious. This is the dataset the rules engine in Notebook 03 will score.
+# MAGIC **What this means**: Your Silver layer now has business-ready, enriched transactions. Every row carries the context needed for fraud detection: who the customer is, who the merchant is, and whether the geography looks suspicious. This is the dataset the rules engine in Notebook 03 will score.
 
 # COMMAND ----------
 
 # 🔍 Verification query
 silver_result = spark.read.table(TABLE_SILVER_TRANSACTIONS)
 print(f"✅ {TABLE_SILVER_TRANSACTIONS}: {silver_result.count()} rows")
+print(f"'Unknown Merchant' rows: {silver_result.filter(F.col('merchant_name') == 'Unknown Merchant').count()}")
+print(f"Geo-mismatch rows: {silver_result.filter('is_geo_mismatch').count()}")
+print(f"Currencies: {sorted(r.currency for r in silver_result.select('currency').distinct().collect())}")
 display(silver_result.limit(10))
 
 # COMMAND ----------

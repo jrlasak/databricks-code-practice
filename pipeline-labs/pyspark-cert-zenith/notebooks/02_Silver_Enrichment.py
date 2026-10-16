@@ -4,7 +4,7 @@
 # MAGIC
 # MAGIC **Zenith Online pipeline, notebook 2 of 3.** This notebook turns the raw Bronze events into one conformed Silver table, `silver_enriched_activity`: de-duplicated with a watermark, joined to the product and customer dimensions, and tagged with a region by a Pandas UDF. Run `01_Bronze_Ingestion` first.
 # MAGIC
-# MAGIC **Duration**: ~30 min
+# MAGIC **Duration**: ~45 min
 # MAGIC
 # MAGIC ---
 # MAGIC ## Learning Objectives
@@ -27,8 +27,6 @@ import pyspark.sql.functions as F
 from pyspark.sql.types import StringType
 import pandas as pd
 
-# In Databricks, the SparkSession `spark` is already created for you.
-
 # COMMAND ----------
 
 # MAGIC %run ./variables
@@ -36,7 +34,7 @@ import pandas as pd
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## 02 - Silver Layer - Clean, Enrich, and De-duplicate
+# MAGIC ## Silver Layer Overview
 # MAGIC
 # MAGIC **Goal:** Combine raw data sources, clean the data, remove duplicates, and create an enriched, queryable table for deeper analysis.
 # MAGIC
@@ -53,9 +51,9 @@ import pandas as pd
 # MAGIC ---
 # MAGIC ### 🎯 TASK 4: Create a Pandas UDF for Region Categorization
 # MAGIC
-# MAGIC **Why:** Normalizes granular location strings into a smaller, business-recognized region taxonomy to simplify segmentation, reduce cardinality in aggregations, and accelerate downstream queries.
+# MAGIC **Why:** Marketing segments customers by 3 regions, not 8 cities, so Silver carries a `region` column the Gold customer summary groups by.
 # MAGIC
-# MAGIC **When not to**: in production, a mapping this simple belongs in a built-in `when`/`isin` expression, which runs inside the JVM with no Python round-trip. The exam expects you to write and apply a Pandas UDF, so this task uses one on logic you can check by eye. Reach for a Pandas UDF when the logic needs a Python library with no built-in equivalent (a geocoder, a scoring model, a parsing library).
+# MAGIC **When not to**: in production, a mapping this simple belongs in a built-in `when`/`isin` expression, which Spark evaluates in its own engine (Photon on serverless) with no Python round-trip. The exam expects you to write and apply a Pandas UDF, so this task uses one on logic you can check by eye. Reach for a Pandas UDF when the logic needs a Python library with no built-in equivalent (a geocoder, a scoring model, a parsing library).
 # MAGIC
 # MAGIC **End Goal:** A reusable function (`categorize_region`) producing a standardized region column used for customer and revenue rollups in Silver and Gold tables.
 # MAGIC
@@ -94,7 +92,7 @@ import pandas as pd
 #     region = pd.Series("Central", index=locations.index, dtype="object")
 #     region[locations.isin(["New York", "Philadelphia"])] = "East"
 #     region[locations.isin(["Los Angeles", "San Diego", "Phoenix"])] = "West"
-#     # # A null location (no matching customer) stays null, so Task 7's check can see it.
+#     # A null location (no matching customer) stays null, so Task 7's check can see it.
 #     return region.where(locations.notna(), None)
 #
 # print("Silver Layer: Pandas UDF `categorize_region` created.")
@@ -106,7 +104,7 @@ import pandas as pd
 # MAGIC Run the cell below to apply `categorize_region` to the `location` column of `bronze_customer_profiles` (your Task 2 table), so you know the UDF works on real data before Task 5 builds on it. You should see:
 # MAGIC - **Three regions, 1,000 customers in total**: `East` (New York, Philadelphia), `West` (Los Angeles, San Diego, Phoenix) and `Central` (Chicago, Houston, San Antonio).
 # MAGIC - **What to look for**: no null region and no fourth value (every customer in this file has a location). The generator draws the 8 cities evenly, so `West` and `Central` each hold roughly three-eighths of the customers and `East` roughly a quarter: about 383 `West`, 375 `Central` and 242 `East`.
-# MAGIC - **The null rule**: this file cannot test it, because every customer here has a location. Task 5 checks it: its 🔍 cell must print about 249 rows without a region after one setup run; 0 means your UDF turned nulls into `Central`.
+# MAGIC - **The null rule**: this file cannot test it, because every customer here has a location. Task 5 checks it: its 🔍 cell must print 249 rows without a region after one setup run; 0 means your UDF turned nulls into `Central`.
 # MAGIC
 # MAGIC **What this means**: the UDF collapses 8 city strings into the 3 regions marketing segments by. Task 5 applies it to every event, and the Gold customer summary groups by its output.
 
@@ -117,7 +115,8 @@ region_check = (
     spark.read.table(BRONZE_CUSTOMERS_TABLE)
     .withColumn("region", categorize_region(F.col("location")))
 )
-print(f"✅ categorize_region applied to {region_check.count():,} customers")
+print(f"✅ Customers with categorize_region applied: {region_check.count():,} (expect 1,000)")
+print(f"Customers with a region: {region_check.filter(F.col('region').isNotNull()).count():,} (expect 1,000)")
 display(region_check.groupBy("region").count().orderBy(F.col("count").desc()))
 
 # COMMAND ----------
@@ -129,9 +128,12 @@ display(region_check.groupBy("region").count().orderBy(F.col("count").desc()))
 # MAGIC ---
 # MAGIC ### 🎯 TASK 5: Create `silver_enriched_activity` Streaming Table
 # MAGIC
-# MAGIC **Why:** Transforms noisy raw events into a de-duplicated, enriched activity fact set combining product, customer, temporal, and derived region context - shaping data into a form suited for consistent business aggregation without re-implementing joins each time. Products are inner-joined because an event for a product missing from the catalog cannot be priced and would corrupt revenue; customers are left-joined because an event from a customer missing from the latest CSV snapshot is still a real view or purchase, so it is kept with a null region, which Task 7's data quality check counts. The 3-minute watermark bounds the de-duplication state: because `event_dt` is part of the dedup key, Spark can forget a key once the watermark has passed its event time. A client retry here is an exact copy (same `event_id`, same timestamp), and the generator's events arrive within 30 seconds of each other, so 3 minutes catches every retry while keeping the state small.
+# MAGIC **Why:** Silver de-duplicates and joins once, so every Gold aggregation reads one enriched table instead of re-implementing the joins.
+# MAGIC - **Products: inner join.** An event for a product missing from the catalog has no price, name or category, and would land in Gold as a null-category row. The cost is that the few real purchases of delisted products (about 10 per setup run) drop out of revenue, so in production you would keep delisted products in the product dimension or route unmatched events to a quarantine table instead of losing them.
+# MAGIC - **Customers: left join.** An event from a customer missing from the latest CSV snapshot is still a real view or purchase, so it is kept with a null region, which Task 7's data quality check counts.
+# MAGIC - **3-minute watermark.** It bounds the de-duplication state: because `event_dt` is part of the dedup key, Spark can forget a key once the watermark has passed its event time. A client retry here is an exact copy (same `event_id`, same timestamp), and the generator's events arrive within 30 seconds of each other, so 3 minutes catches every retry while keeping the state small.
 # MAGIC
-# MAGIC **End Goal:** A single conformed Silver table (`silver_enriched_activity`) that is the authoritative behavioral dataset powering all Gold-layer KPIs.
+# MAGIC **End Goal:** A single conformed Silver table (`silver_enriched_activity`), the one table both Gold tables are built from.
 # MAGIC
 # MAGIC **Key Concepts:**
 # MAGIC - **Watermarking**: tells Spark when it may forget old keys. Dedup state is evicted only when the watermarked column is part of the dedup key; with `event_id` alone the state grows forever. When copies of one event can carry different timestamps, `dropDuplicatesWithinWatermark` is the operator
@@ -238,8 +240,9 @@ display(region_check.groupBy("region").count().orderBy(F.col("count").desc()))
 
 # 🔍 Verification: read the Silver table back as a batch table
 silver_check = spark.read.table(SILVER_TABLE)
-print(f"✅ {SILVER_TABLE}: {silver_check.count():,} rows")
-print(f"Rows without a region: {silver_check.filter(F.col('region').isNull()).count()}")
+n_files = len([f for f in dbutils.fs.ls(RAW_STREAMING_PATH) if f.name.endswith(".json")])
+print(f"✅ {SILVER_TABLE} rows: {silver_check.count():,} (expect {49900 * n_files:,}: 49,900 per setup run)")
+print(f"Rows without a region: {silver_check.filter(F.col('region').isNull()).count()} (expect {249 * n_files})")
 display(silver_check.groupBy("region", "action").count().orderBy("region", "action"))
 
 # COMMAND ----------

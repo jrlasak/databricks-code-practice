@@ -21,18 +21,19 @@ Task 12: Create the `02_silver.silver_sales_transactions` Table
 
 Business Logic:
     Filter sales records to include only positive quantities (actual sales), and drop 
-    records with invalid discounts or missing foreign keys. This ensures only valid 
-    sales transactions are available for analytics.
+    records with invalid discounts or missing foreign keys.
 
 Requirements:
-    [ ] Read `sales_cleaned_stream` as a stream - use the `SALES_CLEANED_STREAM` variable.
+    [ ] Read `sales_cleaned_stream` as a stream - use the `SALES_CLEANED_STREAM` variable -
+        and add `comment`: "Stream sales table (positive quantity)".
 
     [ ] Filter to include only records where `quantity > 0`.
         Business logic: Negative or zero quantities are not valid sales.
     
     [ ] Apply Expectations:
         - Drop (`valid_discount`) if `discount_applied` is less than 0.
-          Business logic: Negative discounts are not possible in real sales.
+          Business logic: This is the sign error Task 8 warned about; here it is
+          dropped, so no fact table carries it.
         
         - Drop (`valid_store_id`) if `store_id` is NULL.
           Business logic: Store ID is required for all store-level analytics.
@@ -43,8 +44,7 @@ Requirements:
         - Drop (`valid_product_id`) if `product_id` is NULL.
           Business logic: Product ID is required for all product-level analytics.
 
-Tip:
-    - If stuck, see the solution below.
+Tip: if stuck, see the solution below.
 """
 ### ---------------------
 ### Write Your Code Here ###
@@ -75,28 +75,31 @@ Task 13: Create the `02_silver.silver_returns_transactions` Table
 Business Logic:
     Filter sales records to include only negative quantities (returns), transform to 
     absolute values for reporting, and drop records with invalid discounts or missing
-    foreign keys. This ensures returns are tracked separately and accurately.
-    Returns are kept apart so finance can report sales and refunds separately; the
-    gold tables in this lab report sales after discounts but before returns.
+    foreign keys. Returns are kept apart so finance can report sales and refunds
+    separately; the gold tables in this lab report sales after discounts but before returns.
 
 Requirements:
-    [ ] Read `sales_cleaned_stream` as a stream - use the `SALES_CLEANED_STREAM` variable.
+    [ ] Read `sales_cleaned_stream` as a stream - use the `SALES_CLEANED_STREAM` variable -
+        and add `comment`: "Stream returns table (negative quantity)".
     
     [ ] Filter to include only records where `quantity < 0`.
         Business logic: Only negative quantities should be considered returns.
     
     [ ] Apply Transformations:
         - Create `returned_quantity` column using the absolute value of `quantity`.
-          Business logic: Absolute value makes reporting and analysis easier.
-        
+          Business logic: A returned quantity reads as a positive count of units back.
+
         - Create `returned_amount` column using the absolute value of `total_amount`.
-          Business logic: Absolute value makes reporting and analysis easier.
+          Business logic: Refund totals sum as positive amounts.
+          `tax_amount` is left as the source sends it (negative on a return); refunded
+          tax is its negation.
         
         - Drop the original `quantity` and `total_amount` columns.
           Business logic: Removes ambiguity in reporting.
     
     [ ] Apply the same four "expect or drop" quality rules, with the same names, as the sales transactions table.
-        Business logic: Ensures returns data is as clean as sales data.
+        Business logic: A return with a wrong-sign discount or a missing key would corrupt
+        refund totals just as it would sales.
 
 Tips:
     - Run the pipeline after this step to validate returns processing and expectations.

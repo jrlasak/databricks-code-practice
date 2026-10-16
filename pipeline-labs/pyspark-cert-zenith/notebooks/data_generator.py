@@ -1,10 +1,10 @@
 # Databricks notebook source
 """
-Zenith Online - Synthetic Data Generator for Spark Certification Project
+Zenith Online Analytics Pipeline - Synthetic Data Generator
 
 This script generates synthetic data for a fictional e-commerce platform, "Zenith Online."
-It is designed to provide the necessary data for a learning project preparing for the
-Databricks Certified Associate Developer for Apache Spark exam.
+It feeds the Zenith Online lab for the Databricks Certified Associate Developer for
+Apache Spark exam.
 
 The script produces three distinct datasets:
 1.  A batch file of customer profiles in CSV format.
@@ -19,25 +19,24 @@ Data Generation Logic & Intentionally Introduced Challenges
     *   **Customers (CSV):** A list of customers with static information. One file is generated
       at the start of the run to represent a dimension table that is loaded infrequently.
     *   **Products (Parquet):** A catalog of products. This is also generated as a single file
-      at the start. The Parquet format is chosen to cover this common columnar format in Spark.
+      at the start, in Parquet, so the Bronze layer reads a columnar format that carries its own schema.
       Each category has its own product nouns and price band (`PRODUCT_CATALOG`), so a name,
       its category and its price agree, and every name is unique (it ends in a model code
       built from the `product_id`, e.g. `Z101`).
 
 2.  **Streaming Data (`generate_streaming_events`)**:
-    *   **User Events (JSON Lines):** This function runs in a continuous loop to simulate a stream
-      of user actions (`view_product`, `add_to_cart`, `purchase`). Each batch of events is
+    *   **User Events (JSON Lines):** Each call writes one batch of user actions (`view_product`,
+      `add_to_cart`, `purchase`), or loops, one batch per interval, with `infinite=True`. Each batch of events is
       written as a new JSON Lines file (one event object per line) to a specific directory,
       which Databricks Auto Loader or `readStream` can pick up.
-    *   **Data Skew (Critical for the Project):** The generator intentionally introduces data skew.
+    *   **Data Skew:** The generator intentionally introduces data skew.
       A small subset of `product_id`s (defined in `POPULAR_PRODUCT_IDS`) has a significantly
       higher probability of appearing in events of every type (views, add-to-carts and
       purchases alike), so each product keeps a view > cart > purchase funnel and the hot
-      products are also the best sellers. This is designed to test the student's ability to
-      identify and handle data skew during aggregation tasks in the Spark project (e.g., using
-      salting).
-    *   **Planted Data Quality Issues:** Drawn after the main event loop, so the seeded event mix
-      stays the same:
+      products are also the best sellers. Notebook 03 measures this skew, applies the two-stage
+      salting pattern to it and shows when that pattern pays off.
+    *   **Planted Data Quality Issues:** Applied after the main event loop, to a random sample of
+      the events:
         - Client retries: about 1% of events are re-sent as exact copies (same `event_id`,
           same `event_timestamp`), as a tracking SDK does when a beacon call times out.
           The Silver layer's watermarked de-duplication removes them.
@@ -62,11 +61,9 @@ then calls:
     (no endless loop to cancel).
 
 All paths come from `variables.py`. `random` is seeded once (42), so every run draws the
-same products, customers and event mix; event timestamps stay relative to the moment of
-the run, which the 3-minute watermark in the Silver layer depends on.
-
-This setup provides a realistic starting point (the "raw" layer) for a Bronze-Silver-Gold
-ETL pipeline project.
+same 500 products, the same 1,000 customer IDs and locations (their signup dates move
+with the run date) and the same event mix; event timestamps stay relative to the moment
+of the run, which the 3-minute watermark in the Silver layer depends on.
 """
 
 import os
@@ -86,8 +83,7 @@ from datetime import datetime, timezone, timedelta
 # Seed once so two runs draw the same products, customers and event mix.
 random.seed(42)
 
-# Try to import pandas and pyarrow, which are needed for Parquet export.
-# These are pre-installed in Databricks runtimes.
+# pandas and pyarrow write the Parquet file (pre-installed on Databricks).
 try:
     import pandas as pd
     import pyarrow as pa
@@ -112,7 +108,7 @@ CONFIG = {
     "STREAM_BATCH_INTERVAL_S": 30,
 
     # Data Skew Configuration
-    # These 5 products will be viewed, carted and bought much more frequently than others.
+    # The 5 products in this week's flash sale: viewed, carted and bought much more often than the rest.
     "POPULAR_PRODUCT_IDS": [101, 210, 315, 420, 55],
     "SKEW_FACTOR_PROBABILITY": 0.75, # 75% of all events (any type) will be for a popular product.
 
@@ -148,13 +144,12 @@ existing_product_ids = []
 def generate_batch_data():
     """
     Generates the initial batch files for customers (CSV) and products (Parquet).
-    This function runs once at the beginning of the script.
+    Called once by 00_Setup_Environment.
     """
     print(f"[{datetime.now()}] Starting generation of initial batch data...")
 
     # --- 1. Generate Customer Data (CSV) ---
     customers_path = CONFIG["RAW_BATCH_CUSTOMERS_PATH"]
-    ##os.makedirs(customers_path, exist_ok=True)
     customer_filepath = os.path.join(customers_path, "customer_profiles.csv")
     
     with open(customer_filepath, 'w', newline='') as f:
@@ -205,8 +200,8 @@ def generate_batch_data():
 
 def generate_streaming_events(infinite=None, stream_events_per_batch=None, stream_batch_interval_s=None):
     """
-    Generates a continuous stream of user event data in JSON format.
-    If infinite is True, runs in a loop until the script is manually stopped.
+    Writes user event data as JSON Lines files, one file per batch.
+    If infinite is True, runs in a loop until the cell is cancelled.
     If infinite is False, generates only one batch.
     If infinite is None, uses CONFIG["STREAM_INFINITE"].
     """
@@ -223,7 +218,7 @@ def generate_streaming_events(infinite=None, stream_events_per_batch=None, strea
 
     print(f"[{datetime.now()}] Starting event stream generation...")
     print(f"Data will be written to: {streaming_path}")
-    print(f"Data Skew active: {CONFIG['SKEW_FACTOR_PROBABILITY']*100}% of events (every type) target {CONFIG['POPULAR_PRODUCT_IDS']}")
+    print(f"Data Skew active: {CONFIG['SKEW_FACTOR_PROBABILITY']:.0%} of events (every type) target {CONFIG['POPULAR_PRODUCT_IDS']}")
     print(f"Streaming mode: {'infinite' if infinite else 'single batch'}")
     print("-" * 50)
 
@@ -249,7 +244,6 @@ def generate_streaming_events(infinite=None, stream_events_per_batch=None, strea
             events.append(event)
 
         # --- Planted data quality issues ---
-        # Drawn AFTER the main loop, so the seeded event mix above stays the same.
         # 1. Late sign-ups: accounts created after the nightly CRM export, so
         #    customer_profiles.csv does not have them yet.
         first_id, last_id = CONFIG['LATE_SIGNUP_USER_IDS']
@@ -279,14 +273,3 @@ def generate_streaming_events(infinite=None, stream_events_per_batch=None, strea
             time.sleep(stream_batch_interval_s)
     else:
         write_event_batch()
-
-
-# # --- Main Execution Block ---
-# if __name__ == "__main__":
-#     # First, generate the one-time batch files
-#     generate_batch_data()
-    
-#     # Then, start the continuous stream generation
-#     # This will run indefinitely until the notebook cell is interrupted or cancelled,
-#     # or just once if CONFIG["STREAM_INFINITE"] is set to False.
-#     generate_streaming_events()

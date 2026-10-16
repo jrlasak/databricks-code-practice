@@ -1,8 +1,11 @@
 # Databricks notebook source
 # MAGIC %md
 # MAGIC # Notebook 01: Environment Setup & Unity Catalog
+# MAGIC
 # MAGIC **Exam Coverage**: Sections 1 (Databricks Intelligence Platform) & 5 (Data Governance & Quality)
-# MAGIC **Duration**: 30-45 minutes
+# MAGIC
+# MAGIC **Duration**: about 30 minutes
+# MAGIC
 # MAGIC ---
 # MAGIC ## Learning Objectives
 # MAGIC By the end of this notebook, you will be able to:
@@ -28,7 +31,6 @@
 # MAGIC - Logical separation of environments (dev, staging, prod)
 # MAGIC - Organizational boundaries
 # MAGIC - Fine-grained access control
-# MAGIC Let's set up our environment.
 
 # COMMAND ----------
 
@@ -53,7 +55,7 @@ print(f"Current Schema: {spark.catalog.currentDatabase()}")
 
 # MAGIC %md
 # MAGIC ## Section 2: Explore Unity Catalog Structure
-# MAGIC Unity Catalog organizes data in a hierarchy. Let's explore what's been set up.
+# MAGIC Unity Catalog organizes data in a hierarchy. The cells below list what notebook 00 created.
 
 # COMMAND ----------
 
@@ -73,7 +75,7 @@ display(dbutils.fs.ls(SALES_LANDING_PATH))
 # COMMAND ----------
 
 # List tables in the bronze schema
-# It will probably show no tables - rerun it once we create something!
+# Empty on a first run: run it again after Exercise 1 creates customers_managed
 
 spark.sql(f"SHOW TABLES IN {CATALOG_NAME}.{BRONZE_SCHEMA}").show()
 
@@ -82,6 +84,7 @@ spark.sql(f"SHOW TABLES IN {CATALOG_NAME}.{BRONZE_SCHEMA}").show()
 # MAGIC %md
 # MAGIC ### Understanding Volumes
 # MAGIC Volumes provide governed access to files (non-tabular data).
+# MAGIC
 # MAGIC **Three-level namespace for volumes:**
 # MAGIC ```
 # MAGIC catalog.schema.volume
@@ -97,6 +100,7 @@ spark.sql(f"SHOW TABLES IN {CATALOG_NAME}.{BRONZE_SCHEMA}").show()
 # MAGIC **Managed tables**: Unity Catalog manages both metadata AND data files.
 # MAGIC - Drop the table → deletes metadata + data
 # MAGIC - Storage location is automatic
+# MAGIC
 # MAGIC We'll load customer data from the landing zone and create a managed table.
 
 # COMMAND ----------
@@ -121,7 +125,7 @@ display(customers_df.limit(10))
 # MAGIC **Why**: UC owns a managed table's files, so nobody tracks a storage path and DROP TABLE leaves no orphaned data.
 # MAGIC
 # MAGIC **Requirements:**
-# MAGIC - Table name: `managed_table_name` (`{CATALOG_NAME}.{BRONZE_SCHEMA}.customers_managed`, created for you below)
+# MAGIC - Table name: the `managed_table_name` variable, already set in the cell below to `{CATALOG_NAME}.{BRONZE_SCHEMA}.customers_managed`
 # MAGIC - Delta format, overwrite mode (this is the first load)
 # MAGIC - A managed table: you give a table name, never a storage path
 # MAGIC
@@ -167,19 +171,14 @@ print(f"Created managed table: {managed_table_name}")
 # MAGIC %md
 # MAGIC ### 🔍 Verify Your Results
 # MAGIC Run the cell below. You should see:
-# MAGIC - `format` = delta, and a `location` you never typed: a managed path Unity Catalog chose.
+# MAGIC - `format` = delta, and a `location` you never typed: for a managed table Unity Catalog picks the path itself, inside the managed storage location of the table's schema, or of its catalog, or of the metastore, whichever is set closest to the table.
 # MAGIC - **10,200** rows: 10,000 customers + 200 planted duplicates (notebook 03 removes them on the way to Silver).
 
 # COMMAND ----------
 
 # 🔍 Verify: check table details to see where data is stored, and the row count
 display(spark.sql(f"DESCRIBE DETAIL {managed_table_name}"))
-print(f"Rows in {managed_table_name}: {spark.table(managed_table_name).count():,}")
-
-# COMMAND ----------
-
-# MAGIC %md
-# MAGIC **Observation**: Notice the `location` field. For managed tables, Unity Catalog automatically determines this location within the metastore's managed storage.
+print(f"Rows in {managed_table_name}: {spark.table(managed_table_name).count():,} (10,200 on a first run)")
 
 # COMMAND ----------
 
@@ -187,11 +186,7 @@ print(f"Rows in {managed_table_name}: {spark.table(managed_table_name).count():,
 # MAGIC ## Section 3b: Create Security Groups
 # MAGIC Before we can grant permissions, we need to create the groups that will receive those permissions.
 # MAGIC ### What are Groups?
-# MAGIC **Groups** are collections of users that share the same access permissions. Using groups instead of individual users:
-# MAGIC - ✅ Simplifies permission management
-# MAGIC - ✅ Ensures consistent access across teams
-# MAGIC - ✅ Makes auditing easier
-# MAGIC - ✅ Follows security best practices
+# MAGIC **Groups** are collections of users that share the same access permissions. With groups, a new hire joins one group instead of collecting GRANTs one by one, and an audit reads three group grants instead of one per user.
 # MAGIC ### Persona-Based Groups
 # MAGIC We'll create one group for each data team role this lab grants access to:
 # MAGIC | Group | Role | Typical Access |
@@ -204,6 +199,7 @@ print(f"Rows in {managed_table_name}: {spark.table(managed_table_name).count():,
 # MAGIC - Groups are typically created by workspace admins
 # MAGIC - Often synced from corporate identity providers (Azure AD, Okta, etc.)
 # MAGIC - Group membership is managed centrally
+# MAGIC
 # MAGIC **For this lab:**
 # MAGIC - Groups must be created manually in workspace settings (this creates account groups, the only groups Unity Catalog can grant to)
 # MAGIC - You'll need workspace admin or account admin privileges
@@ -224,11 +220,6 @@ print(f"Rows in {managed_table_name}: {spark.table(managed_table_name).count():,
 # MAGIC    - Click **Add Members**
 # MAGIC    - Add your user email
 # MAGIC    - This allows you to test `is_account_group_member()` later
-# MAGIC **Direct URL Pattern:**
-# MAGIC ```
-# MAGIC https://dbc-XXX.cloud.databricks.com/settings/workspace/identity-and-access/groups
-# MAGIC ```
-# MAGIC (Replace `dbc-XXX` with your unique workspace URL)
 # MAGIC
 # MAGIC **⚠️ Important:** Complete this step before proceeding to the GRANT statements below, as they depend on these groups existing.
 
@@ -272,7 +263,7 @@ print("="*70)
 
 # MAGIC %md
 # MAGIC ### Checking Your Group Membership
-# MAGIC To see which groups you belong to, you can check your current user and group memberships.
+# MAGIC Run the cell below to see your user and whether you belong to each of the three groups.
 # MAGIC
 # MAGIC **Note:** Adding users to groups is done in workspace settings, not SQL. `is_account_group_member()` checks membership at the account level, where Unity Catalog grants live. If you skipped the optional "Add yourself" step, every group shows `❌ Not a member`: expected, and the GRANT cells below still work.
 
@@ -311,8 +302,6 @@ for group in required_groups:
 # MAGIC | `ALL PRIVILEGES` | All permissions |
 # MAGIC ### Reaching a table takes three privileges
 # MAGIC To read a table, a principal needs `USE CATALOG` on the catalog, `USE SCHEMA` on the schema and `SELECT` on the table (or on the schema, which then covers every current and future table in it). `USE CATALOG` and `USE SCHEMA` grant no data access on their own; they only open the path. (`USAGE` is the legacy Hive metastore name and does not exist in Unity Catalog.)
-# MAGIC
-# MAGIC Let's implement persona-based access control.
 
 # COMMAND ----------
 
@@ -334,6 +323,7 @@ print("✅ Granted USE CATALOG and full access to data_engineers on bronze schem
 # MAGIC ---
 # MAGIC ### 🎯 EXERCISE 2: Grant Permissions for Data Analysts
 # MAGIC **Scenario**: Data analysts need read-only access to the Gold schema (business reports).
+# MAGIC
 # MAGIC **Your task**: Write GRANT statements for the `data_analysts` group.
 # MAGIC
 # MAGIC **Why**: Grant to groups, never people: when an analyst joins or leaves, one membership changes instead of every GRANT.
@@ -395,9 +385,10 @@ print("Granted read-only access to data_analysts on gold schema")
 # MAGIC ---
 # MAGIC ### 🎯 EXERCISE 3: Grant Permissions for Data Scientists
 # MAGIC **Scenario**: Data scientists need read-only access to BOTH Silver and Gold schemas.
+# MAGIC
 # MAGIC **Your task**: Write GRANT statements for the `data_scientists` group.
 # MAGIC
-# MAGIC **Why**: Grant to groups, never people: when a data scientist joins or leaves, one membership changes instead of every GRANT.
+# MAGIC **Why**: Scientists read Silver features and Gold labels, never Bronze; the grant enforces that boundary instead of leaving it to habit.
 # MAGIC
 # MAGIC **Requirements:**
 # MAGIC 1. `USE CATALOG` on the catalog
@@ -515,7 +506,7 @@ display(spark.sql(f"SHOW GRANTS ON SCHEMA {CATALOG_NAME}.{SILVER_SCHEMA}"))
 # MAGIC - ✅ Use for ad-hoc queries
 # MAGIC - ✅ Databricks recommends serverless for all job tasks; pick classic compute only when you need a config serverless does not allow
 # MAGIC
-# MAGIC ### We're going to use serverless for this lab, as this is the only option in Databricks Free Edition
+# MAGIC **This lab runs on serverless: it is the only compute in Databricks Free Edition.**
 
 # COMMAND ----------
 
@@ -525,16 +516,20 @@ display(spark.sql(f"SHOW GRANTS ON SCHEMA {CATALOG_NAME}.{SILVER_SCHEMA}"))
 # MAGIC **1. Unity Catalog Three-Level Namespace**
 # MAGIC - `catalog.schema.table` structure
 # MAGIC - Enables environment separation and access control
+# MAGIC
 # MAGIC **2. Catalogs, Schemas, and Volumes**
 # MAGIC - Hierarchical organization
 # MAGIC - Volumes for governed file access
+# MAGIC
 # MAGIC **3. Managed Tables**
 # MAGIC - UC controls storage, DROP deletes data
 # MAGIC - Best for data exclusively used in Databricks
+# MAGIC
 # MAGIC **4. Access Control**
 # MAGIC - GRANT/REVOKE for permissions
 # MAGIC - Persona-based patterns (engineers, analysts, scientists)
 # MAGIC - Privileges: SELECT, MODIFY, CREATE TABLE, USE CATALOG, USE SCHEMA, ALL PRIVILEGES
+# MAGIC
 # MAGIC **5. Serverless Compute**
 # MAGIC - Starts in seconds for notebooks, autoscaling and Photon automatic
 # MAGIC - Recommended for jobs and interactive work
@@ -544,7 +539,7 @@ display(spark.sql(f"SHOW GRANTS ON SCHEMA {CATALOG_NAME}.{SILVER_SCHEMA}"))
 # MAGIC - [ ] Write three-level namespace references?
 # MAGIC - [ ] Create managed tables with saveAsTable()?
 # MAGIC - [ ] Write GRANT statements for different personas?
-# MAGIC - [ ] Know that USE CATALOG + USE SCHEMA are required to reach a table?
+# MAGIC - [ ] Explain why USE CATALOG + USE SCHEMA are required to reach a table?
 # MAGIC - [ ] Describe serverless compute benefits?
 # MAGIC ### 📚 Next Steps
 # MAGIC **Notebook 02** covers:
@@ -553,4 +548,4 @@ display(spark.sql(f"SHOW GRANTS ON SCHEMA {CATALOG_NAME}.{SILVER_SCHEMA}"))
 # MAGIC - Streaming vs batch patterns
 # MAGIC ---
 # MAGIC **🎉 Notebook Complete!** 
-# MAGIC You've mastered Unity Catalog basics. Save your work and proceed to Notebook 02.
+# MAGIC Your managed table and group grants are in place. Next: Notebook 02.

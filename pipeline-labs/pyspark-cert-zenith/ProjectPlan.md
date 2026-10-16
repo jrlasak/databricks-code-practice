@@ -1,11 +1,10 @@
 # Project Plan: Zenith Online Analytics Pipeline
 
-## ⚠️ Consistency Note: Use `variables.py` for Paths and Names
+## Paths and names come from `variables.py`
 
-To ensure consistency across all notebooks, **use the variables defined in `notebooks/variables.py`**, which every notebook loads with `%run ./variables`. This file contains all catalog, schema, volume and table names, as well as key data paths.
-**Do not hardcode catalog, schema, or path names** - always reference the variables.
+Every notebook loads `notebooks/variables.py` with `%run ./variables`. It holds all catalog, schema, volume and table names and the key data paths: use its variables instead of hardcoding catalog, schema or path names.
 
-## I. Getting Started
+## Getting Started
 
 All the files required to complete this lab are located in the `notebooks/` directory. Run the numbered notebooks in order.
 

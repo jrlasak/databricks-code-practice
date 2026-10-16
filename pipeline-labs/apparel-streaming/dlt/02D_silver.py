@@ -27,12 +27,13 @@ Business Logic:
 Requirements:
     [ ] Read `02_silver.silver_customers` as a batch source (`spark.read.table`) - use
         the `SILVER_CUSTOMERS` variable.
-    
+
+    [ ] Add `comment`: "Current customers (SCD2)".
+
     [ ] Filter for records where the `__END_AT` column is NULL.
         Business logic: Only records without an end date are considered current.
 
-Tip:
-    - If stuck, see the solution below.
+Tip: if stuck, see the solution below.
 """
 ### ---------------------
 ### Write Your Code Here ###
@@ -62,12 +63,15 @@ Business Logic:
 Requirements:
     [ ] Read `02_silver.silver_products` as a batch source (`spark.read.table`) - use
         the `SILVER_PRODUCTS` variable.
-    
+
+    [ ] Add `comment`: "Current products (SCD2)".
+
     [ ] Filter for records where the `__END_AT` column is NULL.
         Business logic: Only records without an end date are considered current.
 
 Tips:
-    - Run the pipeline after this step to validate current product view logic.
+    - Run the pipeline after this step to check it succeeds; gold reads this view
+      from Task 17 on.
     - If stuck, see the solution below.
 """
 ### ---------------------
@@ -98,12 +102,15 @@ Business Logic:
 Requirements:
     [ ] Read `02_silver.silver_stores` as a batch source (`spark.read.table`) - use
         the `SILVER_STORES` variable.
-    
+
+    [ ] Add `comment`: "Current stores (SCD2)".
+
     [ ] Filter for records where the `__END_AT` column is NULL.
         Business logic: Only records without an end date are considered current.
 
 Tips:
-    - Run the pipeline after this step to validate current store view logic.
+    - Run the pipeline after this step to check it succeeds; gold reads this view
+      from Task 17 on.
     - If stuck, see the solution below.
 """
 ### ---------------------

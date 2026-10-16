@@ -3,34 +3,9 @@ from pyspark.sql import functions as F
 from variables import *
 
 
-# -----------------------------------------
-# All table names
-# -----------------------------------------
-
-BRONZE_SALES = f"{BRONZE_SCHEMA}.bronze_sales"
-BRONZE_CUSTOMERS = f"{BRONZE_SCHEMA}.bronze_customers"
-BRONZE_PRODUCTS = f"{BRONZE_SCHEMA}.bronze_products"
-BRONZE_STORES = f"{BRONZE_SCHEMA}.bronze_stores"
-
-CUSTOMERS_CLEANED_STREAM = "customers_cleaned_stream"
-PRODUCTS_CLEANED_STREAM = "products_cleaned_stream"
-STORES_CLEANED_STREAM = "stores_cleaned_stream"
-SALES_CLEANED_STREAM = "sales_cleaned_stream"
-
-SILVER_CUSTOMERS = f"{SILVER_SCHEMA}.silver_customers"
-SILVER_PRODUCTS = f"{SILVER_SCHEMA}.silver_products"
-SILVER_STORES = f"{SILVER_SCHEMA}.silver_stores"
-SILVER_SALES_TRANSACTIONS = f"{SILVER_SCHEMA}.silver_sales_transactions"
-SILVER_RETURNS_TRANSACTIONS = f"{SILVER_SCHEMA}.silver_returns_transactions"
-
-SILVER_CUSTOMERS_CURRENT = "silver_customers_current"
-SILVER_PRODUCTS_CURRENT = "silver_products_current"
-SILVER_STORES_CURRENT = "silver_stores_current"
-
-GOLD_DENORMALIZED_SALES_FACTS = f"{GOLD_SCHEMA}.denormalized_sales_facts"
-GOLD_DAILY_SALES_BY_STORE = f"{GOLD_SCHEMA}.gold_daily_sales_by_store"
-GOLD_PRODUCT_PERFORMANCE = f"{GOLD_SCHEMA}.gold_product_performance"
-GOLD_CUSTOMER_LIFETIME_VALUE = f"{GOLD_SCHEMA}.gold_customer_lifetime_value"
+# Complete reference solution for Tasks 1-20. Read it, or copy one task at a time into
+# its task file. Never add this file to the pipeline next to the task files: it defines
+# the same tables, and the update fails on the duplicates.
 
 # -----------------------------------------
 # 01 BRONZE: Raw Layer
@@ -269,7 +244,7 @@ def silver_stores_current():
 # Task 17
 @dp.table(
     name=GOLD_DENORMALIZED_SALES_FACTS,
-    comment="Fully denormalized sales fact table for analytic use. A streaming table."
+    comment="Sales joined to the current customer, product and store"
 )
 def denormalized_sales_facts():
     sales = spark.readStream.table(SILVER_SALES_TRANSACTIONS)
@@ -306,7 +281,7 @@ def denormalized_sales_facts():
 # Task 18
 @dp.materialized_view(
     name=GOLD_DAILY_SALES_BY_STORE,
-    comment="Daily store sales summary. A materialized view."
+    comment="Daily store sales summary"
 )
 def gold_daily_sales_by_store():
     df = spark.read.table(GOLD_DENORMALIZED_SALES_FACTS)
@@ -335,7 +310,7 @@ def gold_daily_sales_by_store():
 # Task 19
 @dp.materialized_view(
     name=GOLD_PRODUCT_PERFORMANCE,
-    comment="Product sales performance metrics. A materialized view."
+    comment="Product sales performance metrics"
 )
 def gold_product_performance():
     df = spark.read.table(GOLD_DENORMALIZED_SALES_FACTS)
@@ -366,7 +341,7 @@ def gold_product_performance():
 # Task 20
 @dp.materialized_view(
     name=GOLD_CUSTOMER_LIFETIME_VALUE,
-    comment="Customer lifetime value metrics. A materialized view."
+    comment="Customer lifetime value metrics"
 )
 def gold_customer_lifetime_value():
     df = spark.read.table(GOLD_DENORMALIZED_SALES_FACTS)

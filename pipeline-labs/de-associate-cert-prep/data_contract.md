@@ -12,7 +12,7 @@ This document lists every data asset the lab creates: the landing files the gene
 | Schema | `01_bronze` | Raw tables |
 | Schema | `02_silver` | Cleaned and conformed tables |
 | Schema | `03_gold` | Business aggregations |
-| Schema | `dlt_pipeline` | Created but not used by any notebook |
+| Schema | `dlt_pipeline` | Spare schema for a Lakeflow Spark Declarative Pipelines extension (not used in notebooks 01-05) |
 | Volume | `00_landing.customers`, `products`, `sales`, `events` | Landing files (below) |
 | Volume | `_system.checkpoints` | Streaming checkpoints and Auto Loader schema locations |
 
@@ -22,14 +22,14 @@ This document lists every data asset the lab creates: the landing files the gene
 | ----------- | ------ | ---------- | ------- | ------ |
 | `/Volumes/cert_prep_catalog/00_landing/customers` | JSON (coalesced to 10 partitions) | overwrite | 10,200 (10,000 customers + 200 duplicates) | customer_id, email, first_name, last_name, registration_date, location, phone, loyalty_tier |
 | `/Volumes/cert_prep_catalog/00_landing/products` | CSV with header (coalesced to 5 partitions) | overwrite | 1,010 (1,000 products + 10 duplicates) | product_id, product_name, category, subcategory, price, cost, inventory_count, last_updated |
-| `/Volumes/cert_prep_catalog/00_landing/sales` | JSON, 10 appended batches | append | 50,500 orders (10 batches of 5,000 + 50 duplicates each), plus 500 per run of notebook 02 (below) | order_id, customer_id, order_timestamp, order_status, payment_method, shipping_address, line_items (array of product_id, quantity, unit_price; 1 to 5 items per order) |
+| `/Volumes/cert_prep_catalog/00_landing/sales` | JSON, 10 appended batches | append | 50,500 rows (50,000 orders in 10 batches of 5,000, plus 50 duplicate orders per batch), plus 500 per run of notebook 02 (below) | order_id, customer_id, order_timestamp, order_status, payment_method, shipping_address, line_items (array of product_id, quantity, unit_price; 1 to 5 items per order) |
 | `/Volumes/cert_prep_catalog/00_landing/events` | JSON, 2 appended batches | append | About 103,000 (5,000 sessions of 8 to 12 events per batch, plus 3% duplicates) | event_id, session_id, customer_id, event_timestamp, event_type, product_id, page_url, referrer, device_type, browser, ip_address |
 
 The generator is deterministic: `random` and `numpy` are seeded once from `DATA_GEN_CONFIG["seed"]` (42), every id (customer_id, orphan customer_id, session_id, event_id) comes from the seeded generator, and every date is counted back from `DATA_GEN_CONFIG["base_date"]` (2026-06-30). Two runs write the same records.
 
 Notebook 02 also writes to the sales volume: its "New data arrives" cell copies the first 500 distinct orders (by `order_id`) into one new JSON file dated 2026-07-01 and 2026-07-02 (same time of day) under fixed ids `ORD-202607-X00001` to `X00500`, every time the notebook runs; Bronze grows by 500 rows per run, Silver keeps each id once.
 
-Planted data quality issues (from the generator code):
+Planted data quality issues:
 
 - **customers**: 200 duplicate rows (copies of random customers, same `customer_id`) re-sent with a later `registration_date` (1 to 30 days before 2026-06-30; the original registration is 180 to 910 days before it); 5% null `first_name` / `last_name`, 10% null `location`, 20% null `phone`, 30% null `loyalty_tier`; extra spaces, swapped case or ALL CAPS in names; about 1% of emails missing the `@`. `phone` is formatted `+1-XXX-XXX-XXXX`.
 - **products**: 10 duplicate rows (older catalog snapshots of random products, same `product_id`) with a different `inventory_count` and a `last_updated` 1 to 24 hours before the original's 2026-06-30T00:00:00; `price` drawn log-uniformly from the category's range in `CATEGORY_PRICE_RANGES` (Books $8-40 up to Electronics $20-1,500), so most items sit at the cheap end, written as a string, about 1% negative; `cost` 40-70% of price, about 2% above price; `subcategory` set by the product's item through `ITEM_SUBCATEGORY` (Clothing items not listed there get Men, Women or Kids); 10% null `subcategory` and `cost`, 5% null `inventory_count`; `category` with extra spaces (20%), swapped case (10%) or ALL CAPS (5%). Product ids are `P-1001` to `P-2000`.
@@ -71,7 +71,7 @@ Column types in the Auto Loader tables are inferred (`cloudFiles.inferColumnType
 
 | | |
 | - | - |
-| Written by | `02`, Auto Loader (JSON) with `availableNow`, append, checkpoint `_system/checkpoints/sales_stream`; run twice in `02`: Exercise 4 (50,500 orders), then again after the 500-order practice file lands (+500) |
+| Written by | `02`, Auto Loader (JSON) with `availableNow`, append, checkpoint `_system/checkpoints/sales_stream`; run twice in `02`: Exercise 4 (50,500 rows), then again after the 500-order practice file lands (+500) |
 | Grain | One row per order (line items still nested in `line_items`); duplicate orders kept |
 | Columns | The 7 landing fields + `_rescued_data` |
 | Read by | `03` (as a stream, for sales Silver), `05` (existence check) |
@@ -144,7 +144,7 @@ Column types in the Auto Loader tables are inferred (`cloudFiles.inferColumnType
 | ----- | ---- | ----------- |
 | order_id | string | Order identifier |
 | customer_id | string | May not exist in `customers_clean` (left join) |
-| customer_name | string | first_name + " " + last_name (`concat_ws`, so a null name part is skipped); `Unknown customer` when the customer is not in `customers_clean` (detected through a marker column selected from the customer side of the join, not the name columns: a known customer can have both names null) |
+| customer_name | string | first_name + " " + last_name (`concat_ws`, so a null name part is skipped); `Unknown customer` when the customer is not in `customers_clean` (detected with the `in_dim` marker from the customer side of the join; a known customer can have both names null) |
 | product_id | string | From the line item |
 | product_name, category, subcategory | string | From `products_clean`; never null for `product_name` and `category` (lines whose product is not in `products_clean` fail `is_valid_sale`) |
 | quantity | int | From the line item |

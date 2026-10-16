@@ -49,15 +49,16 @@ By completing this lab, you will be able to:
 
 - Basic knowledge of PySpark and Delta Lake.
 - Structured Streaming basics: `readStream`/`writeStream`, checkpoints, triggers. The lab uses them from Notebook 01 on without re-teaching them.
-- Time: about 3 hours (40 + 60 + 55 + 30 minutes).
+- Time: about 5 hours: 15 minutes of setup, then 1 to 1.5 hours for each of Notebooks 01 to 04. Each notebook is one sitting, so you can spread the lab over several days.
 - Access to a Databricks workspace (Free Edition compatible).
 
 ⚠️ **Before you start**: Disable AI code suggestions in your Databricks workspace.
-Go to **User Settings → Developer → AI-powered code completion** and turn **OFF**:
+Open your profile menu, go to **Settings → Developer**, and under **Code Editor** turn **OFF**:
 
+- **Automatic Genie Code Autocomplete**
 - **Autocomplete as you type**
-- **Automatic Assistant Autocomplete**
-  This lab is designed to build muscle memory - auto-completions defeat the purpose.
+
+This lab builds muscle memory; auto-completions defeat the purpose.
 
 ---
 
@@ -65,15 +66,14 @@ Go to **User Settings → Developer → AI-powered code completion** and turn **
 
 1. **Create a Databricks Account**
    - Sign up for a [Databricks Free Edition account](https://www.databricks.com/learn/free-edition) if you don't already have one.
-   - Familiarize yourself with the workspace, clusters, and notebook interface.
+   - Familiarize yourself with the workspace, serverless compute and the notebook interface.
 
 2. **Import this repository to Databricks**
-   - In Databricks, go to the Workspace sidebar and click the "Repos" section, click "Add Repo".
-     - Alternatively, go to your personal folder, click "create" and select "git folder".
+   - In Databricks, open **Workspace**, go to your home folder and click **Create > Git folder**.
    - Paste the GitHub URL for this repository.
    - Authenticate with GitHub if prompted, and select the main branch.
    - The repo will appear as a folder in your workspace, allowing you to edit, run notebooks, and manage files directly from Databricks.
-   - For more details, see the official Databricks documentation: [Repos in Databricks](https://docs.databricks.com/repos/index.html).
+   - For more details, see the official Databricks documentation: [Git folders in Databricks](https://docs.databricks.com/repos/index.html).
 
 3. Open the `notebooks/` folder and run `00_Setup_Environment.py` to create the Unity Catalog infrastructure and generate data.
 

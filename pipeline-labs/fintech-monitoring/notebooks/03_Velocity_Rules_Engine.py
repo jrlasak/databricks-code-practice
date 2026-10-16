@@ -2,7 +2,9 @@
 # MAGIC %md
 # MAGIC # 03: Velocity Rules Engine  -  "Detecting Suspicious Patterns"
 # MAGIC **Exam Coverage**: DE Professional (Windowing, Watermarks, Advanced Aggregations)
-# MAGIC **Duration**: 55 minutes
+# MAGIC
+# MAGIC **Duration**: 90 minutes
+# MAGIC
 # MAGIC ---
 # MAGIC ## Learning Objectives
 # MAGIC By the end of this notebook, you will be able to:
@@ -100,7 +102,7 @@ from pyspark.sql.types import *
 # MAGIC %md
 # MAGIC ### 🔍 Verify Your Results
 # MAGIC Run the cell below to inspect your output. You should see:
-# MAGIC - **Row count**: 5 rows on a fresh setup: customers `9990` to `9994`, each with `txn_count` = 7 in the same 10-minute window. Every one of those 7 payments was an online (card-not-present) payment within 60 seconds. Background customers make one or two payments in these 3 hours, so they never get near 5 in one window.
+# MAGIC - **Row count**: 5 rows on a fresh setup: customers `9990` to `9994`, each with `txn_count` = 7 in the same 10-minute window. Every one of those 7 payments was an online (card-not-present) payment within 60 seconds. Background customers average half a payment each over the 3 hours of background traffic (a handful make 4 or 5, spread across those hours), so none gets near 5 in one 10-minute window.
 # MAGIC - **Customer `9995` is not here**: their six payments split 3 and 3 across two 10-minute windows. Exercise 2 is where they show up.
 # MAGIC - **Key columns**: `customer_id`, `window` (a struct with `start` and `end`), `txn_count`, `is_velocity_spike`.
 # MAGIC
@@ -178,7 +180,7 @@ display(velocity_result.orderBy(F.desc("txn_count"), "customer_id"))
 # MAGIC - **Customer `9995`**: in no other Notebook 03 table. Six $900 payments, three on each side of the hour: a 1-hour tumbling window sees $2,700 twice and stays silent, the per-transaction score gives each payment 65, and only the sliding window sees $5,400. 11 of the sliding windows hold all six payments.
 # MAGIC - **Key columns**: `customer_id`, `window`, `total_amount`, `is_amount_threshold_exceeded`.
 # MAGIC
-# MAGIC **What this means**: One burst, 12 rows. That is the price of sliding windows: they never miss a pattern that straddles a boundary, but they report it once per overlapping window, and they keep 12 times the window state of a tumbling window. Downstream consumers roll results up by customer, the move the SAR candidate queue in Notebook 04 makes with these rows and with the fraud alerts.
+# MAGIC **What this means**: One burst, 12 rows. That is the price of sliding windows: they never miss a pattern that straddles a boundary, but they report it once per overlapping window, and they keep 12 times the window state of a tumbling window. Downstream consumers roll results up by customer, as the SAR candidate queue in Notebook 04 does with these rows and the fraud alerts.
 
 # COMMAND ----------
 
@@ -211,7 +213,7 @@ display(amount_result.orderBy(F.desc("total_amount"), "customer_id", "window"))
 # MAGIC
 # MAGIC **Why these indicators**: card-not-present payments carry most card fraud because the card never touches a terminal; a high-risk merchant and an IP outside the customer's country each add evidence. No single one is enough.
 # MAGIC
-# MAGIC **Hint**: You can use conditional logic to sum up the scores for different indicators.
+# MAGIC **Hint**: Turn each indicator into its own term (its points when the condition holds, else 0) and add the four terms together.
 
 # COMMAND ----------
 
@@ -236,7 +238,7 @@ display(amount_result.orderBy(F.desc("total_amount"), "customer_id", "window"))
 # ✅ SOLUTION: Multi-Rule Risk Scoring
 
 # alerted_txns_df = (silver_txns_stream
-#   .withColumn("risk_score", 
+#   .withColumn("risk_score",
 #       F.expr("case when is_geo_mismatch then 30 else 0 end") +
 #       F.expr("case when amount > 800 then 20 else 0 end") +
 #       F.expr("case when merchant_risk_score > 80 then 25 else 0 end") +
@@ -261,7 +263,7 @@ display(amount_result.orderBy(F.desc("total_amount"), "customer_id", "window"))
 
 # ✏️ STUDENT EXERCISE
 
-# TODO: 
+# TODO:
 # 1. Filter for transactions where is_alert is true
 # 2. Write the resulting stream to TABLE_SILVER_ALERTS using availableNow trigger
 
@@ -295,11 +297,11 @@ display(amount_result.orderBy(F.desc("total_amount"), "customer_id", "window"))
 # MAGIC - **Row count**: about 120 rows (somewhere between 100 and 160; the background part depends on the generator's random draws), roughly 0.25% of your 50,141 Silver transactions. With these weights only two combinations clear 70: geo mismatch + amount > 800 + merchant risk > 80 (75 points), or all four rules (90 points). About 90 come from background traffic (5% geo mismatch x about 20% over $800 x about 19% at high-risk merchants), and the 35 payments of customers `9990` to `9994` from the velocity table are all here.
 # MAGIC - **Customer `9995` is not here**: each of their payments scores 30 + 20 + 15 = 65 (the merchant is not high risk), below the threshold of 70. Only the sliding window caught them.
 # MAGIC - **Key columns**: All Silver transaction columns PLUS `risk_score` and `is_alert`.
-# MAGIC - **`risk_score`**: Only two values appear: 75 (three factors fired, everything except the online channel) and 90 (all four fired). About half the rows are 90: the 35 ring payments plus about a third of the background alerts, because about a third of payments are online.
+# MAGIC - **`risk_score`**: Only two values appear: 75 (three factors fired, everything except the online channel) and 90 (all four fired). About half the rows are 90: the 35 payments of customers `9990` to `9994` plus about a third of the background alerts, because about a third of payments are online.
 # MAGIC - **`is_geo_mismatch`**: Every flagged transaction shows `true` here: without the 30 geo points the maximum score is 60.
 # MAGIC - **What triggered the alert?**: Cross-reference `is_geo_mismatch`, `amount > 800`, `merchant_risk_score > 80`, and `channel = 'online'` to understand WHY each transaction was flagged.
 # MAGIC
-# MAGIC **What this means**: You've just built a fraud detection pipeline. In production, this alerts table would feed an ops dashboard where analysts review flagged transactions. Every write here uses `availableNow=True`: each run processes what has landed and stops. Scheduled as a job every few minutes, the same code gives the ops team alerts within minutes instead of the next morning, and you only pay for compute while it runs. The composite scoring approach reduces false positives compared to single-rule systems (a geo mismatch alone isn't enough to trigger an alert).
+# MAGIC **What this means**: In production, this alerts table feeds an ops dashboard where analysts review flagged transactions. Every write here uses `availableNow=True`: each run processes what has landed and stops. Scheduled as a job every few minutes, the same code gives the ops team alerts within minutes instead of the next morning, and you only pay for compute while it runs. The composite scoring approach reduces false positives compared to single-rule systems (a geo mismatch alone isn't enough to trigger an alert).
 
 # COMMAND ----------
 

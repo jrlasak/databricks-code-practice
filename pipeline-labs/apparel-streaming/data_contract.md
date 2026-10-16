@@ -75,7 +75,7 @@ Both tables read `sales_cleaned_stream` and split it by the sign of `quantity`. 
 | Table | Rows | Columns | Expectations |
 |---|---|---|---|
 | `silver_sales_transactions` | `quantity > 0` | every `sales_cleaned_stream` column (bronze sales columns, the two lineage columns and `date`) | drop: `discount_applied >= 0`, `store_id IS NOT NULL`, `customer_id IS NOT NULL`, `product_id IS NOT NULL` |
-| `silver_returns_transactions` | `quantity < 0` | as above, but `quantity` and `total_amount` are replaced by `returned_quantity` (int) and `returned_amount` (double), both positive (absolute values) | same four drops as above |
+| `silver_returns_transactions` | `quantity < 0` | as above, but `quantity` and `total_amount` are replaced by `returned_quantity` (int) and `returned_amount` (double), both positive (absolute values); `tax_amount` keeps the source sign, negative on a return (refunded tax is `-tax_amount`) | same four drops as above |
 
 ## Silver current views (pipeline only)
 

@@ -2,7 +2,9 @@
 # MAGIC %md
 # MAGIC # 01: Ingest Transaction Stream  -  "From Raw Events to Bronze"
 # MAGIC **Exam Coverage**: DE Associate (Auto Loader) + DE Professional (Streaming, Watermarks)
-# MAGIC **Duration**: 40 minutes
+# MAGIC
+# MAGIC **Duration**: 75 minutes
+# MAGIC
 # MAGIC ---
 # MAGIC ## Learning Objectives
 # MAGIC By the end of this notebook, you will be able to:
@@ -19,7 +21,7 @@
 # MAGIC
 # MAGIC ### Key Concepts
 # MAGIC - **Auto Loader**: Efficiently ingests new files as they arrive in cloud storage.
-# MAGIC - **Rescued Data Column**: Keeps values that do not fit your schema (a type mismatch, a field the schema does not have, a column-name case mismatch) as a JSON blob in `_rescued_data`, instead of losing them as silent NULLs. A line that is not valid JSON at all is a corrupt record: it never reaches the rescued data column.
+# MAGIC - **Rescued Data Column**: Keeps values that do not fit your schema (a type mismatch, a field the schema does not have, a column-name case mismatch) as a JSON blob in `_rescued_data`, instead of losing them as silent NULLs.
 # MAGIC - **Explicit schema**: You hand Auto Loader the schema from the data contract instead of letting it infer one, so a gateway that starts sending `amount` as text cannot silently change your column type. With a provided schema Auto Loader does not evolve it (new columns are ignored) and adds no rescued data column unless you ask for one, which is why Exercise 1 sets it explicitly.
 
 # COMMAND ----------
@@ -110,7 +112,7 @@ generate_batch(n_files=2, records_per_file=50)
 
 # MAGIC %md
 # MAGIC ## Section 2: Technical Deduplication
-# MAGIC In Fintech, "at-least-once" delivery from payment gateways often results in duplicate records (retries). These are technical duplicates (same `txn_id`) and should be handled at the Bronze layer before business logic is applied.
+# MAGIC In fintech, "at-least-once" delivery from payment gateways often results in duplicate records (retries). These are technical duplicates (same `txn_id`) and should be handled at the Bronze layer before business logic is applied.
 # MAGIC
 # MAGIC ### Key Concepts
 # MAGIC - **Watermarks**: A threshold that tells Spark how long to wait for late-arriving data.
@@ -204,12 +206,12 @@ generate_batch(n_files=2, records_per_file=50)
 # MAGIC %md
 # MAGIC ### 🔍 Verify Your Results
 # MAGIC Run the cell below to inspect your output. You should see:
-# MAGIC - **Row count**: 50,155 rows if you ran each cell once: 50,000 transactions from the 5 setup batches, 41 planted transactions from a small group of suspicious customers the setup also landed, 100 from this notebook's `generate_batch` call, and 14 records with values that did not match the schema (2 per generated file). The 1,002 gateway retries (2% of each batch, same `txn_id` one minute later) are gone: that is your deduplication at work.
+# MAGIC - **Row count**: 50,155 rows if you ran each cell once: 50,000 transactions from the 5 setup batches, 41 transactions from 6 suspicious customers (`9990`-`9995`) that setup also landed, 100 from this notebook's `generate_batch` call, and 14 records with values that did not match the schema (2 per generated file). The 1,002 gateway retries (2% of each batch, same `txn_id` one minute later) are gone: that is your deduplication at work.
 # MAGIC - **Key columns**: `txn_id`, `customer_id`, `merchant_id`, `amount`, `currency`, `timestamp`, `_rescued_data`, `_ingestion_timestamp`.
 # MAGIC - **`_rescued_data`**: Almost every row shows `null` here  -  meaning it parsed cleanly. Non-null values are records with a type mismatch or an unexpected field; Exercise 4 inspects them.
 # MAGIC - **`_ingestion_timestamp`**: Every row should have a timestamp from when YOU ran the pipeline  -  this is your lineage metadata for auditing.
 # MAGIC
-# MAGIC **What this means**: Your Bronze layer is now a faithful, append-only record of every payment event  -  including retries that were deduplicated and values that did not match the schema, rescued instead of lost. This is the foundation every downstream layer depends on.
+# MAGIC **What this means**: Your Bronze layer is now an append-only record of the payment events, each exactly once (the dedup dropped the gateway retries), with values that did not match the schema rescued instead of lost. The watermark has a cost: the dedup may drop a payment whose `timestamp` is more than 5 minutes behind the latest one it has seen, so in production you size the watermark to the gateway's real delivery delay, not just to the retry gap.
 
 # COMMAND ----------
 
@@ -236,7 +238,7 @@ display(bronze_result.limit(10))
 # MAGIC
 # MAGIC **Why a batch query**: a streaming display never finishes on its own. Bronze already holds every rescued record, so a batch read gives you the count and the rows in seconds.
 # MAGIC
-# MAGIC **Hint**: In a real production environment, you would monitor this count to detect upstream schema changes or integration bugs.
+# MAGIC **In production**: monitor this count; a jump means an upstream schema change or an integration bug.
 
 # COMMAND ----------
 

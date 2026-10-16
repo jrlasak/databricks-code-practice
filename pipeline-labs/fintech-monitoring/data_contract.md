@@ -25,6 +25,8 @@ These are raw payment events arriving from the ModernPaymentsABC gateway.
 
 The source of truth for all transactions: cleaned of duplicates, without the rows whose values were rescued (they stay in Bronze for review), and enriched with dimensions.
 
+Column order is not part of the contract: the joins in Notebook 02 put `merchant_id` and `customer_id` first, and any order with these names and types is correct.
+
 | Field                 | Type      | Description                                             |
 | --------------------- | --------- | ------------------------------------------------------- |
 | txn_id                | string    | Unique transaction identifier                           |
@@ -47,7 +49,7 @@ The source of truth for all transactions: cleaned of duplicates, without the row
 
 ### `merchants`
 
-The merchant dimension (notebook 02, Exercise 3): the last full export (`merchants`, JSON, 5,000 merchants), then MERGEd with today's updates file (`merchant_updates`, JSON, same raw schema: 3 re-scored merchants and 10 new merchants `5000`-`5009`).
+The merchant dimension (Notebook 02, Exercise 3): the last full export (`merchants`, JSON, 5,000 merchants), then MERGEd with today's updates file (`merchant_updates`, JSON, same raw schema: 3 re-scored merchants and 10 new merchants `5000`-`5009`).
 
 | Field               | Type   | Description                            |
 | ------------------- | ------ | -------------------------------------- |
@@ -59,7 +61,7 @@ The merchant dimension (notebook 02, Exercise 3): the last full export (`merchan
 
 ### `velocity_spikes`
 
-Customers with more than 5 transactions in a 10-minute tumbling window (notebook 03, Exercise 1).
+Customers with more than 5 transactions in a 10-minute tumbling window (Notebook 03, Exercise 1).
 
 | Field             | Type                                   | Description                        |
 | ----------------- | -------------------------------------- | ---------------------------------- |
@@ -70,7 +72,7 @@ Customers with more than 5 transactions in a 10-minute tumbling window (notebook
 
 ### `amount_spikes`
 
-Customers whose transactions total more than $5,000 in a 1-hour sliding window that advances every 5 minutes (notebook 03, Exercise 2). One burst appears once per overlapping window.
+Customers whose transactions total more than $5,000 in a 1-hour sliding window that advances every 5 minutes (Notebook 03, Exercise 2). One burst appears once per overlapping window.
 
 | Field                        | Type                                   | Description                          |
 | ---------------------------- | -------------------------------------- | ------------------------------------ |

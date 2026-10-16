@@ -1,8 +1,11 @@
 # Databricks notebook source
 # MAGIC %md
 # MAGIC # Notebook 02: Auto Loader & Incremental Ingestion
+# MAGIC
 # MAGIC **Exam Coverage**: Section 2 (Development and Ingestion)
-# MAGIC **Duration**: 45-60 minutes
+# MAGIC
+# MAGIC **Duration**: about 1 hour
+# MAGIC
 # MAGIC ---
 # MAGIC ## Learning Objectives
 # MAGIC By the end of this notebook, you will be able to:
@@ -35,8 +38,6 @@
 # MAGIC | **Use Case** | Continuous | One-time | Batch incremental |
 # MAGIC ### The Auto Loader shape
 # MAGIC An Auto Loader pipeline has two halves. A streaming **read** with the `cloudFiles` source needs the file format and a schema location. A streaming **write** to a Delta table needs a checkpoint location and a trigger. You write the read in Exercise 1 and the write in Exercise 2.
-# MAGIC
-# MAGIC Let's start by importing our configuration.
 
 # COMMAND ----------
 
@@ -74,6 +75,7 @@ print(f"Current Schema: {spark.catalog.currentDatabase()}")
 # MAGIC 1. **Processed file list** - Which files have been ingested
 # MAGIC 2. **Schema information** - Current inferred schema
 # MAGIC 3. **Offsets** - Position in the stream
+# MAGIC
 # MAGIC This enables exactly-once processing.
 
 # COMMAND ----------
@@ -198,7 +200,7 @@ print(f"Data loaded into: {CUSTOMERS_BRONZE_TABLE}")
 
 # 🔍 Verify data was loaded
 customer_count = spark.table(CUSTOMERS_BRONZE_TABLE).count()
-print(f"Total customers loaded: {customer_count:,}")
+print(f"Total customers loaded: {customer_count:,} (10,200 on a first run)")
 
 # Display sample records
 display(spark.table(CUSTOMERS_BRONZE_TABLE).limit(10))
@@ -207,7 +209,7 @@ display(spark.table(CUSTOMERS_BRONZE_TABLE).limit(10))
 
 # MAGIC %md
 # MAGIC ### Understanding Checkpoints
-# MAGIC Let's examine what's in the checkpoint directory:
+# MAGIC The cell below lists the checkpoint folder:
 
 # COMMAND ----------
 
@@ -222,6 +224,7 @@ display(dbutils.fs.ls(CUSTOMERS_CHECKPOINT_PATH))
 # MAGIC - `offsets/` - Stream position information
 # MAGIC - `commits/` - Transaction log for the stream
 # MAGIC - Schema information files
+# MAGIC
 # MAGIC This ensures exactly-once processing even if the stream fails and restarts. You will see it in action after Exercise 4, when a new sales file lands.
 
 # COMMAND ----------
@@ -230,7 +233,7 @@ display(dbutils.fs.ls(CUSTOMERS_CHECKPOINT_PATH))
 # MAGIC ## Section 3: Auto Loader for CSV with Schema Evolution
 # MAGIC CSV files require additional configuration:
 # MAGIC - Header row handling
-# MAGIC - Delimiter specification
+# MAGIC - Delimiter (`sep`) when it is not a comma
 # MAGIC - Schema evolution strategy
 # MAGIC ### Schema Evolution Modes
 # MAGIC | Mode | Behavior |
@@ -255,7 +258,7 @@ display(dbutils.fs.ls(PRODUCTS_LANDING_PATH))
 # MAGIC ### 🎯 EXERCISE 3: Auto Loader for CSV Files
 # MAGIC **Your task**: Create an Auto Loader stream for CSV product data with schema evolution.
 # MAGIC
-# MAGIC **Why**: CSV carries no schema: without the header option the first row lands as data, and without an evolution mode next week's extra column stops the stream.
+# MAGIC **Why**: CSV carries no schema: without the header option the first row lands as data. Setting the evolution mode explicitly states what a new column does (with `addNewColumns` the stream stops once, records the column and continues on restart) instead of relying on a default that becomes `none` the day someone passes a schema.
 # MAGIC
 # MAGIC **Requirements:**
 # MAGIC - Read `PRODUCTS_LANDING_PATH` with Auto Loader as CSV whose first row is the header, into `products_stream`
@@ -322,7 +325,7 @@ print(f"✅ Data loaded into: {PRODUCTS_BRONZE_TABLE}")
 
 # 🔍 Verify products data
 product_count = spark.table(PRODUCTS_BRONZE_TABLE).count()
-print(f"Total products loaded: {product_count:,}")
+print(f"Total products loaded: {product_count:,} (1,010 on a first run)")
 
 display(spark.table(PRODUCTS_BRONZE_TABLE).limit(10))
 
@@ -334,14 +337,14 @@ display(spark.table(PRODUCTS_BRONZE_TABLE).limit(10))
 # MAGIC ### Trigger Types
 # MAGIC | Trigger | Behavior | Use Case |
 # MAGIC |---------|----------|----------|
-# MAGIC | `availableNow=True` | Process everything new in micro-batches, then stop | Scheduled incremental batch (recommended); the only mode Free Edition serverless runs |
+# MAGIC | `availableNow=True` | Process everything new in micro-batches, then stop | Scheduled incremental batch (recommended). Serverless, including Free Edition, runs only this trigger and the deprecated `once` |
 # MAGIC | `processingTime='10 seconds'` | Check for new data every 10 s, run a micro-batch when there is some | Always-on near-real-time on classic compute |
 # MAGIC | no trigger | Default: `processingTime` 0, micro-batches back to back | Lowest-latency micro-batch on classic compute |
 # MAGIC | `once=True` | Deprecated | Use availableNow |
 # MAGIC
 # MAGIC **For production**: `availableNow` on a schedule covers most ingestion; always-on triggers (`processingTime`, no trigger) need classic compute. Serverless, including Free Edition, rejects them.
 # MAGIC
-# MAGIC **For this lab**: We use `availableNow=True` to avoid long-running streams.
+# MAGIC **For this lab**: every stream uses `availableNow=True`, the trigger Free Edition serverless runs.
 
 # COMMAND ----------
 
@@ -356,14 +359,12 @@ display(dbutils.fs.ls(SALES_LANDING_PATH))
 # MAGIC ### 🎯 EXERCISE 4: Ingest the Sales Backlog with Auto Loader
 # MAGIC **Your task**: Create an Auto Loader stream for sales data (high-volume JSON) into `sales_stream`. The cell after the solution writes it to `SALES_BRONZE_TABLE` with `availableNow`.
 # MAGIC
-# MAGIC **Why**: sales landed as 10 batch files; `availableNow` drains the whole backlog in one run and stops. That is how a scheduled job uses Auto Loader without an always-on stream.
+# MAGIC **Why**: the sales backlog is 10 batches spread over about 100 files; `availableNow` drains the whole backlog in one run and stops. That is how a scheduled job uses Auto Loader without an always-on stream.
 # MAGIC
 # MAGIC **Requirements:**
 # MAGIC - Read JSON from `SALES_LANDING_PATH`
 # MAGIC - Schema location: `SALES_CHECKPOINT_PATH`
 # MAGIC - Enable type inference
-# MAGIC
-# MAGIC **Note**: On classic compute you could run this stream always-on with a `processingTime` trigger (for example every 30 seconds); serverless rejects that trigger.
 # MAGIC
 # MAGIC **Hint**: Same pattern as customers, but with sales paths.
 
@@ -417,15 +418,15 @@ print(f"✅ Data loaded into: {SALES_BRONZE_TABLE}")
 
 # MAGIC %md
 # MAGIC ### 🔍 Verify Your Results
-# MAGIC Run the cell below. You should see **50,500** orders: 10 batch files of 5,000 orders + 50 client-retry duplicates each. `line_items` is still a nested array: one Bronze row is one order, not one product sold.
+# MAGIC Run the cell below. You should see **50,500** rows: 50,000 orders written in 10 batches of 5,000 (each batch lands as several part files, which is why the listing above shows about 100 files), plus 50 client-retry duplicates per batch. `line_items` is still a nested array: one Bronze row is one order, not one product sold.
 # MAGIC
-# MAGIC On a re-run of this notebook the count is 50,500 + 500 for every earlier run of the 🔄 cell below: the checkpoint keeps what Bronze already has, and each run lands one more practice file (same order ids; Silver keeps each order once). What must hold on every run: the 🔄 cell shows `new rows: 500`.
+# MAGIC Run this notebook again and the count is 500 higher for every earlier run of the 🔄 cell below, which lands one more 500-order file each time. The 🔄 cell itself always reports `new rows: 500`.
 
 # COMMAND ----------
 
 # 🔍 Verify sales data
 sales_count = spark.table(SALES_BRONZE_TABLE).count()
-print(f"Total sales loaded: {sales_count:,}")
+print(f"Total sales loaded: {sales_count:,} (50,500 on a first run)")
 
 display(spark.table(SALES_BRONZE_TABLE).limit(10))
 
@@ -495,7 +496,7 @@ print(f"Bronze sales before: {before:,}  after: {after:,}  new rows: {after - be
 # MAGIC
 # MAGIC **Key benefit**: Safe to re-run - automatically skips already loaded files.
 # MAGIC
-# MAGIC Events stay in Bronze in this lab: their job here is to show COPY INTO's file-level idempotency.
+# MAGIC You load events with COPY INTO and leave them in Bronze; no later notebook builds Silver or Gold from them.
 
 # COMMAND ----------
 
@@ -505,6 +506,7 @@ print(f"Bronze sales before: {before:,}  after: {after:,}  new rows: {after - be
 # MAGIC **Why**: COPY INTO is the SQL-only option for teams without streaming jobs; re-running it after a failure loads nothing twice.
 # MAGIC
 # MAGIC **Part 1**: Create the target table
+# MAGIC
 # MAGIC **Requirements:**
 # MAGIC - Table name: `{EVENTS_BRONZE_TABLE}`, format DELTA, created only if it does not exist yet
 # MAGIC - Columns: event_id, customer_id, event_type, product_id, event_timestamp, device_type, browser, session_id, page_url
@@ -575,19 +577,11 @@ print(f"Created table: {EVENTS_BRONZE_TABLE}")
 # MAGIC %md
 # MAGIC ---
 # MAGIC **Part 2**: Load data with COPY INTO
+# MAGIC
 # MAGIC **Requirements:**
 # MAGIC - Copy from: `{EVENTS_LANDING_PATH}`
 # MAGIC - File format: JSON
-# MAGIC - Let the target table gain the source columns it does not declare yet (`referrer`, `ip_address`): `mergeSchema` in `COPY_OPTIONS`
-# MAGIC
-# MAGIC **SQL Syntax:**
-# MAGIC ```sql
-# MAGIC COPY INTO table_name
-# MAGIC FROM 'path'
-# MAGIC FILEFORMAT = JSON
-# MAGIC COPY_OPTIONS ('mergeSchema' = 'true')
-# MAGIC ```
-# MAGIC `COPY_OPTIONS ('mergeSchema')` evolves the target table; `FORMAT_OPTIONS ('mergeSchema')` only merges schemas across the source files while reading.
+# MAGIC - Let the target table gain the source columns it does not declare yet (`referrer`, `ip_address`). Section 5 says which options clause evolves the target table and which only merges the source files.
 
 # COMMAND ----------
 
@@ -627,7 +621,7 @@ print("COPY INTO completed")
 # MAGIC %md
 # MAGIC ### 🔍 Verify Your Results
 # MAGIC Run the cell below. You should see:
-# MAGIC - One row per landed event: `events_raw` holds exactly as many rows as the events landing files (the cell compares the two counts).
+# MAGIC - **102,843** events: `events_raw` holds exactly as many rows as the events landing files (the cell prints both, and their difference: 0).
 # MAGIC - 11 columns: the 9 you declared plus `referrer` and `ip_address`, which `mergeSchema` added.
 
 # COMMAND ----------
@@ -635,8 +629,10 @@ print("COPY INTO completed")
 # 🔍 Verify events data
 events_count = spark.table(EVENTS_BRONZE_TABLE).count()
 landed_count = spark.read.json(EVENTS_LANDING_PATH).count()
-print(f"Total events loaded: {events_count:,} (events in the landing files: {landed_count:,})")
-print(f"Columns: {len(spark.table(EVENTS_BRONZE_TABLE).columns)}")
+print(f"Total events loaded: {events_count:,} (102,843 on a first run)")
+print(f"Events in the landing files: {landed_count:,} (102,843 on a first run)")
+print(f"Rows in events_raw minus events in the landing files: {events_count - landed_count:,} (expect 0)")
+print(f"Columns: {len(spark.table(EVENTS_BRONZE_TABLE).columns)} (expect 11)")
 
 display(spark.table(EVENTS_BRONZE_TABLE).limit(10))
 
@@ -644,7 +640,7 @@ display(spark.table(EVENTS_BRONZE_TABLE).limit(10))
 
 # MAGIC %md
 # MAGIC ### Test COPY INTO Idempotency
-# MAGIC Let's verify that COPY INTO skips already-loaded files:
+# MAGIC Run COPY INTO again: it skips every file it already loaded.
 
 # COMMAND ----------
 
@@ -666,19 +662,19 @@ display(result)
 
 # MAGIC %md
 # MAGIC ## Section 6: Schema Evolution and Rescued Data
-# MAGIC Real-world data is messy. Auto Loader provides mechanisms to handle issues:
+# MAGIC When the source schema changes, Auto Loader reacts according to the evolution mode:
 # MAGIC ### Schema Evolution Modes
 # MAGIC 1. **addNewColumns** (default when Auto Loader infers the schema)
-# MAGIC - On a new column the stream FAILS with `UnknownFieldException` after recording the column in the schema location
-# MAGIC - The restart runs on the new schema, so run the stream in a job with retries (and `mergeSchema` on the Delta sink)
+# MAGIC    - On a new column the stream FAILS with `UnknownFieldException` after recording the column in the schema location
+# MAGIC    - The restart runs on the new schema, so run the stream in a job with retries (and `mergeSchema` on the Delta sink)
 # MAGIC 2. **failOnNewColumns**
-# MAGIC - Fails the stream if schema changes
-# MAGIC - Use when strict schema control is needed
+# MAGIC    - Fails the stream if schema changes
+# MAGIC    - Use when strict schema control is needed
 # MAGIC 3. **rescue**
-# MAGIC - Schema never evolves; new columns go to `_rescued_data` and the stream keeps running
-# MAGIC - Use when the table schema must not change
+# MAGIC    - Schema never evolves; new columns go to `_rescued_data` and the stream keeps running
+# MAGIC    - Use when the table schema must not change
 # MAGIC 4. **none** (default when you pass a schema)
-# MAGIC - Schema never evolves, new columns are ignored
+# MAGIC    - Schema never evolves, new columns are ignored
 # MAGIC ### The _rescued_data Column
 # MAGIC When Auto Loader infers the schema it adds `_rescued_data` in every mode. It holds values that did not fit the schema (a column missing from the schema, a type mismatch, a case mismatch) as JSON with the source file path. The row still lands, and the typed column reads NULL. Rename the column, or add it to a schema you provide, with `.option("rescuedDataColumn", "_rescued")`.
 
@@ -725,12 +721,10 @@ for table in [CUSTOMERS_BRONZE_TABLE, PRODUCTS_BRONZE_TABLE, SALES_BRONZE_TABLE]
 # MAGIC 1. ✅ **Start with schema inference** - Let Auto Loader discover the schema
 # MAGIC 2. ✅ **Use addNewColumns mode in a job with retries** - A new column costs one automatic restart
 # MAGIC 3. ✅ **Monitor rescued data** - Set up alerts for `_rescued_data IS NOT NULL`
-# MAGIC 4. ✅ **Version your schemas** - Store inferred schemas in source control
-# MAGIC 5. ✅ **Test with sample data** - Validate schema before production
 # MAGIC ### Common Issues and Solutions
 # MAGIC | Issue | Solution |
 # MAGIC |-------|----------|
-# MAGIC | Schema mismatch | Enable `schemaEvolutionMode = "addNewColumns"` |
+# MAGIC | Schema mismatch (a new column in the source) | With `addNewColumns` (the default for an inferred schema) the stream stops once and the restart picks up the new column, so run the stream in a job with retries. `rescue` keeps the stream running and sends new columns to `_rescued_data` |
 # MAGIC | Values with the wrong type | They land in `_rescued_data`: alert on `_rescued_data IS NOT NULL` |
 # MAGIC | Malformed records | `badRecordsPath` or the `_corrupt_record` column (not `_rescued_data`) |
 # MAGIC | Type inference errors | Provide explicit schema or disable type inference |
@@ -740,7 +734,7 @@ for table in [CUSTOMERS_BRONZE_TABLE, PRODUCTS_BRONZE_TABLE, SALES_BRONZE_TABLE]
 
 # MAGIC %md
 # MAGIC ## Section 7: Monitoring Streaming Queries
-# MAGIC Production streaming pipelines need monitoring. Databricks provides several tools.
+# MAGIC Three checks to run after an ingestion: the active streaming queries, the table history, and the row count of every Bronze table.
 
 # COMMAND ----------
 
@@ -798,21 +792,25 @@ display(spark.sql(f"""
 # MAGIC - `cloudFiles` format for incremental ingestion
 # MAGIC - Schema inference and evolution
 # MAGIC - Checkpointing for exactly-once processing
+# MAGIC
 # MAGIC **2. File Format Support**
 # MAGIC - JSON: Semi-structured with automatic schema
-# MAGIC - CSV: Requires header and delimiter options
+# MAGIC - CSV: needs the header option (and `sep` when the delimiter is not a comma)
 # MAGIC - Pattern applies to Parquet too
+# MAGIC
 # MAGIC **3. Streaming vs Batch**
 # MAGIC - Auto Loader: Streaming with trigger options
 # MAGIC - COPY INTO: Batch incremental with idempotency
 # MAGIC - Triggers: `availableNow` (incremental batch), `processingTime` / default (always-on micro-batch, classic compute only)
+# MAGIC
 # MAGIC **4. Error Handling**
 # MAGIC - Schema evolution: addNewColumns, failOnNewColumns, rescue, none
 # MAGIC - Rescued data column for values that do not fit the schema
 # MAGIC - Monitoring and alerting strategies
+# MAGIC
 # MAGIC **5. Production Patterns**
 # MAGIC - Checkpoint management
-# MAGIC - Schema versioning
+# MAGIC - Schema location next to the checkpoint
 # MAGIC - Query monitoring
 # MAGIC ### ✅ Exam Checklist
 # MAGIC Can you:
@@ -830,4 +828,4 @@ display(spark.sql(f"""
 # MAGIC - SCD Type 2 patterns
 # MAGIC ---
 # MAGIC **🎉 Notebook Complete!**
-# MAGIC You've mastered Auto Loader and incremental ingestion. All bronze tables are populated. Proceed to Notebook 03 to transform this data into the Silver layer.
+# MAGIC All four Bronze tables are populated. Next: Notebook 03 builds Silver from customers, products and sales.

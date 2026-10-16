@@ -19,7 +19,7 @@ from pyspark.sql.types import *
 #   10000-109999  background traffic (about 0.5 payments per customer over the 3 hours of setup data)
 #   9990-9994     the planted fraud ring (velocity burst, caught by every rule)
 #   9995          the planted straddle customer (caught only by the 1-hour sliding window)
-#   9998, 9999    the malformed test records (type mismatch, unexpected field); they stay in Bronze
+#   9998, 9999    the malformed records (type mismatch, unexpected field); they stay in Bronze
 NUM_CUSTOMERS = 110000
 NUM_MERCHANTS = 5000
 BACKGROUND_CUSTOMER_OFFSET = 10000
@@ -53,7 +53,7 @@ def _pick(values, hash_expr):
 
 
 def _merchant_columns():
-    # Every column draws from its own salted hash, so no column is a function of another
+    # Each column uses its own salted hash, so columns are independent
     return [
         F.col("id").cast("string").alias("merchant_id"),
         F.expr("concat('Merchant_', id)").alias("name"),
@@ -109,7 +109,7 @@ def bootstrap():
                        seed=1000 + i * 10, batch_tag=f"BOOT{i}")
 
 
-# 2. Planted merchants: chosen from the dimension's own values, never by hand-computing hashes
+# 2. Merchants for the suspicious customers, picked from the dimension itself
 def choose_planted_merchants(merchants_df):
     by_id = F.col("merchant_id").cast("int")
     # The 5 lowest merchant_ids with risk_score > 80: one per ring customer
@@ -138,7 +138,7 @@ def write_merchant_updates(merchants_df, updated_merchants):
           f"re-scored to {UPDATED_RISK_SCORE}, {len(NEW_MERCHANT_IDS)} new merchants {NEW_MERCHANT_IDS[0]}-{NEW_MERCHANT_IDS[-1]}")
 
 
-# 4. Deterministic planted payments: the payoff of notebooks 03 and 04 never depends on rand()
+# 4. Suspicious-customer payments: fixed, not random, so the Notebook 03 and 04 results are the same on every run
 def plant_fraud_cohort(customers_df, risky_merchants, straddle_merchant, earliest_background):
     planted_ids = PLANTED_CUSTOMER_IDS + [STRADDLE_CUSTOMER_ID]
     planted_customers = customers_df.filter(F.col("customer_id").isin(planted_ids)).count()
@@ -151,7 +151,7 @@ def plant_fraud_cohort(customers_df, risky_merchants, straddle_merchant, earlies
     # IP in BR, at a merchant with risk_score > 80. Score under notebook 03: 30 + 20 + 25 + 15 = 90 > 70.
     # Offsets k*100 + n*10 seconds (0..460 s) from RING_START, a 10-minute boundary 60 minutes before the
     # 10-minute boundary at or below the earliest background event: all 35 payments fall in ONE 10-minute
-    # tumbling window (7 per customer > 5), and each customer's 7 payments ($6,370 + $14k) sit in exactly
+    # tumbling window (7 per customer > 5), and each customer's 7 payments ($6,370 + $14 x k, so $6,370-$6,426) sit in exactly
     # 12 of the 1-hour sliding windows (slide 5 minutes).
     rows = []
     for k, customer_id in enumerate(PLANTED_CUSTOMER_IDS):
@@ -230,7 +230,7 @@ def generate_batch(n_files=1, records_per_file=100, start_timestamp=None, seed=4
         # Write batch to JSON
         txns_final.coalesce(1).write.mode("append").json(TRANSACTIONS_RAW_PATH)
 
-        # Inject malformed records (for _rescued_data testing), one text file per generated file.
+        # Malformed records for the _rescued_data column, one text file per generated file.
         # Both carry a valid timestamp (the file's own first event time) and a customer_id that only they use,
         # so they survive the watermark dedup and reach Bronze with _rescued_data populated:
         # _1 sends amount as text (type mismatch), _2 sends a field the contract does not have.

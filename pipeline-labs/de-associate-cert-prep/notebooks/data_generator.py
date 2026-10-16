@@ -1,6 +1,6 @@
 # Databricks notebook source
 # MAGIC %md
-# MAGIC # Synthetic Data Generator for Certification Lab
+# MAGIC # Synthetic Data Generator for the Data Engineer Associate Certification Lab
 # MAGIC
 # MAGIC This notebook generates realistic e-commerce data with intentional quality issues for learning purposes.
 # MAGIC
@@ -10,7 +10,7 @@
 # MAGIC - Creates data skew with a truncated Lomax (Pareto) distribution: a few products and customers carry most of the sales
 # MAGIC - Spreads orders over the 180 days ending 2026-06-30, with a time-of-day pattern (peak at 14:00)
 # MAGIC - Seeded: every run writes the same records (no clock reads, no random UUIDs)
-# MAGIC - Optimized for Databricks Free Edition resource limits
+# MAGIC - Sized for Databricks Free Edition: 50,000 orders and about 100,000 events before the planted duplicates
 # MAGIC
 # MAGIC **Estimated Runtime**: 5-10 minutes
 # MAGIC
@@ -32,7 +32,6 @@ import random
 import uuid
 import json
 from datetime import datetime, timedelta
-import time
 import numpy as np
 from pyspark.sql import functions as F
 from pyspark.sql.types import *
@@ -55,7 +54,7 @@ print(f"   Seed: {DATA_GEN_CONFIG['seed']}, base date: {BASE_DATE.date()}")
 # COMMAND ----------
 
 def seeded_uuid():
-    """A UUID drawn from the seeded `random` generator (uuid.uuid4() reads the OS and ignores the seed)."""
+    """A UUID drawn from the seeded `random` generator, so every run produces the same ids (uuid.uuid4() would not)."""
     return str(uuid.UUID(int=random.getrandbits(128), version=4))
 
 def inject_nulls(value, null_rate):
@@ -209,7 +208,7 @@ def generate_customers(num_customers):
 
         customers.append(customer)
 
-    # Inject duplicates (2%): the same customer_id re-sent with a later registration_date (a re-send of the same record; Silver keeps the first)
+    # Inject duplicates (2%): the same customer record re-sent with a later registration_date; Silver keeps the first registration
     num_duplicates = int(num_customers * DATA_GEN_CONFIG["duplicate_rate"])
     for _ in range(num_duplicates):
         duplicate = random.choice(customers).copy()
@@ -323,7 +322,7 @@ def generate_products(num_products):
             "product_name": product_name,
             "category": inject_format_inconsistency(category, "text"),
             "subcategory": inject_nulls(subcategory, DATA_GEN_CONFIG["null_rate_medium"]),
-            "price": str(base_price),  # Keep as string to test type conversion
+            "price": str(base_price),  # Written as a string, as the catalog export sends it; notebook 03 casts it to decimal(10,2)
             "cost": inject_nulls(str(cost), DATA_GEN_CONFIG["null_rate_medium"]),
             "inventory_count": inject_nulls(random.randint(0, 500), DATA_GEN_CONFIG["null_rate_low"]),
             "last_updated": BASE_DATE.strftime("%Y-%m-%dT%H:%M:%S")
@@ -461,8 +460,8 @@ def generate_sales_batch(batch_num, batch_size, customer_ids, product_ids, produ
 # Generate sales data in batches (simulate streaming)
 print(f"Generating {DATA_GEN_CONFIG['num_sales']:,} sales transactions...")
 
-# Distinct customer and product IDs for foreign key references (the duplicates appended above
-# must not get their own slot in the skewed pick)
+# Distinct customer and product IDs for foreign keys: one slot per id in the skewed pick, so the
+# planted duplicate rows add no extra weight
 customer_ids = list(dict.fromkeys(c["customer_id"] for c in customers))
 product_ids = list(dict.fromkeys(p["product_id"] for p in products))
 
@@ -487,9 +486,6 @@ for batch_num in range(num_batches):
     # Progress indicator
     if (batch_num + 1) % 10 == 0:
         print(f"  Progress: {batch_num + 1}/{num_batches} batches ({((batch_num + 1) / num_batches * 100):.1f}%)")
-
-    # Small delay to simulate streaming (can be removed for faster generation)
-    # time.sleep(DATA_GEN_CONFIG["streaming_delay_seconds"])
 
 print(f"✅ Sales data written to: {SALES_LANDING_PATH}")
 print(f"   File count: {len(dbutils.fs.ls(SALES_LANDING_PATH))}")

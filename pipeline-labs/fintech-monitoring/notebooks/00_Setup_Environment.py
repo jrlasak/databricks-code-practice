@@ -16,7 +16,7 @@
 
 # MAGIC %md
 # MAGIC ## 1. Create Catalog and Schemas
-# MAGIC Setting up the three-level namespace structure.
+# MAGIC Create the catalog and the five schemas of the three-level namespace.
 
 # COMMAND ----------
 
@@ -50,7 +50,7 @@ print(f"✅ Unity Catalog structure created for {CATALOG_NAME}")
 
 # MAGIC %md
 # MAGIC ## 3. Clean and Populate Data
-# MAGIC Removing any previous data and running the generator.
+# MAGIC Drop previous tables and files, then run the generator.
 
 # COMMAND ----------
 
@@ -77,14 +77,14 @@ dbutils.fs.mkdirs(MERCHANT_UPDATES_RAW_PATH)
 
 # COMMAND ----------
 
-# Generate the customer and merchant dimensions, the merchant updates file, the planted payments and 5 transaction batches
+# Generate the customer and merchant dimensions, the merchant updates file, the suspicious-customer payments and 5 transaction batches
 bootstrap()
 
 # COMMAND ----------
 
 # MAGIC %md
 # MAGIC ## 4. Final Confirmation
-# MAGIC Verify that the infrastructure is ready. The cell below should print 110,000 customers (ids `0`-`109999`, so every customer id the lab plants, `9990`-`9995`, `9998` and `9999`, is in the dimension) and 5,000 merchants. It stops with an error if any input is missing.
+# MAGIC Verify that the infrastructure is ready. The cell below should print 110,000 customers (ids `0`-`109999`, so the special customers you meet later, `9990`-`9995`, `9998` and `9999`, are all in the dimension) and 5,000 merchants. It stops with an error if any input is missing.
 
 # COMMAND ----------
 

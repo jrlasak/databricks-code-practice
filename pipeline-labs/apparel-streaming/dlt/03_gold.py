@@ -11,16 +11,14 @@ from variables import *
 ========================================
 
 Goal:
-    Create denormalized and aggregated tables for direct use by analysts and BI tools. 
-    This layer delivers business value by joining, enriching, and summarizing data for 
-    reporting and decision-making.
+    Create denormalized and aggregated tables for direct use by analysts and BI tools.
 
 Table Name Prefix:
     03_gold.
 
 Gold Layer Tips:
-    - Focus on joins and aggregations. This is where you create business value from your data.
-    - Think about how analysts will use these tables for reporting and BI.
+    - Every gold table answers one question from the README: daily sales per store
+      (Task 18), which items sell (Task 19) and customer spend (Task 20).
     - To watch increments, keep `data_generator.py` running and start another pipeline
       update: each update processes only the data that landed since the previous one.
       Stop the generator when you are done.
@@ -31,14 +29,13 @@ Task 17: Create `03_gold.denormalized_sales_facts` Streaming Table
 ===================================================================
 
 Business Logic:
-    Join sales transactions with current dimension tables to enrich each sale with 
-    customer, product, and store attributes. Use left joins to ensure all sales are 
-    included, even if some dimension data is missing. Alias columns for clarity and 
-    usability in BI tools.
+    Join each sale to the current customer, product and store, and alias the columns
+    for BI tools.
 
 Requirements:
     [ ] Read `02_silver.silver_sales_transactions` as a stream - use the
-        `SILVER_SALES_TRANSACTIONS` variable.
+        `SILVER_SALES_TRANSACTIONS` variable. Add `comment`: "Sales joined to the current
+        customer, product and store".
 
     [ ] Read the three current views (`SILVER_CUSTOMERS_CURRENT`, `SILVER_PRODUCTS_CURRENT`,
         `SILVER_STORES_CURRENT`) as batch lookups (`spark.read.table`).
@@ -53,16 +50,14 @@ Requirements:
 
     [ ] Join Logic: `left` join the sales stream with stores, then customers, then products
         on their respective IDs.
-        Business logic: Left joins ensure all sales are included, even if some dimension
-        data is missing.
 
     [ ] Select & Alias Columns: select exactly the columns listed in
         data_contract.md > denormalized_sales_facts, in that order (including the `date`
         from Task 8 carried as `sale_date`, which Task 18 groups by).
-        Business logic: Aliased columns make reporting and analysis easier for business users.
+        Business logic: Three dimensions all have a `name` column; aliasing them
+        (`customer_name`, `product_name`, `store_name`) keeps them apart.
 
-Tip:
-    - If stuck, see the solution below.
+Tip: if stuck, see the solution below.
 """
 ### ---------------------
 ### Write Your Code Here ###
@@ -73,7 +68,7 @@ Tip:
 
 # @dp.table(
 #     name=GOLD_DENORMALIZED_SALES_FACTS,
-#     comment="Fully denormalized sales fact table for analytic use. A streaming table."
+#     comment="Sales joined to the current customer, product and store"
 # )
 # def denormalized_sales_facts():
 #     sales = spark.readStream.table(SILVER_SALES_TRANSACTIONS)
@@ -112,42 +107,36 @@ Tip:
 ##########################################################################################
 ##########################################################################################
 """
-Task 18: Create `03_gold.gold_daily_sales_by_store` Aggregate Table
-====================================================================
+Task 18: Create the `03_gold.gold_daily_sales_by_store` Materialized View
+==========================================================================
 
 Business Logic:
     Aggregate denormalized sales facts by store and day, calculating total revenue, 
-    transaction count, items sold, and unique customers. This enables daily performance 
-    tracking for each store.
+    transaction count, items sold, and unique customers.
 
 Requirements:
     [ ] Read the denormalized sales facts (`GOLD_DENORMALIZED_SALES_FACTS`) as a batch
         source (`spark.read.table`) and declare the table with `@dp.materialized_view`,
         which makes it recomputed on each update.
+        Add `comment`: "Daily store sales summary".
         Business logic: A distinct count over all history cannot be maintained by a plain
         streaming aggregation; a materialized view recomputes it correctly.
 
     [ ] Group by:
         - `sale_date`
-          Business logic: Daily totals align with business reporting cycles; the date
-          was derived once in Task 8 and carried through Task 17.
+          Business logic: The date was derived once in Task 8 and carried through Task 17.
 
         - `store_id`
-          Business logic: Store-level grouping enables location-based analysis. Group by
-          the ID only, so a store's day stays on one row even if its name changes.
+          Business logic: Group by the ID only, so a store's day stays on one row even if
+          its name changes.
 
     [ ] Calculate Aggregations:
         - `total_revenue`: `round(sum(total_amount), 2)`
-          Business logic: Total revenue is a primary business KPI.
-        
         - `total_transactions`: `count(transaction_id)`
-          Business logic: Transaction count helps track store activity.
-        
         - `total_items_sold`: `sum(quantity)`
-          Business logic: Items sold is important for inventory and sales analysis.
-        
         - `unique_customers`: `countDistinct(customer_id)`
-          Business logic: Unique customers help measure store reach and loyalty.
+        Business logic: These four numbers replace the store managers' noon email of
+        yesterday's sales.
     
     [ ] Add the store name: left-join `silver_stores_current` (`SILVER_STORES_CURRENT`)
         on `store_id` and take its `name` as `store_name`.
@@ -156,7 +145,8 @@ Requirements:
 
     [ ] Final Select: the columns listed in data_contract.md > gold_daily_sales_by_store,
         in that order.
-        Business logic: Sale date is essential for time-based reporting.
+        Business logic: Dashboards and exports are built against the data contract;
+        matching its names and order means a `SELECT *` consumer never breaks.
 
 Tips:
     - Run the pipeline after this step to validate aggregations and reporting logic.
@@ -170,7 +160,7 @@ Tips:
 ### Solution Is Below 
 # @dp.materialized_view(
 #     name=GOLD_DAILY_SALES_BY_STORE,
-#     comment="Daily store sales summary. A materialized view."
+#     comment="Daily store sales summary"
 # )
 # def gold_daily_sales_by_store():
 #     df = spark.read.table(GOLD_DENORMALIZED_SALES_FACTS)
@@ -202,16 +192,18 @@ Tips:
 ##########################################################################################
 ##########################################################################################
 """
-Task 19: Create `03_gold.gold_product_performance` Aggregate Table
-===================================================================
+Task 19: Create the `03_gold.gold_product_performance` Materialized View
+=========================================================================
 
 Business Logic:
-    Product performance metrics drive merchandising, inventory, and marketing decisions.
+    Merchandising's question from the README: which items sell. One row per product,
+    ranked by `total_quantity_sold` or `total_revenue`.
 
 Requirements:
     [ ] Read the denormalized sales facts (`GOLD_DENORMALIZED_SALES_FACTS`) as a batch
         source (`spark.read.table`) and declare the table with `@dp.materialized_view`,
         which makes it recomputed on each update.
+        Add `comment`: "Product sales performance metrics".
         Business logic: A materialized view recomputes the totals from the full fact
         table on each update, so every sale that has landed is counted.
 
@@ -221,13 +213,10 @@ Requirements:
 
     [ ] Calculate Aggregations:
         - `total_revenue`: `round(sum(total_amount), 2)`
-          Business logic: Revenue by product is key for profitability analysis.
-
         - `total_quantity_sold`: `sum(quantity)`
-          Business logic: Quantity sold helps with inventory planning.
-
         - `total_orders`: `count(transaction_id)`
-          Business logic: Order count is useful for demand forecasting.
+        Business logic: `total_revenue` is revenue after discounts, not profit; there is
+        no cost column in this lab.
 
     [ ] Add the product attributes: left-join `silver_products_current`
         (`SILVER_PRODUCTS_CURRENT`) on `product_id` and take its `name` as
@@ -248,7 +237,7 @@ Tips:
 ### Solution Is Below 
 # @dp.materialized_view(
 #     name=GOLD_PRODUCT_PERFORMANCE,
-#     comment="Product sales performance metrics. A materialized view."
+#     comment="Product sales performance metrics"
 # )
 # def gold_product_performance():
 #     df = spark.read.table(GOLD_DENORMALIZED_SALES_FACTS)
@@ -281,42 +270,39 @@ Tips:
 ##########################################################################################
 ##########################################################################################
 """
-Task 20: Create `03_gold.gold_customer_lifetime_value` Aggregate Table
-=======================================================================
+Task 20: Create the `03_gold.gold_customer_lifetime_value` Materialized View
+=============================================================================
 
 Business Logic:
-    Customer lifetime value is a key metric for marketing and retention strategies.
+    Marketing's customer ranking from the README, built from the sales instead of a
+    spreadsheet.
 
 Requirements:
     [ ] Read the denormalized sales facts (`GOLD_DENORMALIZED_SALES_FACTS`) as a batch
         source (`spark.read.table`) and declare the table with `@dp.materialized_view`,
         which makes it recomputed on each update.
+        Add `comment`: "Customer lifetime value metrics".
         Business logic: A distinct count over all history cannot be maintained by a plain
         streaming aggregation; a materialized view recomputes it correctly.
 
     [ ] Group by `customer_id` only, then left-join `silver_customers_current`
-        (`SILVER_CUSTOMERS_CURRENT`) on `customer_id` to add its `name` as `customer_name`.
+        (`SILVER_CUSTOMERS_CURRENT`) on `customer_id` to add its `name` as `customer_name`;
+        select the columns listed in data_contract.md > gold_customer_lifetime_value, in
+        that order.
         Business logic: A customer's spend must stay on one row when their name changes;
         the name shown is the current one.
     
     [ ] Calculate Aggregations:
         - `total_spend`: `round(sum(total_amount), 2)`
-          Business logic: Total spend is the foundation of CLV.
-        
         - `total_orders`: `countDistinct(transaction_id)`
-          Business logic: Order count shows engagement.
-        
         - `first_purchase_date`: `min(event_time)` cast to date.
-          Business logic: First purchase date helps track customer lifecycle.
-        
         - `last_purchase_date`: `max(event_time)` cast to date.
-          Business logic: Last purchase date helps track retention.
-        
         - `avg_order_value`: `round(avg(total_amount), 2)`
-          Business logic: Average order value is a key marketing metric.
+        Business logic: `total_spend` ranks customers; `last_purchase_date` finds the ones
+        who stopped coming back.
 
 Tips:
-    - Run the pipeline after this task to validate CLV calculations and aggregations.
+    - Run the pipeline after this step to validate the CLV aggregations.
     - If stuck, see the solution below.
 """
 
@@ -328,7 +314,7 @@ Tips:
 ### Solution Is Below 
 # @dp.materialized_view(
 #     name=GOLD_CUSTOMER_LIFETIME_VALUE,
-#     comment="Customer lifetime value metrics. A materialized view."
+#     comment="Customer lifetime value metrics"
 # )
 # def gold_customer_lifetime_value():
 #     df = spark.read.table(GOLD_DENORMALIZED_SALES_FACTS)
