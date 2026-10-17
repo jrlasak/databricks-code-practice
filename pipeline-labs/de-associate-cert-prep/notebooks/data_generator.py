@@ -1,19 +1,20 @@
 # Databricks notebook source
 # MAGIC %md
-# MAGIC # Synthetic Data Generator for Certification Lab
+# MAGIC # Synthetic Data Generator for the Data Engineer Associate Certification Lab
 # MAGIC
 # MAGIC This notebook generates realistic e-commerce data with intentional quality issues for learning purposes.
 # MAGIC
 # MAGIC **Features:**
 # MAGIC - Generates customers, products, sales, and web events
 # MAGIC - Injects data quality issues (duplicates, nulls, format inconsistencies)
-# MAGIC - Creates data skew using Pareto distribution
-# MAGIC - Simulates temporal patterns (time of day, day of week)
-# MAGIC - Optimized for Databricks Free Edition resource limits
+# MAGIC - Creates data skew with a truncated Lomax (Pareto) distribution: a few products and customers carry most of the sales
+# MAGIC - Spreads orders over the 180 days ending 2026-06-30, with a time-of-day pattern (peak at 14:00)
+# MAGIC - Seeded: every run writes the same records (no clock reads, no random UUIDs)
+# MAGIC - Sized for Databricks Free Edition: 50,000 orders and about 100,000 events before the planted duplicates
 # MAGIC
 # MAGIC **Estimated Runtime**: 5-10 minutes
 # MAGIC
-# MAGIC **Prerequisites**: Run `Setup Environment.ipynb` first
+# MAGIC **Prerequisites**: Run `00_Setup_Environment` (it runs this notebook for you)
 
 # COMMAND ----------
 
@@ -22,25 +23,28 @@
 
 # COMMAND ----------
 
-# Import configuration variables
-%run ./variables
+# MAGIC %run ./variables
 
 # COMMAND ----------
 
+import math
 import random
 import uuid
 import json
 from datetime import datetime, timedelta
-import time
 import numpy as np
 from pyspark.sql import functions as F
 from pyspark.sql.types import *
 
-# Set random seed for reproducibility
-random.seed(42)
-np.random.seed(42)
+# Seed once from the config: every id, value and date below comes from these two generators
+random.seed(DATA_GEN_CONFIG["seed"])
+np.random.seed(DATA_GEN_CONFIG["seed"])
+
+# Every date is counted back from a fixed day, never from the clock
+BASE_DATE = datetime.strptime(DATA_GEN_CONFIG["base_date"], "%Y-%m-%d")
 
 print("✅ Libraries imported successfully")
+print(f"   Seed: {DATA_GEN_CONFIG['seed']}, base date: {BASE_DATE.date()}")
 
 # COMMAND ----------
 
@@ -48,6 +52,10 @@ print("✅ Libraries imported successfully")
 # MAGIC ## Helper Functions
 
 # COMMAND ----------
+
+def seeded_uuid():
+    """A UUID drawn from the seeded `random` generator, so every run produces the same ids (uuid.uuid4() would not)."""
+    return str(uuid.UUID(int=random.getrandbits(128), version=4))
 
 def inject_nulls(value, null_rate):
     """
@@ -109,23 +117,26 @@ def weighted_random_choice(choices_dict):
 
 def generate_skewed_index(num_items, skew_factor=0.8):
     """
-    Generate an index using Pareto distribution for data skew.
+    Pick an index with a truncated Lomax (Pareto) distribution. Index 0 is the most popular item.
+    Shape 1.16 puts ~77% of picks in the top 20% (products), 0.9 puts ~70% there (customers);
+    the top product gets ~1% of picks.
 
     Args:
         num_items: Total number of items
-        skew_factor: Degree of skew (0.8 = 80/20 rule)
+        skew_factor: 0.8 for the product skew, 0.7 for the customer skew
 
     Returns:
-        Index (int)
+        Index (int) in [0, num_items)
     """
-    # Use Pareto distribution to create skew
-    alpha = np.log(1 - skew_factor) / np.log(0.2)
-    pareto_val = (np.random.pareto(alpha) + 1) * num_items * 0.2
-    return min(int(pareto_val), num_items - 1)
+    shape = 1.16 if skew_factor >= 0.8 else 0.9
+    while True:
+        idx = int(np.random.pareto(shape) * num_items * 0.1)
+        if idx < num_items:
+            return idx
 
 def add_timestamp_jitter(timestamp, max_minutes=30):
     """
-    Add random jitter to timestamp to simulate late-arriving data.
+    Shift 5% of timestamps up to max_minutes earlier (a source clock that runs behind).
 
     Args:
         timestamp: Original timestamp
@@ -134,7 +145,7 @@ def add_timestamp_jitter(timestamp, max_minutes=30):
     Returns:
         Modified timestamp
     """
-    if random.random() < 0.05:  # 5% late data
+    if random.random() < 0.05:  # 5% of timestamps shifted earlier
         jitter_minutes = random.randint(-max_minutes, 0)
         return timestamp + timedelta(minutes=jitter_minutes)
     return timestamp
@@ -166,7 +177,7 @@ def generate_customers(num_customers):
 
     # Generate base customers
     for i in range(num_customers):
-        customer_id = str(uuid.uuid4())
+        customer_id = seeded_uuid()
         first_name = random.choice(first_names)
         last_name = random.choice(last_names)
         email_base = f"{first_name.lower()}.{last_name.lower()}@email.com"
@@ -181,7 +192,8 @@ def generate_customers(num_customers):
                                       DATA_GEN_CONFIG["null_rate_low"]),
             "last_name": inject_nulls(inject_format_inconsistency(last_name, "text"),
                                      DATA_GEN_CONFIG["null_rate_low"]),
-            "registration_date": (datetime.now() - timedelta(days=random.randint(1, 730))).strftime("%Y-%m-%d"),
+            # Customers register before the 180-day order window starts
+            "registration_date": (BASE_DATE - timedelta(days=random.randint(180, 910))).strftime("%Y-%m-%d"),
             "location": inject_nulls(random.choice(US_LOCATIONS),
                                     DATA_GEN_CONFIG["null_rate_medium"]),
             "phone": inject_nulls(f"+1-{random.randint(200,999)}-{random.randint(100,999)}-{random.randint(1000,9999)}",
@@ -196,12 +208,11 @@ def generate_customers(num_customers):
 
         customers.append(customer)
 
-    # Inject duplicates (2%)
+    # Inject duplicates (2%): the same customer record re-sent with a later registration_date; Silver keeps the first registration
     num_duplicates = int(num_customers * DATA_GEN_CONFIG["duplicate_rate"])
     for _ in range(num_duplicates):
         duplicate = random.choice(customers).copy()
-        # Change registration date to simulate duplicate with different timestamp
-        duplicate["registration_date"] = (datetime.now() - timedelta(days=random.randint(1, 30))).strftime("%Y-%m-%d")
+        duplicate["registration_date"] = (BASE_DATE - timedelta(days=random.randint(1, 30))).strftime("%Y-%m-%d")
         customers.append(duplicate)
 
     print(f"✅ Generated {len(customers):,} customer records (including {num_duplicates:,} duplicates)")
@@ -288,27 +299,33 @@ def generate_products(num_products):
     for i in range(num_products):
         product_id = f"P-{1001 + i}"
         category = weighted_random_choice(CATEGORY_WEIGHTS)
-        subcategory = random.choice(PRODUCT_CATEGORIES[category])
 
-        # Generate product name
+        # Generate product name; the item decides the subcategory
         template = random.choice(product_name_templates[category])
         item = random.choice(items_by_category[category])
         adj = random.choice(adjectives)
         product_name = template.format(adj=adj, item=item)
+        subcategory = ITEM_SUBCATEGORY.get(item) or random.choice(["Men", "Women", "Kids"])
 
-        # Generate prices
-        base_price = round(random.uniform(10, 2000), 2)
+        # Generate prices inside the category's range, log-uniform: most items sit at the cheap end
+        # of the range, as in a real catalog; cost is 40-70% of price
+        price_min, price_max = CATEGORY_PRICE_RANGES[category]
+        base_price = round(math.exp(random.uniform(math.log(price_min), math.log(price_max))), 2)
         cost = round(base_price * random.uniform(0.4, 0.7), 2)
+
+        # Inject margin issues (2%): cost above price, a data entry error in the catalog
+        if random.random() < 0.02:
+            cost = round(base_price * random.uniform(1.05, 1.3), 2)
 
         product = {
             "product_id": product_id,
             "product_name": product_name,
             "category": inject_format_inconsistency(category, "text"),
             "subcategory": inject_nulls(subcategory, DATA_GEN_CONFIG["null_rate_medium"]),
-            "price": str(base_price),  # Keep as string to test type conversion
+            "price": str(base_price),  # Written as a string, as the catalog export sends it; notebook 03 casts it to decimal(10,2)
             "cost": inject_nulls(str(cost), DATA_GEN_CONFIG["null_rate_medium"]),
             "inventory_count": inject_nulls(random.randint(0, 500), DATA_GEN_CONFIG["null_rate_low"]),
-            "last_updated": datetime.now().strftime("%Y-%m-%dT%H:%M:%S")
+            "last_updated": BASE_DATE.strftime("%Y-%m-%dT%H:%M:%S")
         }
 
         # Inject negative prices (1%)
@@ -317,13 +334,12 @@ def generate_products(num_products):
 
         products.append(product)
 
-    # Inject duplicates (1%)
+    # Inject duplicates (1%): an older catalog snapshot of the same product_id, different inventory
     num_duplicates = int(num_products * 0.01)
     for _ in range(num_duplicates):
         duplicate = random.choice(products).copy()
-        # Change inventory and timestamp
         duplicate["inventory_count"] = random.randint(0, 500)
-        duplicate["last_updated"] = (datetime.now() - timedelta(hours=random.randint(1, 24))).strftime("%Y-%m-%dT%H:%M:%S")
+        duplicate["last_updated"] = (BASE_DATE - timedelta(hours=random.randint(1, 24))).strftime("%Y-%m-%dT%H:%M:%S")
         products.append(duplicate)
 
     print(f"✅ Generated {len(products):,} product records (including {num_duplicates:,} duplicates)")
@@ -350,24 +366,26 @@ print(f"   File count: {len(dbutils.fs.ls(PRODUCTS_LANDING_PATH))}")
 
 # COMMAND ----------
 
-def generate_sales_batch(batch_num, batch_size, customer_ids, product_ids):
+def generate_sales_batch(batch_num, batch_size, customer_ids, product_ids, product_prices):
     """
     Generate a batch of sales transactions with nested line items.
 
     Args:
         batch_num: Batch number (for order ID generation)
         batch_size: Number of orders to generate
-        customer_ids: List of valid customer IDs
-        product_ids: List of valid product IDs
+        customer_ids: List of distinct customer IDs (index 0 = most active)
+        product_ids: List of distinct product IDs (index 0 = best seller)
+        product_prices: Dict of product_id -> catalog price
 
     Returns:
         List of sales transaction dicts
     """
     sales = []
-    current_time = datetime.now()
 
     for i in range(batch_size):
-        order_id = f"ORD-{current_time.strftime('%Y%m')}-{batch_num * batch_size + i:05d}"
+        # Spread orders over the order_history_days ending BASE_DATE
+        order_day = BASE_DATE - timedelta(days=random.randint(0, DATA_GEN_CONFIG["order_history_days"] - 1))
+        order_id = f"ORD-{order_day.strftime('%Y%m')}-{batch_num * batch_size + i:05d}"
 
         # Use skewed distribution for customer and product selection
         customer_id = customer_ids[generate_skewed_index(len(customer_ids),
@@ -380,8 +398,11 @@ def generate_sales_batch(batch_num, batch_size, customer_ids, product_ids):
         for _ in range(num_items):
             product_id = product_ids[generate_skewed_index(len(product_ids),
                                                            DATA_GEN_CONFIG["product_skew_factor"])]
-            quantity = random.randint(1, 5)
-            unit_price = round(random.uniform(10, 500), 2)
+            quantity = random.choices([1, 2, 3], weights=[0.75, 0.2, 0.05], k=1)[0]
+            # The line sells at the catalog price; 20% of lines carry a 5-20% discount
+            catalog_price = product_prices[product_id]
+            discount = random.uniform(0.8, 0.95) if random.random() < 0.2 else 1.0
+            unit_price = round(catalog_price * discount, 2)
 
             # Inject invalid quantities (0.5%)
             if random.random() < 0.005:
@@ -396,13 +417,13 @@ def generate_sales_batch(batch_num, batch_size, customer_ids, product_ids):
         # Generate order timestamp with time-of-day pattern
         hour_of_day = int(np.random.normal(14, 4))  # Peak at 2 PM
         hour_of_day = max(0, min(23, hour_of_day))
-        order_timestamp = current_time.replace(
+        order_timestamp = order_day.replace(
             hour=hour_of_day,
             minute=random.randint(0, 59),
             second=random.randint(0, 59)
         )
 
-        # Add jitter for late-arriving data
+        # Shift 5% of order times up to 30 minutes earlier
         order_timestamp = add_timestamp_jitter(order_timestamp)
 
         sale = {
@@ -423,11 +444,11 @@ def generate_sales_batch(batch_num, batch_size, customer_ids, product_ids):
 
         # Inject invalid customer IDs (1%)
         if random.random() < 0.01:
-            sale["customer_id"] = str(uuid.uuid4())  # Non-existent customer
+            sale["customer_id"] = seeded_uuid()  # Non-existent customer
 
         sales.append(sale)
 
-    # Inject duplicates (1%)
+    # Inject duplicates (1%): the same order sent twice (a client retry, same order_id)
     num_duplicates = int(batch_size * 0.01)
     for _ in range(num_duplicates):
         sales.append(random.choice(sales).copy())
@@ -439,15 +460,22 @@ def generate_sales_batch(batch_num, batch_size, customer_ids, product_ids):
 # Generate sales data in batches (simulate streaming)
 print(f"Generating {DATA_GEN_CONFIG['num_sales']:,} sales transactions...")
 
-# Get customer and product IDs for foreign key references
-customer_ids = [c["customer_id"] for c in customers]
-product_ids = [p["product_id"] for p in products]
+# Distinct customer and product IDs for foreign keys: one slot per id in the skewed pick, so the
+# planted duplicate rows add no extra weight
+customer_ids = list(dict.fromkeys(c["customer_id"] for c in customers))
+product_ids = list(dict.fromkeys(p["product_id"] for p in products))
+
+# Catalog price per product, for the line items. abs(): the ~1% negative prices are a defect of
+# the catalog export, the order system charged the real price
+product_prices = {}
+for p in products:
+    product_prices.setdefault(p["product_id"], abs(float(p["price"])))
 
 batch_size = DATA_GEN_CONFIG["streaming_batch_size"]
 num_batches = DATA_GEN_CONFIG["num_sales"] // batch_size
 
 for batch_num in range(num_batches):
-    sales_batch = generate_sales_batch(batch_num, batch_size, customer_ids, product_ids)
+    sales_batch = generate_sales_batch(batch_num, batch_size, customer_ids, product_ids, product_prices)
 
     # Convert to Spark DataFrame
     sales_df = spark.createDataFrame(sales_batch)
@@ -458,9 +486,6 @@ for batch_num in range(num_batches):
     # Progress indicator
     if (batch_num + 1) % 10 == 0:
         print(f"  Progress: {batch_num + 1}/{num_batches} batches ({((batch_num + 1) / num_batches * 100):.1f}%)")
-
-    # Small delay to simulate streaming (can be removed for faster generation)
-    # time.sleep(DATA_GEN_CONFIG["streaming_delay_seconds"])
 
 print(f"✅ Sales data written to: {SALES_LANDING_PATH}")
 print(f"   File count: {len(dbutils.fs.ls(SALES_LANDING_PATH))}")
@@ -486,13 +511,12 @@ def generate_events_batch(batch_num, batch_size, customer_ids, product_ids):
         List of event dicts
     """
     events = []
-    current_time = datetime.now()
 
     # Generate sessions (each session has multiple events)
     num_sessions = batch_size // 10  # ~10 events per session
 
     for session_idx in range(num_sessions):
-        session_id = f"sess_{uuid.uuid4().hex[:12]}"
+        session_id = f"sess_{seeded_uuid().replace('-', '')[:12]}"
 
         # 30% anonymous users (no customer_id)
         customer_id = None if random.random() < 0.30 else random.choice(customer_ids)
@@ -500,11 +524,21 @@ def generate_events_batch(batch_num, batch_size, customer_ids, product_ids):
         device_type = weighted_random_choice(DEVICE_TYPE_WEIGHTS)
         browser = weighted_random_choice(BROWSER_WEIGHTS)
 
+        # One day and one start time per session, drawn from the same window as the orders
+        session_day = BASE_DATE - timedelta(days=random.randint(0, DATA_GEN_CONFIG["order_history_days"] - 1))
+        hour_of_day = max(0, min(23, int(np.random.normal(14, 4))))  # peak at 2 PM
+        session_start = session_day.replace(
+            hour=hour_of_day,
+            minute=random.randint(0, 59),
+            second=random.randint(0, 59),
+            microsecond=random.randint(0, 999999)
+        )
+
         # Generate 8-12 events per session
         num_events = random.randint(8, 12)
 
         for event_idx in range(num_events):
-            event_id = str(uuid.uuid4())
+            event_id = seeded_uuid()
             event_type = weighted_random_choice(EVENT_TYPES)
 
             # Product ID is null for some event types
@@ -515,17 +549,10 @@ def generate_events_batch(batch_num, batch_size, customer_ids, product_ids):
                 if random.random() < 0.02:
                     product_id = f"P-{random.randint(10000, 99999)}"
 
-            # Generate event timestamp with time-of-day pattern
-            hour_of_day = int(np.random.normal(14, 4))
-            hour_of_day = max(0, min(23, hour_of_day))
-            event_timestamp = current_time.replace(
-                hour=hour_of_day,
-                minute=random.randint(0, 59),
-                second=random.randint(0, 59),
-                microsecond=random.randint(0, 999999)
-            ) + timedelta(seconds=event_idx * 30)  # Events 30 seconds apart
+            # Events 30 seconds apart within the session
+            event_timestamp = session_start + timedelta(seconds=event_idx * 30)
 
-            # Add jitter for late-arriving and out-of-order
+            # Shift 5% of event times up to 10 minutes earlier
             event_timestamp = add_timestamp_jitter(event_timestamp, max_minutes=10)
 
             event = {
@@ -633,8 +660,8 @@ print("\n" + "=" * 70)
 print("✅ Data generation successful!")
 print("=" * 70)
 print("\nNext Steps:")
-print("1. Open notebooks/01_Environment_Setup_Unity_Catalog.ipynb")
-print("2. Follow the ProjectPlan.md for step-by-step implementation")
+print("1. Open notebooks/01_Environment_Setup_Unity_Catalog")
+print("2. Work through the notebooks in numerical order")
 print("=" * 70)
 
 # COMMAND ----------
@@ -649,35 +676,32 @@ print("=" * 70)
 print("\nThese issues are designed for learning purposes:\n")
 
 print("CUSTOMERS:")
-print("  - Duplicates: ~2% with different registration dates")
-print("  - Null values: 5-20% depending on column")
-print("  - Format issues: Mixed case, extra whitespace")
-print("  - Invalid emails: ~1% missing '@' or '.'")
+print("  - Duplicates: 2% (same customer_id re-sent with a later registration_date)")
+print("  - Nulls: 5% first_name / last_name, 10% location, 20% phone, 30% loyalty_tier")
+print("  - Format: extra spaces / swapped case / ALL CAPS in names")
+print("  - Invalid emails: ~1% missing '@'")
 
 print("\nPRODUCTS:")
-print("  - Duplicates: ~1% with different timestamps/inventory")
-print("  - Null values: 5-15% depending on column")
-print("  - Format issues: Mixed case categories")
-print("  - Invalid prices: ~1% negative values")
+print("  - Duplicates: 1% (older catalog snapshot, different inventory_count)")
+print("  - Nulls: 10% subcategory and cost, 5% inventory_count")
+print("  - Format: category with extra spaces (20%), swapped case (10%), ALL CAPS (5%)")
+print("  - Invalid prices: ~1% negative")
 print("  - Margin issues: ~2% cost > price")
 
 print("\nSALES:")
-print("  - Duplicates: ~1% duplicate order_id")
-print("  - Late-arriving data: ~5% arrive 5-30 minutes late")
-print("  - Invalid customer IDs: ~1% non-existent customers")
-print("  - Invalid product IDs: ~0.5% non-existent products")
+print("  - Duplicates: ~1% same order_id (client retries)")
+print("  - Order time shifted up to 30 minutes earlier: ~5%")
+print("  - Unknown customer IDs: ~1%")
 print("  - Invalid quantities: ~0.5% zero or negative")
-print("  - Data skew: Top 20% products = 80% of sales")
+print("  - Skew: top 20% of products ~77% of line items")
 
 print("\nWEB EVENTS:")
 print("  - Duplicates: ~3% (page refreshes)")
-print("  - Late-arriving data: ~10% arrive 1-10 minutes late")
-print("  - Out-of-order events: ~15% timestamps")
-print("  - Anonymous users: ~30% no customer_id")
-print("  - Invalid product IDs: ~2% non-existent products")
-print("  - Invalid event types: ~0.5% empty values")
-print("  - Extreme skew: Top 20% products = 80% of views")
+print("  - Timestamps shifted up to 10 minutes earlier: ~5%")
+print("  - Anonymous sessions: 30%")
+print("  - Unknown product IDs: ~2%")
+print("  - Empty event_type: ~0.5%")
 
 print("\n" + "=" * 70)
-print("These issues will be addressed in the Silver layer transformations.")
+print("Notebook 03 handles the customer, product and sales issues in Silver; events stay in Bronze.")
 print("=" * 70)

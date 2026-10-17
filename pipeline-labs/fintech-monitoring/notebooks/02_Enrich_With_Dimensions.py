@@ -2,12 +2,14 @@
 # MAGIC %md
 # MAGIC # 02: Enrich With Dimensions  -  "Stream-Static Joins: Adding Business Context"
 # MAGIC **Exam Coverage**: DE Associate (Medallion, MERGE) + DE Professional (Stream-Static Joins)
-# MAGIC **Duration**: 60 minutes
+# MAGIC
+# MAGIC **Duration**: 75 minutes
+# MAGIC
 # MAGIC ---
 # MAGIC ## Learning Objectives
 # MAGIC By the end of this notebook, you will be able to:
 # MAGIC - Enrich streaming transactions with static customer and merchant data
-# MAGIC - Handle null foreign keys in stream-static joins
+# MAGIC - Keep payments whose merchant is not in the dimension yet (late-arriving dimension rows) in stream-static joins
 # MAGIC - Implement SCD Type 1 MERGE for merchant profile updates
 # MAGIC - Flag geographic mismatches as potential fraud indicators
 # MAGIC ---
@@ -16,12 +18,12 @@
 
 # MAGIC %md
 # MAGIC ## Section 1: Stream-Static Enrichment
-# MAGIC Enriched transaction data allows for more accurate fraud detection. We'll join our transaction stream (Silver) with our customer and merchant dimensions.
+# MAGIC Enriched transaction data allows for more accurate fraud detection. We'll join our Bronze transaction stream with our customer and merchant dimensions and write the result to Silver.
 # MAGIC
 # MAGIC ### Key Concepts
 # MAGIC - **Stream-Static Join**: Joins a streaming DataFrame with a static DataFrame.
-# MAGIC - **Join Behavior**: The static side is read once when the stream starts.
-# MAGIC - **Performance**: Very efficient, as only the streaming side needs to be shuffled.
+# MAGIC - **Join Behavior**: Each micro-batch joins against the static side as it is when that batch runs. With a static Delta table that is the table's latest version, so an update to that table (a MERGE like the one in Exercise 3) reaches the next micro-batch without restarting the stream. This notebook joins the raw dimension export files, so the merchants Exercise 3 adds do not reach this run's Silver rows.
+# MAGIC - **Performance**: The join is stateless: no state store and no watermark, because each micro-batch is joined on its own. That is what makes it cheap compared with a stream-stream join.
 
 # COMMAND ----------
 
@@ -47,11 +49,13 @@ from pyspark.sql.types import *
 # MAGIC **Requirements:**
 # MAGIC - Load customers from `CUSTOMERS_RAW_PATH` (CSV with headers) using schema `customer_id STRING, name STRING, email STRING, country STRING, risk_tier STRING, created_at DATE`. Load the Bronze transaction stream from `TABLE_BRONZE_TRANSACTIONS`.
 # MAGIC - Perform a **left join** on `customer_id` so transactions with unknown customers are preserved.
-# MAGIC - Rename `name` to `customer_name` and `country` to `customer_country`, selecting only needed columns before joining. Fill null values with defaults: "Unknown Customer" for name and "Unknown" for country.
+# MAGIC - Keep only `customer_id`, `customer_name` (renamed from `name`), `customer_country` (renamed from `country`) and `risk_tier` in `customers_df` before joining. After the join, fill nulls: "Unknown Customer" for `customer_name`, "Unknown" for `customer_country`. `risk_tier` stays as it is.
 # MAGIC
-# MAGIC **Aha Moment**: In Fintech, dropping a transaction because a customer isn't in your DB yet is a compliance gap  -  every transaction must be traceable, even if the customer profile is incomplete.
+# MAGIC **Aha Moment**: In fintech, dropping a transaction because a customer isn't in your DB yet is a compliance gap  -  every transaction must be traceable, even if the customer profile is incomplete.
 # MAGIC
 # MAGIC **Hint**: Remember that `spark.read` creates a static DataFrame, while `spark.readStream` creates a streaming DataFrame.
+# MAGIC
+# MAGIC **Quick check before you go on**: nothing verifies this join until the Silver write in Exercise 4, so in your work cell count the rows and the distinct `customer_id` values of `customers_df`: 110,000 / 110,000. Fewer distinct ids than rows means a duplicated key, and every duplicate would multiply a customer's payments in the join.
 
 # COMMAND ----------
 
@@ -92,31 +96,18 @@ from pyspark.sql.types import *
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ### 🔄 STEP: Generate New Data
-# MAGIC Run the cell below to simulate new transactions.
-
-# COMMAND ----------
-
-# MAGIC %run ./data_generator
-
-# COMMAND ----------
-
-# Generate a new batch of data
-generate_batch(n_files=2, records_per_file=100)
-
-# COMMAND ----------
-
-# MAGIC %md
 # MAGIC ---
 # MAGIC ### 🎯 EXERCISE 2: Merchant Enrichment with Null Handling
 # MAGIC **Your task**: Join the merchants dimension (JSON) and handle records with missing merchant details.
 # MAGIC
 # MAGIC **Requirements:**
-# MAGIC - Load merchants from `MERCHANTS_RAW_PATH` (JSON) using schema `merchant_id STRING, name STRING, category_code STRING, country STRING, risk_score INT, onboarded_at DATE`.
-# MAGIC - Perform a **left join** on `merchant_id` with the enriched stream from Exercise 1, renaming `name` to `merchant_name`, `country` to `merchant_country`, and `risk_score` to `merchant_risk_score`.
-# MAGIC - Fill missing `merchant_name` with "Unknown Merchant" and `merchant_country` with "Unknown". Select only the columns you need from the merchants side before joining to avoid column name collisions.
+# MAGIC - Load merchants from `MERCHANTS_RAW_PATH` (JSON) into `merchants_df` using schema `merchant_id STRING, name STRING, category_code STRING, country STRING, risk_score INT, onboarded_at DATE`.
+# MAGIC - Rename `name` to `merchant_name`, `country` to `merchant_country` and `risk_score` to `merchant_risk_score`, then keep exactly `merchant_id`, `merchant_name`, `category_code`, `merchant_country`, `merchant_risk_score` in `merchants_df`. The cell before Exercise 3 saves this DataFrame as the Silver merchants table; `merchant_risk_score` feeds the risk score in Notebook 03 and `category_code` the daily report in Notebook 04.
+# MAGIC - Left join `enriched_txns_df` to `merchants_df` on `merchant_id`, then fill missing `merchant_name` with "Unknown Merchant" and `merchant_country` with "Unknown".
 # MAGIC
-# MAGIC **Aha Moment**: In Fintech, dropping a transaction because a merchant isn't in your DB yet is a lost revenue event. Seniors route these to a "pending_review" category instead.
+# MAGIC **Aha Moment**: About 1% of payments go to merchants onboarded after the last dimension export (ids `5000`-`5009`). An inner join silently drops them, so they vanish from the rules engine and every downstream total, and a fraudster who finds that gap has an unmonitored channel. Keeping them as "Unknown Merchant" means they still reach the rules engine and the daily report, and ops can pull `merchant_name = 'Unknown Merchant'` as a review queue. Once a merchant reaches the dimension, its new payments pick up the details; the rows already in Silver keep "Unknown Merchant" until a backfill (a MERGE from the refreshed dimension) repairs them.
+# MAGIC
+# MAGIC **Quick check before you go on**: count the rows of `merchants_df` in your work cell: 5,000, one per `merchant_id`. The provided cell before Exercise 3 prints the same 5,000 when it saves this DataFrame.
 
 # COMMAND ----------
 
@@ -154,7 +145,7 @@ generate_batch(n_files=2, records_per_file=100)
 
 # MAGIC %md
 # MAGIC ## Section 2: Dimension Management with MERGE
-# MAGIC Merchant details (risk scores, categories) change over time. We'll implement an SCD Type 1 update for our Silver merchants table using Delta Lake's `MERGE INTO`.
+# MAGIC Merchant details (risk scores, categories) change over time, and new merchants onboard every day. The merchant team sends a daily file with those changes. We'll apply it to our Silver merchants table as an SCD Type 1 update, using Delta Lake's `MERGE INTO`.
 # MAGIC
 # MAGIC ### Key Concepts
 # MAGIC - **SCD Type 1**: Overwrites the old value with the new value (no history maintained).
@@ -163,15 +154,38 @@ generate_batch(n_files=2, records_per_file=100)
 # COMMAND ----------
 
 # MAGIC %md
+# MAGIC ### 📦 Provided: Initial Load and Today's Updates
+# MAGIC Run the two cells below. The first saves `merchants_df` (your Exercise 2 DataFrame) as `TABLE_SILVER_MERCHANTS`: the dimension as of the last full export, 5,000 merchants. The second reads today's file from the merchant team (`MERCHANT_UPDATES_RAW_PATH`) into `merchant_updates_df`, with the same columns as `merchants_df`: 3 existing merchants re-scored by the risk team and the 10 merchants onboarded since the export (`5000`-`5009`).
+
+# COMMAND ----------
+
+# Initial load: the merchant dimension as of the last full export
+merchants_df.write.mode("overwrite").option("overwriteSchema", "true").saveAsTable(TABLE_SILVER_MERCHANTS)
+print(f"✅ {TABLE_SILVER_MERCHANTS}: {spark.read.table(TABLE_SILVER_MERCHANTS).count()} merchants before the MERGE")
+
+# COMMAND ----------
+
+# Today's merchant updates, in the same shape as merchants_df
+merchant_updates_df = (spark.read
+  .schema("merchant_id STRING, name STRING, category_code STRING, country STRING, risk_score INT, onboarded_at DATE")
+  .json(MERCHANT_UPDATES_RAW_PATH)
+  .selectExpr("merchant_id", "name AS merchant_name", "category_code",
+              "country AS merchant_country", "risk_score AS merchant_risk_score"))
+
+print(f"Merchant updates: {merchant_updates_df.count()} rows")
+display(merchant_updates_df.orderBy(F.col("merchant_id").cast("int")))
+
+# COMMAND ----------
+
+# MAGIC %md
 # MAGIC ---
 # MAGIC ### 🎯 EXERCISE 3: MERGE Merchant Updates
-# MAGIC **Your task**: Update the Silver `merchants` table with the latest data from the landing volume.
+# MAGIC **Your task**: Apply today's updates to the Silver `merchants` table in one atomic operation, leaving the merchants that did not change alone.
 # MAGIC
 # MAGIC **Requirements:**
-# MAGIC - Save `merchants_df` to `TABLE_SILVER_MERCHANTS` (overwrite to ensure schema consistency).
-# MAGIC - Use the Delta `MERGE` operation to update existing merchants and insert new ones.
-# MAGIC - Match on `merchant_id`.
-# MAGIC - Handle both updates for existing merchants and inserts for new ones in a single operation.
+# MAGIC - MERGE `merchant_updates_df` (source) into `TABLE_SILVER_MERCHANTS` (target), matching on `merchant_id`.
+# MAGIC - When a merchant matches, update all its columns (SCD Type 1: the new risk score replaces the old one).
+# MAGIC - When a merchant does not match, insert it.
 # MAGIC
 # MAGIC **Hint**: You can use the `DeltaTable` API to perform an upsert (merge) operation.
 
@@ -179,11 +193,10 @@ generate_batch(n_files=2, records_per_file=100)
 
 # ✏️ STUDENT EXERCISE
 
-# TODO: Implement the MERGE logic to update the silver merchants table
-# 1. Save merchants_df to TABLE_SILVER_MERCHANTS (overwrite mode)
-# 2. Load the Silver merchants table as a DeltaTable object
-# 3. Merge merchants_df into the DeltaTable, matching on merchant_id
-#    Handle both updates for existing rows and inserts for new rows
+# TODO: MERGE today's merchant updates into the Silver merchants table
+# 1. Load the Silver merchants table as a DeltaTable object
+# 2. Merge merchant_updates_df into it, matching on merchant_id
+#    Update matched merchants and insert new ones in the same operation
 
 # COMMAND ----------
 
@@ -195,14 +208,12 @@ generate_batch(n_files=2, records_per_file=100)
 
 # ✅ SOLUTION: MERGE Merchant Updates
 
-# merchants_df.write.mode("overwrite").option("overwriteSchema", "true").saveAsTable(TABLE_SILVER_MERCHANTS)
-#
 # from delta.tables import DeltaTable
 #
 # silver_merchants_dt = DeltaTable.forName(spark, TABLE_SILVER_MERCHANTS)
 #
 # (silver_merchants_dt.alias("target")
-#   .merge(merchants_df.alias("source"), "target.merchant_id = source.merchant_id")
+#   .merge(merchant_updates_df.alias("source"), "target.merchant_id = source.merchant_id")
 #   .whenMatchedUpdateAll()
 #   .whenNotMatchedInsertAll()
 #   .execute())
@@ -212,37 +223,47 @@ generate_batch(n_files=2, records_per_file=100)
 # MAGIC %md
 # MAGIC ### 🔍 Verify Your Results
 # MAGIC Run the cell below to inspect your output. You should see:
-# MAGIC - **Row count**: ~5,000 merchants.
-# MAGIC - **Key columns**: `merchant_id`, `name`, `category_code`, `country`, `risk_score`, `onboarded_at`.
-# MAGIC - **`risk_score`**: Values between 0-100. Merchants with scores > 80 are considered "high risk"  -  these will factor into fraud detection in Notebook 03.
+# MAGIC - **Row count**: 5,010 merchants: the 5,000 from the export plus the 10 onboarded since.
+# MAGIC - **Before and after** (first grid): the 13 merchants in today's file. The 3 re-scored merchants show `score_before_merge` at 80 or below and `merchant_risk_score` 95. The 10 new merchants (`5000`-`5009`) show `score_before_merge` as `null`, because they were not in the export.
+# MAGIC - **MERGE metrics** (second grid): the latest table history entry has `operation` = `MERGE`, and its `operationMetrics` show `numSourceRows` = 13, `numTargetRowsUpdated` = 3 and `numTargetRowsInserted` = 10: the MERGE changed 13 rows, not 5,010. `numTargetRowsCopied` counts unchanged rows that were rewritten only because they share a file with an updated row: 0 when the table has deletion vectors on, the rest of that file when it does not.
+# MAGIC - **Ran your MERGE twice?** The second run matches all 13 merchants, so history shows `numTargetRowsUpdated` = 13 and `numTargetRowsInserted` = 0. The table is still right: this MERGE is idempotent because it replaces values on a stable key and you fed it the same 13 rows. A MERGE that adds to a value (`SET total = total + source.total`) would double count on the second run. To see the 3 / 10 split again, re-run the two provided cells above (they reset the table to the export), then your MERGE once.
 # MAGIC
-# MAGIC **What this means**: Your Silver merchants table is now a live, updateable dimension. When new merchants onboard or risk scores change, the MERGE operation handles both inserts and updates in a single atomic transaction  -  no full table rewrites needed.
+# MAGIC **What this means**: Your Silver merchants table is now an updateable dimension: one MERGE applies today's inserts and updates in a single atomic transaction, and only the files that hold a matched row are touched (with deletion vectors MERGE marks the old rows and leaves the rewrite to a later `OPTIMIZE`). A source that holds just today's changes keeps that set small. When the source is a full snapshot instead, an unconditional update-all matches every merchant, so production MERGEs add a change condition to touch only the rows that actually changed.
 
 # COMMAND ----------
 
 # 🔍 Verification query
 merchants_result = spark.read.table(TABLE_SILVER_MERCHANTS)
 print(f"✅ {TABLE_SILVER_MERCHANTS}: {merchants_result.count()} merchants")
-display(merchants_result.limit(10))
+
+# Today's 13 merchants: risk score in the export (before) next to the score in the Silver table (after)
+display(merchant_updates_df.select("merchant_id")
+  .join(merchants_result, "merchant_id", "left")
+  .join(merchants_df.select("merchant_id", F.col("merchant_risk_score").alias("score_before_merge")), "merchant_id", "left")
+  .select("merchant_id", "merchant_name", "score_before_merge", "merchant_risk_score")
+  .orderBy(F.col("merchant_id").cast("int")))
+
+display(spark.sql(f"DESCRIBE HISTORY {TABLE_SILVER_MERCHANTS} LIMIT 1").select("version", "operation", "operationMetrics"))
 
 # COMMAND ----------
 
 # MAGIC %md
 # MAGIC ---
 # MAGIC ### 🎯 EXERCISE 4: Standardize and Write Silver
-# MAGIC **Your task**: Finalize the enriched transaction stream by standardizing data, flagging geographic mismatches, and writing to Silver.
+# MAGIC **Your task**: Finalize the enriched transaction stream by keeping only clean rows, standardizing data, flagging geographic mismatches, and writing to Silver.
 # MAGIC
 # MAGIC **Requirements:**
+# MAGIC - Keep only rows that parsed cleanly (`_rescued_data` IS NULL), then drop the `_rescued_data` column: rescued rows stay in Bronze for the integration team to review, and Silver does not carry a column that is always null.
 # MAGIC - Standardize `currency` to uppercase and create a boolean `is_geo_mismatch` flag (true when `ip_country` != `customer_country`).
 # MAGIC - Write the resulting stream to `TABLE_SILVER_TRANSACTIONS` using append mode, checkpoint at `CHECKPOINT_PATH + "/silver_txns"`, and `availableNow=True` trigger.
 # MAGIC
-# MAGIC **Hint**: This follows the same streaming write pattern from Notebook 01.
+# MAGIC **Hint**: Same streaming write as Notebook 01 Exercise 3, including waiting for the query to finish before the verification cell.
 
 # COMMAND ----------
 
 # ✏️ STUDENT EXERCISE
 
-# TODO: Standardize, flag geo-mismatch, and write the enriched stream to Silver
+# TODO: Keep clean rows, standardize, flag geo-mismatch, and write the enriched stream to Silver
 # silver_txns_df = ...
 # (silver_txns_df
 #   .writeStream
@@ -259,6 +280,8 @@ display(merchants_result.limit(10))
 # ✅ SOLUTION: Standardize and Write Silver
 
 # silver_txns_df = (enriched_full_df
+#   .filter("_rescued_data IS NULL")
+#   .drop("_rescued_data")
 #   .withColumn("currency", F.upper(F.col("currency")))
 #   .withColumn("is_geo_mismatch", F.col("ip_country") != F.col("customer_country")))
 #
@@ -278,19 +301,23 @@ display(merchants_result.limit(10))
 # MAGIC %md
 # MAGIC ### 🔍 Verify Your Results
 # MAGIC Run the cell below to inspect your output. You should see:
-# MAGIC - **Row count**: Same as your Bronze table (enrichment doesn't drop rows thanks to left joins).
-# MAGIC - **New columns**: `customer_name`, `customer_country`, `risk_tier`, `merchant_name`, `merchant_country`, `merchant_risk_score`, `is_geo_mismatch`.
-# MAGIC - **`is_geo_mismatch`**: Some rows should show `true`  -  meaning the customer's registered country doesn't match the IP country of the transaction. These are potential fraud indicators.
-# MAGIC - **Null handling**: Look for `"Unknown Customer"` or `"Unknown Merchant"` values  -  these are transactions where the foreign key didn't match a dimension record. In Fintech, we preserve them instead of dropping.
-# MAGIC - **`currency`**: Should all be uppercase (e.g., `USD`, `EUR`) after standardization.
+# MAGIC - **Row count**: 50,141 if you ran each cell once: your Bronze count (50,155) minus the 14 rescued rows you counted in Notebook 01 Exercise 4. The left joins drop nothing else.
+# MAGIC - **New columns**: `customer_name`, `customer_country`, `risk_tier`, `merchant_name`, `category_code`, `merchant_country`, `merchant_risk_score`, `is_geo_mismatch`.
+# MAGIC - **`_rescued_data`**: not among Silver's columns in the grid (you dropped it in requirement 1). If you still see it, add the drop to your work cell and follow the README's recovery step: re-run `00_Setup_Environment.py`, then the notebooks in order. Re-running only the corrected streaming cell does nothing, because its checkpoint already marked the files as processed.
+# MAGIC - **`is_geo_mismatch`**: the printed geo-mismatch count is about 2,500 (1 payment in 20): the customer's registered country differs from the IP country, usually travel, VPNs or cross-border online shopping. On its own that is a weak signal, which is why Notebook 03 combines it with other rules.
+# MAGIC - **Null handling**: the printed `'Unknown Merchant'` count is about 500 (about 1% of rows): payments at merchants `5000`-`5009`, onboarded after the export you joined against (Exercise 3 inserted them into the Silver merchants table, but this join read the export). `"Unknown Customer"` should not appear here, because every customer id in this data exists in the dimension; the left join is what protects you on the day one doesn't.
+# MAGIC - **`currency`**: the printed list is `['USD']`. The gateway settles in USD, and the lowercase `usd` some integrations send is now standardized.
 # MAGIC
-# MAGIC **What this means**: Your Silver layer now has business-ready, enriched transactions. Every row carries the context needed for fraud detection  -  who the customer is, who the merchant is, and whether the geography looks suspicious. This is the dataset the rules engine in Notebook 03 will score.
+# MAGIC **What this means**: Your Silver layer now has business-ready, enriched transactions. Every row carries the context needed for fraud detection: who the customer is, who the merchant is, and whether the geography looks suspicious. This is the dataset the rules engine in Notebook 03 will score.
 
 # COMMAND ----------
 
 # 🔍 Verification query
 silver_result = spark.read.table(TABLE_SILVER_TRANSACTIONS)
 print(f"✅ {TABLE_SILVER_TRANSACTIONS}: {silver_result.count()} rows")
+print(f"'Unknown Merchant' rows: {silver_result.filter(F.col('merchant_name') == 'Unknown Merchant').count()}")
+print(f"Geo-mismatch rows: {silver_result.filter('is_geo_mismatch').count()}")
+print(f"Currencies: {sorted(r.currency for r in silver_result.select('currency').distinct().collect())}")
 display(silver_result.limit(10))
 
 # COMMAND ----------
@@ -299,13 +326,13 @@ display(silver_result.limit(10))
 # MAGIC ## Summary and Checkpoint
 # MAGIC ### 🎯 Key Concepts Covered
 # MAGIC - **Stream-Static Joins**: Efficiently adding customer and merchant data to a live stream.
-# MAGIC - **Null Handling**: Routing unknown merchants to a review category instead of dropping data.
-# MAGIC - **MERGE INTO**: Upserting dimension updates without full table rewrites.
+# MAGIC - **Null Handling**: Keeping payments at not-yet-known merchants, labeled "Unknown Merchant", instead of letting the join drop them.
+# MAGIC - **MERGE INTO**: Applying dimension inserts and updates in one atomic transaction.
 # MAGIC
 # MAGIC ### ✅ Exam Checklist
 # MAGIC Can you:
 # MAGIC - [ ] Explain why a LEFT join is safer than an INNER join for merchant enrichment?
-# MAGIC - [ ] Predict what happens if you add a new merchant to the source volume while the stream is running?
+# MAGIC - [ ] Predict what the next micro-batch sees if a merchant's risk score changes in a static Delta dimension table?
 # MAGIC - [ ] Identify the benefits of `MERGE` over `OVERWRITE` for large dimension tables?
 # MAGIC
 # MAGIC ### 📚 Next Steps

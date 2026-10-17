@@ -2,7 +2,9 @@
 # MAGIC %md
 # MAGIC # 01: Ingest Transaction Stream  -  "From Raw Events to Bronze"
 # MAGIC **Exam Coverage**: DE Associate (Auto Loader) + DE Professional (Streaming, Watermarks)
-# MAGIC **Duration**: 40 minutes
+# MAGIC
+# MAGIC **Duration**: 75 minutes
+# MAGIC
 # MAGIC ---
 # MAGIC ## Learning Objectives
 # MAGIC By the end of this notebook, you will be able to:
@@ -19,8 +21,8 @@
 # MAGIC
 # MAGIC ### Key Concepts
 # MAGIC - **Auto Loader**: Efficiently ingests new files as they arrive in cloud storage.
-# MAGIC - **Rescued Data Column**: Captures records that don't match the schema (e.g., malformed JSON, type mismatches) so they aren't lost.
-# MAGIC - **Schema Inference**: Automatically detects the structure of your JSON data.
+# MAGIC - **Rescued Data Column**: Keeps values that do not fit your schema (a type mismatch, a field the schema does not have, a column-name case mismatch) as a JSON blob in `_rescued_data`, instead of losing them as silent NULLs.
+# MAGIC - **Explicit schema**: You hand Auto Loader the schema from the data contract instead of letting it infer one, so a gateway that starts sending `amount` as text cannot silently change your column type. With a provided schema Auto Loader does not evolve it (new columns are ignored) and adds no rescued data column unless you ask for one, which is why Exercise 1 sets it explicitly.
 
 # COMMAND ----------
 
@@ -44,13 +46,11 @@ from pyspark.sql.types import *
 # MAGIC **Your task**: Set up a streaming DataFrame to read JSON files from the transactions volume using Auto Loader.
 # MAGIC
 # MAGIC **Requirements:**
-# MAGIC - Define the transaction schema using `StructType`. Refer to **`data_contract.md`** in the project root for field names and types.
-# MAGIC - Use the `cloudFiles` format with `json` as the source format.
-# MAGIC - Provide the schema to the reader.
-# MAGIC - Enable the rescued data column to capture malformed records (name it `_rescued_data`).
-# MAGIC - Define the schema location for Auto Loader in the `_system` volume (use `CHECKPOINT_PATH + "/schema_bronze"`).
+# MAGIC - Define the transaction schema as a `StructType` with the field names and types of the Bronze `transactions` table in **`data_contract.md`** (project root).
+# MAGIC - Use the `cloudFiles` format with `json` as the source format, passing your schema and an Auto Loader schema location.
+# MAGIC - Enable the rescued data column (name it `_rescued_data`) so values that do not match the schema are kept instead of silently nulled.
 # MAGIC
-# MAGIC **Hint**: Make sure to use the `TRANSACTIONS_RAW_PATH` variable defined in `variables.py`.
+# MAGIC **Hint**: Read from `TRANSACTIONS_RAW_PATH` and put the schema location in the `_system` volume at `CHECKPOINT_PATH + "/schema_bronze"` (both defined in `variables.py`).
 
 # COMMAND ----------
 
@@ -90,16 +90,14 @@ from pyspark.sql.types import *
 #   .option("cloudFiles.format", "json")
 #   .schema(txn_schema)
 #   .option("cloudFiles.schemaLocation", CHECKPOINT_PATH + "/schema_bronze")
-#   .option("cloudFiles.rescuedDataColumn", "_rescued_data")
+#   .option("rescuedDataColumn", "_rescued_data")
 #   .load(TRANSACTIONS_RAW_PATH))
-#
-# # display(raw_txns_df, checkpointLocation=CHECKPOINT_PATH + "/display_raw_txns", outputMode="append")
 
 # COMMAND ----------
 
 # MAGIC %md
 # MAGIC ### 🔄 STEP: Generate New Data
-# MAGIC Run the cell below to simulate new payment files arriving in the source volume. This will trigger your streaming pipeline to process new records.
+# MAGIC Run the two cells below to land 2 more payment files (100 transactions) in the source volume. Nothing processes them yet: your Exercise 3 write picks them up together with the setup files, because Auto Loader records every file it has already ingested in its checkpoint and processes any file it has not seen yet.
 
 # COMMAND ----------
 
@@ -113,58 +111,26 @@ generate_batch(n_files=2, records_per_file=50)
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ---
-# MAGIC ### 🎯 EXERCISE 2: Inspect Rescued Data
-# MAGIC **Your task**: Query the `_rescued_data` column to see if any records were malformed during ingestion.
-# MAGIC
-# MAGIC **Requirements:**
-# MAGIC - Filter the `raw_txns_df` for records where `_rescued_data` is NOT null.
-# MAGIC - Display the count and the content of the rescued data.
-# MAGIC
-# MAGIC **Hint**: In a real production environment, you would monitor this count to detect upstream schema changes or integration bugs.
-
-# COMMAND ----------
-
-# ✏️ STUDENT EXERCISE
-
-# TODO: Filter for rescued records
-# rescued_df = raw_txns_df.filter("__________ IS NOT NULL")
-# display(rescued_df, checkpointLocation=CHECKPOINT_PATH + "/display_rescued", outputMode="append")
-
-# COMMAND ----------
-
-# MAGIC %md
-# MAGIC ---
-# MAGIC **Solution below** ⬇️
-
-# COMMAND ----------
-
-# ✅ SOLUTION: Inspect Rescued Data
-
-# rescued_df = raw_txns_df.filter("_rescued_data IS NOT NULL")
-# # display(rescued_df, checkpointLocation=CHECKPOINT_PATH + "/display_rescued", outputMode="append")
-
-# COMMAND ----------
-
-# MAGIC %md
 # MAGIC ## Section 2: Technical Deduplication
-# MAGIC In Fintech, "at-least-once" delivery from payment gateways often results in duplicate records (retries). These are technical duplicates (same `txn_id`) and should be handled at the Bronze layer before business logic is applied.
+# MAGIC In fintech, "at-least-once" delivery from payment gateways often results in duplicate records (retries). These are technical duplicates (same `txn_id`) and should be handled at the Bronze layer before business logic is applied.
 # MAGIC
 # MAGIC ### Key Concepts
 # MAGIC - **Watermarks**: A threshold that tells Spark how long to wait for late-arriving data.
 # MAGIC - **Deduplication within Watermark**: Removes duplicates based on specific columns within a time window.
+# MAGIC - **Why not plain `dropDuplicates`**: on a stream it remembers every `txn_id` it has ever seen. At 500K payments a day that state grows until the job runs out of memory. With a watermark, Spark drops a `txn_id` from state once the watermark passes it, so state holds only a few minutes of traffic.
 
 # COMMAND ----------
 
 # MAGIC %md
 # MAGIC ---
-# MAGIC ### 🎯 EXERCISE 3: Deduplicate Payment Retries
-# MAGIC **Your task**: Use a watermark and `dropDuplicatesWithinWatermark` to ensure each `txn_id` is only processed once.
+# MAGIC ### 🎯 EXERCISE 2: Deduplicate Payment Retries
+# MAGIC **Your task**: Make sure each `txn_id` reaches Bronze only once, using a watermark and Spark's watermark-aware streaming deduplication.
 # MAGIC
 # MAGIC **Requirements:**
 # MAGIC - Add a watermark of 5 minutes on the `timestamp` column.
-# MAGIC - Remove duplicates based on the transaction ID (`txn_id`) within that watermark.
-# MAGIC - This ensures that if the same transaction arrives twice within 5 minutes, only the first one is kept.
+# MAGIC - Remove duplicates on the transaction ID (`txn_id`) alone, within that watermark: two copies of a `txn_id` whose `timestamp` values are less than 5 minutes apart are kept once (the first copy Spark processes).
+# MAGIC
+# MAGIC **Why `txn_id` alone, and why 5 minutes**: the gateway stamps each retry about a minute after the original, so `timestamp` cannot be part of the dedup key. A 5-minute watermark covers every retry and lets Spark forget a `txn_id` soon after.
 # MAGIC
 # MAGIC **Hint**: Use the streaming deduplication function that works with watermarks.
 
@@ -174,8 +140,7 @@ generate_batch(n_files=2, records_per_file=50)
 
 # TODO: Deduplicate the stream
 # deduped_txns_df = (raw_txns_df
-#   .withWatermark(...)
-#   .dropDuplicatesWithinWatermark(...))
+#   ...)
 
 # COMMAND ----------
 
@@ -195,17 +160,15 @@ generate_batch(n_files=2, records_per_file=50)
 
 # MAGIC %md
 # MAGIC ---
-# MAGIC ### 🎯 EXERCISE 4: Write Bronze Transaction Table
+# MAGIC ### 🎯 EXERCISE 3: Write Bronze Transaction Table
 # MAGIC **Your task**: Write the deduplicated stream to a Bronze Delta table.
 # MAGIC
 # MAGIC **Requirements:**
 # MAGIC - Add a column `_ingestion_timestamp` for the current ingestion time.
-# MAGIC - Write to the Delta table defined in `TABLE_BRONZE_TRANSACTIONS`.
-# MAGIC - Use "append" output mode.
-# MAGIC - Define a checkpoint location in the `_system` volume (use `CHECKPOINT_PATH + "/bronze_txns"`).
-# MAGIC - Use a trigger to process all available data in one batch (`availableNow=True`).
+# MAGIC - Append to the Delta table defined in `TABLE_BRONZE_TRANSACTIONS`, with the checkpoint in the `_system` volume at `CHECKPOINT_PATH + "/bronze_txns"`.
+# MAGIC - Use a trigger that processes all available data and then stops (`availableNow=True`).
 # MAGIC
-# MAGIC **Hint**: Trigger `availableNow=True` is the senior way to process all available data and then stop.
+# MAGIC **Hint**: A streaming write starts in the background and the cell returns at once. Block until the query has finished (the query handle you get back has a method for that) before you run the verification cell. Otherwise it can read a table that does not exist yet or is only half written. Notebooks 02 and 03 reuse this pattern.
 
 # COMMAND ----------
 
@@ -243,12 +206,12 @@ generate_batch(n_files=2, records_per_file=50)
 # MAGIC %md
 # MAGIC ### 🔍 Verify Your Results
 # MAGIC Run the cell below to inspect your output. You should see:
-# MAGIC - **Row count**: ~200+ rows (depends on how many batches you generated  -  each `generate_batch` call adds ~100 transactions).
+# MAGIC - **Row count**: 50,155 rows if you ran each cell once: 50,000 transactions from the 5 setup batches, 41 transactions from 6 suspicious customers (`9990`-`9995`) that setup also landed, 100 from this notebook's `generate_batch` call, and 14 records with values that did not match the schema (2 per generated file). The 1,002 gateway retries (2% of each batch, same `txn_id` one minute later) are gone: that is your deduplication at work.
 # MAGIC - **Key columns**: `txn_id`, `customer_id`, `merchant_id`, `amount`, `currency`, `timestamp`, `_rescued_data`, `_ingestion_timestamp`.
-# MAGIC - **`_rescued_data`**: Most rows should show `null` here  -  meaning they parsed cleanly. Any non-null values indicate records with unexpected fields.
+# MAGIC - **`_rescued_data`**: Almost every row shows `null` here  -  meaning it parsed cleanly. Non-null values are records with a type mismatch or an unexpected field; Exercise 4 inspects them.
 # MAGIC - **`_ingestion_timestamp`**: Every row should have a timestamp from when YOU ran the pipeline  -  this is your lineage metadata for auditing.
 # MAGIC
-# MAGIC **What this means**: Your Bronze layer is now a faithful, append-only record of every payment event  -  including retries that were deduplicated and malformed records that were captured (not dropped). This is the foundation every downstream layer depends on.
+# MAGIC **What this means**: Your Bronze layer is now an append-only record of the payment events, each exactly once (the dedup dropped the gateway retries), with values that did not match the schema rescued instead of lost. The watermark has a cost: the dedup may drop a payment whose `timestamp` is more than 5 minutes behind the latest one it has seen, so in production you size the watermark to the gateway's real delivery delay, not just to the retry gap.
 
 # COMMAND ----------
 
@@ -260,9 +223,55 @@ display(bronze_result.limit(10))
 # COMMAND ----------
 
 # MAGIC %md
+# MAGIC ---
+# MAGIC ### 🎯 EXERCISE 4: Inspect Rescued Data
+# MAGIC **Your task**: Now that Bronze is written, query it to see which records did not match the schema during ingestion.
+# MAGIC
+# MAGIC **Requirements:**
+# MAGIC - Read `TABLE_BRONZE_TRANSACTIONS` as a batch (static) DataFrame and keep only the rows where `_rescued_data` is NOT null.
+# MAGIC - Print the count of rescued rows and display them.
+# MAGIC
+# MAGIC **🔍 What you should see**: 14 rescued rows, 2 from every generated file (5 setup batches + 2 files from this notebook). Their `txn_id` starts with `MALF_`:
+# MAGIC - `..._1` (customer `9998`) sent `amount` as the text `"one hundred"`. The contract says double, so `amount` is `null` and the original value sits in `_rescued_data`.
+# MAGIC - `..._2` (customer `9999`) sent a field the contract does not have (`unexpected_nested`). The rest of the row parsed normally; the extra field sits in `_rescued_data`.
+# MAGIC - A line that is not valid JSON at all would not appear here: rescue keeps values from records the parser could read. Truly corrupt lines need a separate mechanism (a corrupt-record column or `badRecordsPath`).
+# MAGIC
+# MAGIC **Why a batch query**: a streaming display never finishes on its own. Bronze already holds every rescued record, so a batch read gives you the count and the rows in seconds.
+# MAGIC
+# MAGIC **In production**: monitor this count; a jump means an upstream schema change or an integration bug.
+
+# COMMAND ----------
+
+# ✏️ STUDENT EXERCISE
+
+# TODO: Read Bronze as a batch DataFrame and keep only the rescued records
+# rescued_df = ...
+
+# TODO: Print the count and display the rescued rows
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ---
+# MAGIC **Solution below** ⬇️
+
+# COMMAND ----------
+
+# ✅ SOLUTION: Inspect Rescued Data
+
+# rescued_df = (spark.read
+#   .table(TABLE_BRONZE_TRANSACTIONS)
+#   .filter("_rescued_data IS NOT NULL"))
+#
+# print(f"Rescued records in Bronze: {rescued_df.count()}")
+# display(rescued_df.select("txn_id", "customer_id", "amount", "timestamp", "_rescued_data"))
+
+# COMMAND ----------
+
+# MAGIC %md
 # MAGIC ## Summary and Checkpoint
 # MAGIC ### 🎯 Key Concepts Covered
-# MAGIC - **Auto Loader** with schema inference and rescued data columns.
+# MAGIC - **Auto Loader** with an explicit schema and an opt-in rescued data column.
 # MAGIC - **Watermarked Deduplication** to handle "at-least-once" delivery retries.
 # MAGIC - **Streaming to Delta** with metadata and checkpoints.
 # MAGIC

@@ -1,10 +1,10 @@
 # Databricks notebook source
 # MAGIC %md
-# MAGIC # Notebook 06: Production Workflows & Jobs
+# MAGIC # Notebook 05: Production Workflows & Jobs
 # MAGIC
-# MAGIC **Exam Coverage**: Section 4 (Production Pipelines)
+# MAGIC **Exam Coverage**: Section 4 (Productionizing Data Pipelines)
 # MAGIC
-# MAGIC **Duration**: 45-60 minutes
+# MAGIC **Duration**: about 45 minutes
 # MAGIC
 # MAGIC ---
 # MAGIC ## Learning Objectives
@@ -12,7 +12,7 @@
 # MAGIC - Create and configure Databricks Jobs through the UI
 # MAGIC - Implement multi-task workflows with dependencies
 # MAGIC - Configure job parameters using widgets
-# MAGIC - Implement error handling with try/except and dbutils.notebook.exit
+# MAGIC - Fail a task on error and pass values between tasks with task values
 # MAGIC - Monitor and troubleshoot job execution
 # MAGIC - Understand Free Edition job limitations
 # MAGIC ---
@@ -28,7 +28,7 @@
 # MAGIC |-----------|---------|--------|
 # MAGIC | **Task** | Unit of work | Notebook, Python script, JAR |
 # MAGIC | **Dependency** | Execution order | Task B runs after Task A |
-# MAGIC | **Cluster** | Compute resources | Job cluster, all-purpose cluster |
+# MAGIC | **Compute** | Where tasks run | Serverless jobs compute (classic: job cluster) |
 # MAGIC | **Schedule** | When to run | Manual, cron, triggered |
 # MAGIC | **Parameters** | Runtime config | Environment, date, mode |
 # MAGIC ### Job Types
@@ -38,12 +38,11 @@
 # MAGIC 4. **Scheduled Job**: Cron-based scheduling
 # MAGIC ### ⚠️ Free Edition Limitations
 # MAGIC **Important restrictions:**
-# MAGIC - ❌ Maximum **5 tasks** per workflow
-# MAGIC - ❌ No job clusters (must use all-purpose clusters)
-# MAGIC - ❌ No advanced scheduling
-# MAGIC - ❌ Limited concurrency (single-node)
+# MAGIC - Serverless compute only: no job clusters and no all-purpose clusters (jobs run on serverless jobs compute)
+# MAGIC - At most 5 job tasks running at the same time across the account
+# MAGIC - No custom compute configuration; a daily compute quota
 # MAGIC
-# MAGIC **For production**: Full Databricks workspace recommended.
+# MAGIC **For production**: a paid Databricks workspace lifts these limits.
 
 # COMMAND ----------
 
@@ -75,8 +74,7 @@
 
 # COMMAND ----------
 
-# Import shared variables
-%run ./variables
+# MAGIC %run ./variables
 
 # COMMAND ----------
 
@@ -85,22 +83,13 @@
 # MAGIC ### 🎯 EXERCISE 1: Create Job Parameter Widgets
 # MAGIC **Your task**: Create widgets for job parameterization.
 # MAGIC
-# MAGIC **Requirements:**
-# MAGIC Create 4 widgets:
-# MAGIC 1. **environment** (text)
-# MAGIC - Default: "dev"
-# MAGIC - Label: "Environment (dev/staging/prod)"
-# MAGIC 2. **pipeline_mode** (dropdown)
-# MAGIC - Options: ["full", "incremental"]
-# MAGIC - Default: "incremental"
-# MAGIC - Label: "Pipeline Mode"
-# MAGIC 3. **date** (text)
-# MAGIC - Default: "" (empty)
-# MAGIC - Label: "Processing Date (YYYY-MM-DD, blank=today)"
-# MAGIC 4. **enable_quality_checks** (dropdown)
-# MAGIC - Options: ["true", "false"]
-# MAGIC - Default: "true"
-# MAGIC - Label: "Enable Quality Checks"
+# MAGIC **Why**: one notebook serves dev and prod; the job passes `environment=prod` instead of someone editing a hardcoded name. Change the dropdown to `full` and re-run the cells below to see the branch switch.
+# MAGIC
+# MAGIC **Requirements** (create 4 widgets):
+# MAGIC 1. **environment**: text, default "dev", label "Environment (dev/staging/prod)"
+# MAGIC 2. **pipeline_mode**: dropdown, options ["full", "incremental"], default "incremental", label "Pipeline Mode"
+# MAGIC 3. **date**: text, default "" (empty), label "Processing Date (YYYY-MM-DD, blank=today)"
+# MAGIC 4. **enable_quality_checks**: dropdown, options ["true", "false"], default "true", label "Enable Quality Checks"
 # MAGIC
 # MAGIC **Functions:**
 # MAGIC ```python
@@ -110,6 +99,7 @@
 
 # COMMAND ----------
 
+# ✏️ STUDENT EXERCISE
 # TODO: Create job parameter widgets
 
 # 1. Environment widget (text)
@@ -124,7 +114,7 @@ dbutils.widgets.text(  # TODO
 # 4. Quality checks widget (dropdown)
 dbutils.widgets.dropdown(  # TODO
 
-print("✓ Widgets created")
+print("✅ Widgets created")
 
 # COMMAND ----------
 
@@ -148,7 +138,7 @@ print("✓ Widgets created")
 # MAGIC %md
 # MAGIC ---
 # MAGIC ### Reading Widget Values
-# MAGIC Now let's read and use the widget values.
+# MAGIC The cell below reads the four widgets.
 
 # COMMAND ----------
 
@@ -170,20 +160,25 @@ print(f"Quality Checks: {enable_quality_checks}")
 
 # COMMAND ----------
 
+# 🔍 The parameter changes what the notebook does: switch pipeline_mode and re-run this cell
+if pipeline_mode == "full":
+    print("FULL mode: would drop the Bronze checkpoints and reprocess every landed file")
+else:
+    print(f"INCREMENTAL mode: only files newer than the checkpoint, for {processing_date}")
+
+# COMMAND ----------
+
 # MAGIC %md
 # MAGIC ## Section 3: Task Execution Pattern
 # MAGIC Each task in a multi-task job is typically a separate notebook.
 # MAGIC ### Common Task Pattern
 # MAGIC ```python
 # MAGIC try:
-# MAGIC # Task logic
-# MAGIC result = execute_task()
-# MAGIC # Success
-# MAGIC dbutils.notebook.exit("SUCCESS")
+# MAGIC     result = execute_task()
+# MAGIC     dbutils.jobs.taskValues.set(key="records_processed", value=result)
 # MAGIC except Exception as e:
-# MAGIC # Failure
-# MAGIC error_msg = str(e)
-# MAGIC dbutils.notebook.exit(f"FAILED: {error_msg}")
+# MAGIC     print(f"Task failed: {e}")
+# MAGIC     raise  # re-raise so the job marks the task Failed and stops downstream tasks
 # MAGIC ```
 # MAGIC ### Task 1: Data Validation
 # MAGIC Validates source data availability before processing.
@@ -200,9 +195,9 @@ try:
     products_exists = len(dbutils.fs.ls(PRODUCTS_LANDING_PATH)) > 0
     sales_exists = len(dbutils.fs.ls(SALES_LANDING_PATH)) > 0
     
-    print(f"✓ Customers data: {'Found' if customers_exists else 'Missing'}")
-    print(f"✓ Products data: {'Found' if products_exists else 'Missing'}")
-    print(f"✓ Sales data: {'Found' if sales_exists else 'Missing'}")
+    print(f"{'✅' if customers_exists else '❌'} Customers data: {'Found' if customers_exists else 'Missing'}")
+    print(f"{'✅' if products_exists else '❌'} Products data: {'Found' if products_exists else 'Missing'}")
+    print(f"{'✅' if sales_exists else '❌'} Sales data: {'Found' if sales_exists else 'Missing'}")
     
     if not (customers_exists and products_exists and sales_exists):
         raise Exception("Missing required source data")
@@ -213,17 +208,20 @@ try:
         PRODUCTS_BRONZE_TABLE,
         SALES_BRONZE_TABLE
     ]
-    
+
+    missing_tables = [t for t in tables_to_check if not spark.catalog.tableExists(t)]
     for table in tables_to_check:
-        table_exists = spark.catalog.tableExists(table)
-        print(f"✓ Table {table}: {'Exists' if table_exists else 'Missing'}")
-    
+        print(f"{'❌' if table in missing_tables else '✅'} Table {table}: {'Missing' if table in missing_tables else 'Exists'}")
+
+    if missing_tables:
+        raise Exception(f"Missing Bronze tables: {missing_tables}")
+
     print("\n✅ Data validation passed")
     validation_result = "SUCCESS"
-    
+
 except Exception as e:
-    print(f"\n✗ Data validation failed: {str(e)}")
-    validation_result = f"FAILED: {str(e)}"
+    print(f"\n❌ Data validation failed: {str(e)}")
+    raise  # re-raise: in a job this marks the task Failed, so Silver never runs on missing data
 
 print(f"\nValidation Result: {validation_result}")
 
@@ -231,104 +229,41 @@ print(f"\nValidation Result: {validation_result}")
 
 # MAGIC %md
 # MAGIC ## Section 4: Error Handling Patterns
-# MAGIC Production jobs need robust error handling.
 # MAGIC ### Key Patterns
-# MAGIC 1. **Try-Except Blocks**: Catch and handle errors
-# MAGIC 2. **dbutils.notebook.exit()**: Pass results to orchestrator
+# MAGIC 1. **Try-Except Blocks**: Catch, log, then re-raise
+# MAGIC 2. **Task values**: Pass results to downstream tasks (`dbutils.jobs.taskValues`)
 # MAGIC 3. **Retry Logic**: Automatic retry for transient failures
 # MAGIC 4. **Alerting**: Notify on failures
 # MAGIC ### dbutils.notebook.exit() Usage
+# MAGIC `dbutils.notebook.exit(value)` ends a notebook successfully and returns a string to a caller that used `dbutils.notebook.run`. It never fails the task.
 # MAGIC ```python
-# MAGIC # Success
-# MAGIC dbutils.notebook.exit("SUCCESS")
-# MAGIC # Failure with details
-# MAGIC dbutils.notebook.exit(json.dumps({
-# MAGIC "status": "FAILED",
-# MAGIC "error": "Connection timeout",
-# MAGIC "records_processed": 1000
-# MAGIC }))
+# MAGIC dbutils.notebook.exit(json.dumps({"status": "SUCCESS", "records_processed": 1000}))
 # MAGIC ```
-# MAGIC **Important**: Return value accessible by downstream tasks.
+# MAGIC **Important**: downstream job tasks read values set with `dbutils.jobs.taskValues.set()`, via `{{tasks.<task_name>.values.<key>}}` in their parameters. To fail a task, raise an exception.
 
 # COMMAND ----------
 
 # MAGIC %md
 # MAGIC ---
 # MAGIC ### 🎯 EXERCISE 2: Implement Retry Logic
-# MAGIC **Your task**: Create a function that retries failed tasks.
-# MAGIC **Requirements:**
-# MAGIC Function signature:
-# MAGIC ```python
-# MAGIC def execute_task_with_retry(task_name, task_function, max_retries=3)
-# MAGIC ```
-# MAGIC **Logic:**
-# MAGIC 1. Loop up to `max_retries` attempts
-# MAGIC 2. Try to execute `task_function()`
-# MAGIC 3. On success:
-# MAGIC - Return dict with: `{"status": "SUCCESS", "task": task_name, "attempt": N, "timestamp": ..., "result": ...}`
-# MAGIC 4. On exception:
-# MAGIC - If retries remaining: print error, retry
-# MAGIC - If max retries reached: return `{"status": "FAILED", "task": task_name, "error": ...}`
+# MAGIC **Your task**: Write a function that retries a failing call, from an empty cell.
 # MAGIC
-# MAGIC **Hint**: Use a while loop and track attempt count.
+# MAGIC In a job, set retries on the task itself (task settings > Retries). That is the default for transient failures. A Python retry loop like this one is for retrying one call (an API, a flaky read) inside a task, when the task should not restart from the top.
+# MAGIC
+# MAGIC **Requirements:**
+# MAGIC 1. `execute_task_with_retry(task_name, task_function, max_retries=3)` calls `task_function` up to `max_retries` times, printing each attempt, each error and each retry
+# MAGIC 2. On success, return `{"status": "SUCCESS", "task": task_name, "attempt": N, "timestamp": ..., "result": ...}`
+# MAGIC 3. When the last attempt fails, return `{"status": "FAILED", "task": task_name, "attempt": N, "timestamp": ..., "error": ...}`
+# MAGIC
+# MAGIC **Hint**: Use a while loop and track the attempt count.
+# MAGIC
+# MAGIC **You should see** (in the test cell after the solution) attempts 1 and 2 fail and attempt 3 return `SUCCESS` with `"attempt": 3`, then a second run with `max_retries=2` that fails both attempts and returns `"status": "FAILED"` with `"attempt": 2`.
 
 # COMMAND ----------
 
-# TODO: Implement retry logic function
-
-import json
-from datetime import datetime
-
-def execute_task_with_retry(task_name, task_function, max_retries=3):
-    """
-    Execute a task with automatic retry logic.
-    
-    Args:
-        task_name: Name of the task
-        task_function: Function to execute
-        max_retries: Maximum retry attempts
-    
-    Returns:
-        dict: Task execution result
-    """
-    attempt = 0
-    
-    while attempt < max_retries:
-        try:
-            # TODO: Print attempt info
-            
-            # TODO: Execute task function
-            
-            # TODO: Return success dict
-            
-            
-            
-            
-            
-        except Exception as e:
-            # TODO: Increment attempt
-            
-            # TODO: Print error
-            
-            # TODO: Check if max retries reached
-            
-                # TODO: Return failure dict
-                
-                
-                
-                
-                
-            # TODO: Print retry message
-            
-
-# Test the function
-def sample_task():
-    print("  Executing task logic...")
-    return {"records_processed": 1000}
-
-result = execute_task_with_retry("sample_task", sample_task, max_retries=3)
-print(f"\nTask Result:")
-print(json.dumps(result, indent=2))
+# ✏️ STUDENT EXERCISE
+# TODO: Write execute_task_with_retry(task_name, task_function, max_retries=3) from scratch
+# (the requirements are in the cell above; the test is in the cell after the solution)
 
 # COMMAND ----------
 
@@ -379,23 +314,38 @@ print(json.dumps(result, indent=2))
             
 #             print(f"[{task_name}] Retrying...")
 
-# # Test
-# def sample_task():
-#     print("  Executing task logic...")
-#     return {"records_processed": 1000}
+# COMMAND ----------
 
-# result = execute_task_with_retry("sample_task", sample_task, max_retries=3)
-# print(f"\n✅ Task Result:")
-# print(json.dumps(result, indent=2))
+# 🔍 Verify: a task that fails twice with a transient error, then succeeds
+import json
+
+calls = [0]
+
+def sample_task():
+    calls[0] += 1
+    if calls[0] < 3:
+        raise ConnectionError(f"transient failure {calls[0]}")
+    return {"records_processed": 1000}
+
+result = execute_task_with_retry("sample_task", sample_task, max_retries=3)
+print(f"\nTask Result:")
+print(json.dumps(result, indent=2))
+
+# Second run: only 2 attempts allowed and the task fails both, so the function returns the FAILED result
+calls[0] = 0
+result = execute_task_with_retry("always_fails", sample_task, max_retries=2)
+print(json.dumps(result, indent=2))
 
 # COMMAND ----------
 
 # MAGIC %md
 # MAGIC ## Section 5: Creating Multi-Task Jobs in the UI
 # MAGIC ### 🚀 Step-by-Step Job Creation
-# MAGIC **1. Navigate to Workflows**
-# MAGIC - Click **Jobs & Pipelines ** in left sidebar
-# MAGIC - Click **Job** in the top right corner
+# MAGIC **Prerequisite**: finish every exercise in notebooks 02-04 (or uncomment their solutions). A TODO stub left in place is a syntax error and fails the task.
+# MAGIC
+# MAGIC **1. Open Jobs & Pipelines**
+# MAGIC - Click **Jobs & Pipelines** in the left sidebar
+# MAGIC - Click **Create** > **Job**
 # MAGIC
 # MAGIC **2. Configure Job Settings**
 # MAGIC | Setting | Value |
@@ -403,67 +353,58 @@ print(json.dumps(result, indent=2))
 # MAGIC | **Job Name** | `cert_prep_pipeline` |
 # MAGIC | **Description** | Medallion architecture ETL pipeline |
 # MAGIC
-# MAGIC **3. Add Tasks (Up to 5 for Free Edition)**
+# MAGIC **3. Add Tasks** (click the **Notebook** tile, enter the task name, select the notebook in the **Path** field)
 # MAGIC
 # MAGIC **Task 1: Bronze Ingestion**
 # MAGIC - Task Name: `bronze_ingestion`
 # MAGIC - Type: Notebook
-# MAGIC - **Source**: `02_Auto_Loader_Incremental_Ingestion`
-# MAGIC - Cluster: Serverless
-# MAGIC - Parameters: `pipeline_mode: incremental`
+# MAGIC - **Path**: `02_Auto_Loader_Incremental_Ingestion` (Source: Workspace)
+# MAGIC - Compute: Serverless
 # MAGIC
 # MAGIC **Task 2: Silver Transformation**
 # MAGIC - Task Name: `silver_transformation`
 # MAGIC - Type: Notebook
-# MAGIC - **Source**: `03_Bronze_to_Silver`
+# MAGIC - **Path**: `03_Bronze_to_Silver` (Source: Workspace)
 # MAGIC - **Depends On**: `bronze_ingestion`
-# MAGIC - Cluster: Serverless
-# MAGIC - Parameters: `enable_quality_checks: true`
+# MAGIC - Compute: Serverless
 # MAGIC
 # MAGIC **Task 3: Gold Aggregation**
 # MAGIC - Task Name: `gold_aggregation`
 # MAGIC - Type: Notebook
-# MAGIC - **Source**: `04_Silver_to_Gold_Advanced`
+# MAGIC - **Path**: `04_Silver_to_Gold_Advanced` (Source: Workspace)
 # MAGIC - **Depends On**: `silver_transformation`
-# MAGIC - Cluster: Serverless
+# MAGIC - Compute: Serverless
+# MAGIC
+# MAGIC Job parameters reach a notebook's widgets by name (this notebook reads `pipeline_mode`). Notebooks 02-04 define no widgets, so this job passes no parameters.
 # MAGIC
 # MAGIC **4. Configure Schedule (Optional)**
-# MAGIC - **Trigger Type**: Cron
-# MAGIC - **Cron Expression**: `0 2 * * *` (daily at 2 AM)
-# MAGIC - **Timezone**: Your timezone
+# MAGIC - Click **Add trigger** > **Scheduled**, choose **Advanced**, every day at 02:00, your timezone
+# MAGIC - Or tick **Show Cron Syntax**: `0 0 2 * * ?` (Quartz cron: seconds come first, and `?` fills the day-of-week field)
 # MAGIC
-# MAGIC Don't forget to stop the job later on if you decide to schedule it
+# MAGIC In this lab the only file that lands between runs is the 500-order practice file notebook 02 writes each time it runs: Bronze grows by 500 rows, and Silver drops them as orders it already has. In production the source systems drop new files every day.
 # MAGIC
-# MAGIC **5. Configure Alerts (Optional)**
-# MAGIC - On Failure: Email notification
-# MAGIC - On Success: Optional
+# MAGIC If you add the schedule, pause it when you finish the lab, or it runs every day.
 # MAGIC
-# MAGIC **6. Save and Run**
-# MAGIC - Click **Create**
-# MAGIC - Click **Run now** to test
+# MAGIC **5. Save and Run**
+# MAGIC - Click **Save task** after each task, then **Run now**
+# MAGIC
+# MAGIC **What you should see**: 3 green tasks in sequence in the run view. Then run `DESCRIBE HISTORY cert_prep_catalog.03_gold.daily_sales_summary` in a SQL cell yourself: the job's overwrite (and any OPTIMIZE or VACUUM entry notebook 04 committed after it) has the job's details in the `job` column, where the versions from your interactive runs show `null`.
 # MAGIC ### Task Dependencies Visualization
 # MAGIC ```
-# MAGIC validate_data
-# MAGIC ↓
 # MAGIC bronze_ingestion
 # MAGIC ↓
 # MAGIC silver_transformation
 # MAGIC ↓
 # MAGIC gold_aggregation
-# MAGIC ↓
-# MAGIC summary_report
 # MAGIC ```
 # MAGIC ### ⚠️ Free Edition Constraints
-# MAGIC - ✅ Maximum **5 tasks** (we use exactly 5)
-# MAGIC - ❌ No job clusters (use all-purpose)
-# MAGIC - ❌ No email alerts (basic only)
-# MAGIC - ❌ Simple cron scheduling only
+# MAGIC - ✅ Serverless compute for every task
+# MAGIC - ✅ At most 5 tasks running concurrently: this 3-task chain runs one task at a time
 
 # COMMAND ----------
 
 # MAGIC %md
 # MAGIC ## Section 6: Monitoring Jobs
-# MAGIC The Databricks Jobs UI provides comprehensive monitoring.
 # MAGIC ### 📊 Job Run Details
 # MAGIC For each run:
 # MAGIC | View | Information |
@@ -472,22 +413,18 @@ print(json.dumps(result, indent=2))
 # MAGIC | **Task Timeline** | Visual execution timeline |
 # MAGIC | **Task DAG** | Dependency graph |
 # MAGIC | **Logs** | stdout, stderr per task |
-# MAGIC | **Spark UI** | Detailed execution metrics |
+# MAGIC | **Query profile** | Per-statement metrics and plans: expand a task in the run's timeline view and click a statement (serverless has no Spark UI; classic compute shows the Spark UI instead) |
 # MAGIC | **Parameters** | Runtime parameters used |
-# MAGIC ### Accessing Job Context Programmatically
+# MAGIC ### Accessing job context with dynamic value references
 
 # COMMAND ----------
 
-# Example: Get current job context (only in job execution)
-
-try:
-    job_id = dbutils.notebook.entry_point.getDbutils().notebook().getContext().jobId().get()
-    run_id = dbutils.notebook.entry_point.getDbutils().notebook().getContext().currentRunId().get()
-    
-    print(f"Job ID: {job_id}")
-    print(f"Run ID: {run_id}")
-except:
-    print("ℹ️  Not running in job context (expected in interactive mode)")
+# Example: job context through task parameters (empty when you run the notebook interactively)
+dbutils.widgets.text("job_id", "")
+dbutils.widgets.text("run_id", "")
+# In the job task, set parameters job_id = {{job.id}} and run_id = {{job.run_id}}
+print(f"Job ID: {dbutils.widgets.get('job_id') or 'n/a (interactive)'}")
+print(f"Run ID: {dbutils.widgets.get('run_id') or 'n/a (interactive)'}")
 
 # COMMAND ----------
 
@@ -498,14 +435,11 @@ except:
 # MAGIC
 # MAGIC **Diagnosis:**
 # MAGIC 1. Check task logs for error messages
-# MAGIC 2. Review Spark UI for details
-# MAGIC 3. Verify cluster resources
-# MAGIC
+# MAGIC 2. Expand the failed task in the run's timeline view and open the query profile of the slow or failed statement (serverless has no Spark UI; on classic compute, use the Spark UI)
 # MAGIC
 # MAGIC **Solutions:**
-# MAGIC - Add try-except error handling
-# MAGIC - Implement retry logic
-# MAGIC - Increase cluster size
+# MAGIC - Read the error in the task output and fix the code or data it names
+# MAGIC - Set task retries (task settings > Retries) when the error is transient
 # MAGIC ### Issue 2: Task Timeout
 # MAGIC **Symptoms**: Task runs indefinitely
 # MAGIC
@@ -515,70 +449,61 @@ except:
 # MAGIC 3. Review for cartesian products
 # MAGIC
 # MAGIC **Solutions:**
-# MAGIC - Add timeout configurations
+# MAGIC - Set a timeout on the task (task settings > Timeout); if the run is slow rather than stuck, check that the job's **Performance optimized** setting is on (standard mode starts slower and uses less compute), or process less data per run
 # MAGIC - Use `trigger(availableNow=True)`
 # MAGIC - Optimize queries with filters
 # MAGIC ### Issue 3: Parameter Passing
 # MAGIC **Symptoms**: Widget values not received
 # MAGIC
 # MAGIC **Diagnosis:**
-# MAGIC 1. Verify widget names match parameters
-# MAGIC 2. Check for typos
+# MAGIC 1. Compare the job parameter names with the widget names the notebook reads: they must match exactly
 # MAGIC
 # MAGIC **Solutions:**
-# MAGIC - Use consistent naming
-# MAGIC - Add default values
-# MAGIC - Log parameters at task start
+# MAGIC - Give every widget a default value
+# MAGIC - Print the parameters at the start of the task
 # MAGIC ### Issue 4: Dependency Failures
-# MAGIC **Symptoms**: Downstream tasks fail
+# MAGIC **Symptoms**: Downstream tasks show **Upstream failed** and did not run
 # MAGIC
 # MAGIC **Diagnosis:**
-# MAGIC 1. Check task dependencies
-# MAGIC 2. Review upstream exit codes
+# MAGIC 1. Find the first failed task in the run's DAG: the tasks after it did not run and show **Upstream failed**
+# MAGIC 2. Read that task's error
 # MAGIC
 # MAGIC **Solutions:**
-# MAGIC - Configure conditional dependencies
-# MAGIC - Add data validation
-# MAGIC - Use "If" conditions on dependencies
+# MAGIC - Fix the upstream task first
+# MAGIC - Add data validation at the start of the downstream task
+# MAGIC - When a task must run whatever happens upstream (a cleanup or a notification), set that task's **Run if dependencies** to **All done**
 
 # COMMAND ----------
 
 # MAGIC %md
 # MAGIC ## Section 8: Job Best Practices
 # MAGIC ### 1️⃣ Idempotency
-# MAGIC Jobs should produce same result if run multiple times.
+# MAGIC A re-run must give the same result as the first run.
 # MAGIC - ✅ Use `INSERT OVERWRITE` for full refreshes
 # MAGIC - ✅ Use `MERGE` for incremental updates
-# MAGIC - ✅ Check for existing data
+# MAGIC - ✅ `CREATE TABLE IF NOT EXISTS` and checkpoints, so a re-run loads nothing twice
 # MAGIC ### 2️⃣ Parameterization
 # MAGIC Make jobs configurable.
 # MAGIC - ✅ Use widgets for runtime config
 # MAGIC - ✅ Avoid hardcoded values
 # MAGIC - ✅ Support multiple environments
 # MAGIC ### 3️⃣ Error Handling
-# MAGIC Implement comprehensive error handling.
-# MAGIC - ✅ Try-except blocks
-# MAGIC - ✅ Retry logic for transient failures
+# MAGIC Log, then re-raise: the task fails and downstream tasks stop.
+# MAGIC - ✅ Try-except blocks that re-raise
+# MAGIC - ✅ Task retries for transient failures
 # MAGIC - ✅ Log errors with context
-# MAGIC - ✅ Meaningful status codes
 # MAGIC ### 4️⃣ Monitoring
-# MAGIC Set up monitoring for production.
 # MAGIC - ✅ Configure failure alerts
 # MAGIC - ✅ Track SLA metrics
 # MAGIC - ✅ Monitor data quality
 # MAGIC - ✅ Job health dashboards
-# MAGIC ### 5️⃣ Resource Management
-# MAGIC Optimize cluster usage.
-# MAGIC - ✅ Use job clusters (when available)
-# MAGIC - ✅ Right-size for workload
-# MAGIC - ✅ Enable autoscaling
-# MAGIC - ✅ Use spot instances (non-critical)
+# MAGIC ### 5️⃣ Compute
+# MAGIC - ✅ Serverless for job tasks (Databricks' recommendation; autoscaling is automatic)
+# MAGIC - ✅ Standard performance mode for cost, performance-optimized when start time matters
+# MAGIC - ✅ Classic job clusters only for configs serverless does not support
 # MAGIC ### 6️⃣ Testing
-# MAGIC Test before production.
-# MAGIC - ✅ Test with sample data
-# MAGIC - ✅ Verify task dependencies
-# MAGIC - ✅ Test failure scenarios
-# MAGIC - ✅ Validate parameters
+# MAGIC - ✅ Run the job once on dev data before you schedule it
+# MAGIC - ✅ Make one task fail on purpose and check that the downstream tasks stop
 
 # COMMAND ----------
 
@@ -589,7 +514,7 @@ except:
 # MAGIC **1. Databricks Jobs**
 # MAGIC - Multi-task workflows
 # MAGIC - Task dependencies (DAG)
-# MAGIC - Job vs all-purpose clusters
+# MAGIC - Serverless jobs compute vs classic job and all-purpose clusters
 # MAGIC
 # MAGIC **2. Job Parameters**
 # MAGIC - Widget creation and usage
@@ -597,9 +522,9 @@ except:
 # MAGIC - Environment-specific config
 # MAGIC
 # MAGIC **3. Error Handling**
-# MAGIC - Try-except patterns
-# MAGIC - Retry logic
-# MAGIC - `dbutils.notebook.exit()` for task status
+# MAGIC - Try-except patterns that re-raise
+# MAGIC - Retry logic (task retries in the job, a loop for one flaky call)
+# MAGIC - Raise to fail a task; task values to pass results downstream
 # MAGIC
 # MAGIC **4. Job Configuration**
 # MAGIC - UI-based creation
@@ -612,30 +537,29 @@ except:
 # MAGIC - Debugging techniques
 # MAGIC
 # MAGIC **6. Free Edition Limits**
-# MAGIC - 5 task maximum
-# MAGIC - No job clusters
-# MAGIC - Limited scheduling
+# MAGIC - Serverless only
+# MAGIC - 5 concurrent job tasks per account
 # MAGIC
 # MAGIC ### ✅ Exam Checklist
 # MAGIC Can you:
 # MAGIC - [ ] Create widgets and read parameter values?
 # MAGIC - [ ] Configure multi-task jobs with dependencies?
 # MAGIC - [ ] Implement error handling with try-except?
-# MAGIC - [ ] Use `dbutils.notebook.exit()` for task status?
-# MAGIC - [ ] Explain job cluster vs all-purpose cluster?
+# MAGIC - [ ] Fail a task by raising, and pass values with task values?
+# MAGIC - [ ] Explain when a job needs classic compute instead of serverless?
 # MAGIC - [ ] Configure job scheduling with cron?
 # MAGIC - [ ] Monitor and troubleshoot job runs?
 # MAGIC ### 📚 Next Steps
 # MAGIC **To Create Your Job:**
-# MAGIC 1. ✅ Organize notebooks by task
-# MAGIC 2. ✅ Navigate to Workflows → Jobs
-# MAGIC 3. ✅ Create job with 5 tasks
-# MAGIC 4. ✅ Configure dependencies
-# MAGIC 5. ✅ Add parameters and schedule
-# MAGIC 6. ✅ Run and monitor
+# MAGIC - [ ] Organize notebooks by task
+# MAGIC - [ ] Open Jobs & Pipelines → Create → Job
+# MAGIC - [ ] Create the 3-task job
+# MAGIC - [ ] Configure dependencies
+# MAGIC - [ ] Add a schedule (optional; no parameters: notebooks 02-04 read none)
+# MAGIC - [ ] Run and monitor
 # MAGIC
 # MAGIC **🎉 Notebook Complete!**
-# MAGIC You've learned production job orchestration. Create your multi-task workflow in the UI to see it in action!
+# MAGIC Build the 3-task job in the UI and watch it run 02 → 03 → 04.
 
 # COMMAND ----------
 

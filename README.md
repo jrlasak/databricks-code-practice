@@ -10,14 +10,14 @@ Clone once, import into Databricks, pick a folder. Exercises fail loud until you
 
 ## Author
 
-**Jakub Lasak** - Databricks Data Engineer. Helping you interview like seniors, execute like seniors, and think like seniors.
+**Jakub Lasak** - Databricks Data Engineer (ex-Uber). I write about the Databricks skills that get you hired and promoted.
 
-- [LinkedIn](https://www.linkedin.com/in/jrlasak/) (15.5K followers) - Databricks projects and tips
-- [Substack](https://dataengineer.wiki/substack?utm_source=github&utm_medium=readme&utm_campaign=databricks-code-practice) - Newsletter for data engineers, 4.8K subscribers
+- [LinkedIn](https://www.linkedin.com/in/jrlasak/) (16.5K followers) - Databricks projects and tips
+- [Substack](https://dataengineer.wiki/substack?utm_source=github&utm_medium=readme&utm_campaign=databricks-code-practice) - Newsletter for data engineers, 5.5K subscribers
 - [Podcast](https://dataengineer.wiki/podcast?utm_source=github&utm_medium=readme&utm_campaign=databricks-code-practice) - Databricks and data engineering, on Spotify, Apple, and YouTube
-- [DataEngineer.wiki](https://dataengineer.wiki?utm_source=github&utm_medium=readme&utm_campaign=databricks-code-practice) - Cheat sheets, learning paths, cert guides
+- [DataEngineer.wiki](https://dataengineer.wiki?utm_source=github&utm_medium=readme&utm_campaign=databricks-code-practice) - Interview prep and free Databricks practice
 
-> **Prepping for interviews?** Writing code is one half of the battle - knowing the questions that actually come up is the other. I maintain [Databricks Interview Cheat Sheets](https://dataengineer.wiki/products?utm_source=github&utm_medium=readme&utm_campaign=databricks-code-practice) by seniority level (junior / mid / senior / bundle).
+> **Prepping for interviews?** Writing code is one half of the battle - knowing the questions that actually come up is the other. [Interview Prep](https://dataengineer.wiki/interview-prep/?utm_source=github&utm_medium=readme&utm_campaign=databricks-code-practice) has the questions Databricks interviewers ask at junior, mid and senior level, with the answer that gets the offer at each one.
 
 ## What's Inside
 
@@ -60,10 +60,10 @@ Multi-notebook, end-to-end medallion pipelines with a business scenario. Each ru
 
 | Lab                                                                      | What You Build                                                                                       | Focus                                                                                         |
 | ------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------- |
-| [Apparel Retail 360 (DLT)](pipeline-labs/apparel-streaming/)             | End-to-end retail analytics pipeline on Delta Live Tables with a full medallion architecture.        | DLT, Medallion, SCD Type 2, Streaming, Data Quality Expectations                              |
+| [Apparel Retail 360 (Lakeflow)](pipeline-labs/apparel-streaming/) | End-to-end retail analytics pipeline on Lakeflow Spark Declarative Pipelines with a full medallion architecture. | Lakeflow Declarative Pipelines, Medallion, SCD Type 2, Streaming, Data Quality Expectations |
 | [Fintech Transaction Monitoring](pipeline-labs/fintech-monitoring/)      | Real-time fraud-monitoring pipeline for a payment processor handling 500K+ transactions/day.         | Structured Streaming, Rescued Data, Watermarked Dedup, Stream-Static Joins, Liquid Clustering |
-| [DE Associate Certification Prep](pipeline-labs/de-associate-cert-prep/) | Production-grade pipeline covering every exam domain of the Databricks Data Engineer Associate cert. | Auto Loader, COPY INTO, Medallion, SCD2, Jobs, Unity Catalog                                  |
-| [PySpark Developer Cert Prep](pipeline-labs/pyspark-cert-zenith/)        | E-commerce analytics pipeline covering every domain of the Spark Developer Associate cert.           | DataFrame API, Structured Streaming, Data Skew, Performance Tuning                            |
+| [DE Associate Certification Prep](pipeline-labs/de-associate-cert-prep/) | Production-grade pipeline drilling the core topics of the Databricks Data Engineer Associate cert. | Auto Loader, COPY INTO, Medallion, SCD2, Jobs, Unity Catalog                                  |
+| [PySpark Developer Cert Prep](pipeline-labs/pyspark-cert-zenith/)        | E-commerce analytics pipeline covering six of the seven Spark Developer Associate exam sections.           | DataFrame API, Structured Streaming, Data Skew, Performance Tuning                            |
 
 ### Deep-Dives (`deep-dives/`)
 
@@ -86,7 +86,7 @@ Everything runs on Free Edition: serverless compute, Unity Catalog, Delta Lake. 
 
 - **New to Databricks?** Start with [DE Associate Cert Prep](pipeline-labs/de-associate-cert-prep/) - broadest fundamentals.
 - **Want quick reps on a specific concept?** [Delta Lake exercises](exercises/delta-lake/), [ELT exercises](exercises/elt/), or [Streaming exercises](exercises/streaming/) - drill one concept at a time.
-- **Comfortable with batch, new to streaming?** Start with [Streaming exercises](exercises/streaming/) for atomic concept drills, then [Apparel DLT](pipeline-labs/apparel-streaming/) and [Fintech Monitoring](pipeline-labs/fintech-monitoring/) for end-to-end pipelines.
+- **Comfortable with batch, new to streaming?** Start with [Streaming exercises](exercises/streaming/) for atomic concept drills, then [Apparel Lakeflow](pipeline-labs/apparel-streaming/) and [Fintech Monitoring](pipeline-labs/fintech-monitoring/) for end-to-end pipelines.
 - **Preparing for a cert?** [DE Associate](pipeline-labs/de-associate-cert-prep/) or [Spark Developer Associate](pipeline-labs/pyspark-cert-zenith/).
 - **Already shipping pipelines, want to go deeper on performance?** [Delta Optimization Techniques](deep-dives/optimization-techniques/).
 - **Want to ship natural-language analytics (Genie / AI/BI)?** [Build a Genie Space](deep-dives/genie-sales-analytics/) - connect Genie to a star schema, benchmark its accuracy, embed it in a dashboard.

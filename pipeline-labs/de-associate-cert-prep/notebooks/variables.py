@@ -2,7 +2,7 @@
 # MAGIC %md
 # MAGIC # Configuration Variables
 # MAGIC
-# MAGIC Central configuration file for the Databricks Data Engineer Certification Lab.
+# MAGIC Central configuration file for the Databricks Data Engineer Associate Certification Lab.
 # MAGIC
 # MAGIC **Usage**: Import this file in all notebooks to maintain consistent naming.
 # MAGIC
@@ -27,7 +27,7 @@ BRONZE_SCHEMA = "01_bronze"
 SILVER_SCHEMA = "02_silver"
 GOLD_SCHEMA = "03_gold"
 
-# DLT-specific schema (for Delta Live Tables pipeline)
+# Spare schema if you extend the lab with a Lakeflow Spark Declarative Pipelines (formerly DLT) pipeline; notebooks 01-05 do not use it
 DLT_SCHEMA = "dlt_pipeline"
 
 # COMMAND ----------
@@ -63,7 +63,6 @@ EVENTS_CHECKPOINT_PATH = f"{CHECKPOINT_BASE_PATH}/events_stream"
 
 # Silver layer checkpoints
 SALES_SILVER_CHECKPOINT_PATH = f"{CHECKPOINT_BASE_PATH}/sales_silver_stream"
-EVENTS_SILVER_CHECKPOINT_PATH = f"{CHECKPOINT_BASE_PATH}/events_silver_stream"
 
 # COMMAND ----------
 
@@ -82,14 +81,12 @@ EVENTS_BRONZE_TABLE = f"{CATALOG_NAME}.{BRONZE_SCHEMA}.events_raw"
 CUSTOMERS_SILVER_TABLE = f"{CATALOG_NAME}.{SILVER_SCHEMA}.customers_clean"
 PRODUCTS_SILVER_TABLE = f"{CATALOG_NAME}.{SILVER_SCHEMA}.products_clean"
 SALES_SILVER_TABLE = f"{CATALOG_NAME}.{SILVER_SCHEMA}.sales_clean"
-EVENTS_SILVER_TABLE = f"{CATALOG_NAME}.{SILVER_SCHEMA}.events_clean"
 CUSTOMERS_SCD2_TABLE = f"{CATALOG_NAME}.{SILVER_SCHEMA}.dim_customers_scd2"
 
 # Gold tables (business aggregations)
 DAILY_SALES_SUMMARY_TABLE = f"{CATALOG_NAME}.{GOLD_SCHEMA}.daily_sales_summary"
 CUSTOMER_LTV_TABLE = f"{CATALOG_NAME}.{GOLD_SCHEMA}.customer_lifetime_value"
 PRODUCT_PERFORMANCE_TABLE = f"{CATALOG_NAME}.{GOLD_SCHEMA}.product_performance"
-FUNNEL_ANALYSIS_TABLE = f"{CATALOG_NAME}.{GOLD_SCHEMA}.funnel_analysis"
 
 # COMMAND ----------
 
@@ -100,6 +97,11 @@ FUNNEL_ANALYSIS_TABLE = f"{CATALOG_NAME}.{GOLD_SCHEMA}.funnel_analysis"
 
 # Data generation settings
 DATA_GEN_CONFIG = {
+    # Reproducibility: one seed for every random draw, and every date counted back from base_date
+    "seed": 42,
+    "base_date": "2026-06-30",   # the latest day a generated order can carry (notebook 02's practice file adds 2026-07-01 and 2026-07-02)
+    "order_history_days": 180,   # orders and web sessions spread over the 180 days ending base_date
+
     # Volume settings
     "num_customers": 10000,
     "num_products": 1000,
@@ -113,12 +115,11 @@ DATA_GEN_CONFIG = {
     "null_rate_high": 0.20,   # 20% nulls
 
     # Streaming settings
-    "streaming_batch_size": 5000,  # Records per batch (optimized for ~2 min generation)
-    "streaming_delay_seconds": 0,  # No delay between batches
+    "streaming_batch_size": 5000,  # Records per batch
 
-    # Skew settings (Pareto distribution)
-    "product_skew_factor": 0.8,  # 80% of sales from 20% of products
-    "customer_skew_factor": 0.7, # 70% of revenue from 20% of customers
+    # Skew settings (truncated Lomax distribution, index 0 = most popular)
+    "product_skew_factor": 0.8,  # ~77% of line items from the top 20% of products
+    "customer_skew_factor": 0.7, # ~70% of orders from the top 20% of customers
 }
 
 # COMMAND ----------
@@ -136,6 +137,21 @@ PRODUCT_CATEGORIES = {
     "Books": ["Fiction", "Non-Fiction", "Educational", "Comics"]
 }
 
+# Subcategory of each product item, so a "Tent" is never filed under Fitness
+# (Clothing items not listed here get a random Men / Women / Kids audience)
+ITEM_SUBCATEGORY = {
+    "Headphones": "Audio", "Speaker": "Audio",
+    "Monitor": "Computers", "Keyboard": "Computers", "Mouse": "Computers",
+    "Tablet": "Mobile", "Charger": "Mobile", "Camera": "Cameras",
+    "Hat": "Accessories", "Scarf": "Accessories",
+    "Chair": "Furniture", "Table": "Furniture",
+    "Lamp": "Decor", "Rug": "Decor", "Curtains": "Decor", "Vase": "Decor", "Clock": "Decor", "Mirror": "Decor",
+    "Bike": "Cycling", "Tent": "Camping", "Backpack": "Camping", "Water Bottle": "Camping",
+    "Yoga Mat": "Fitness", "Dumbbells": "Fitness",
+    "Mystery": "Fiction", "Adventure": "Fiction", "Fiction": "Fiction",
+    "Science": "Non-Fiction", "History": "Non-Fiction", "Philosophy": "Non-Fiction",
+}
+
 # Category distribution (weights for random selection)
 CATEGORY_WEIGHTS = {
     "Electronics": 0.30,
@@ -143,6 +159,15 @@ CATEGORY_WEIGHTS = {
     "Home & Garden": 0.20,
     "Sports & Outdoors": 0.15,
     "Books": 0.10
+}
+
+# Catalog price range per category in USD (min, max)
+CATEGORY_PRICE_RANGES = {
+    "Electronics": (20, 1500),
+    "Clothing": (10, 150),
+    "Home & Garden": (15, 600),
+    "Sports & Outdoors": (10, 800),
+    "Books": (8, 40)
 }
 
 # COMMAND ----------
@@ -335,9 +360,6 @@ def validate_configuration():
     print("✅ Configuration validation passed")
     return True
 
-# Run validation (comment out if not needed)
-# validate_configuration()
-
 # COMMAND ----------
 
 # MAGIC %md
@@ -350,7 +372,7 @@ def print_config_summary():
     Print a summary of the current configuration.
     """
     print("=" * 60)
-    print("DATABRICKS DATA ENGINEER CERTIFICATION LAB")
+    print("DATABRICKS DATA ENGINEER ASSOCIATE CERTIFICATION LAB")
     print("Configuration Summary")
     print("=" * 60)
     print(f"\nCatalog: {CATALOG_NAME}")
@@ -372,6 +394,3 @@ def print_config_summary():
     print(f"  - Sales:     {DATA_GEN_CONFIG['num_sales']:,}")
     print(f"  - Events:    {DATA_GEN_CONFIG['num_events']:,}")
     print("=" * 60)
-
-# Uncomment to display configuration
-# print_config_summary()
