@@ -10,7 +10,7 @@ Clone once, import into Databricks, pick a folder. Exercises fail loud until you
 
 ## Author
 
-**Jakub Lasak** - Databricks Data Engineer (ex-Uber). I write about the Databricks work that gets you hired and promoted.
+**Jakub Lasak** - Databricks Data Engineer (ex-Uber). I write about the Databricks skills that get you hired and promoted.
 
 - [LinkedIn](https://www.linkedin.com/in/jrlasak/) (16.5K followers) - Databricks projects and tips
 - [Substack](https://dataengineer.wiki/substack?utm_source=github&utm_medium=readme&utm_campaign=databricks-code-practice) - Newsletter for data engineers, 5.5K subscribers
