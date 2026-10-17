@@ -10,14 +10,14 @@ Clone once, import into Databricks, pick a folder. Exercises fail loud until you
 
 ## Author
 
-**Jakub Lasak** - Databricks Data Engineer. Helping you interview like seniors, execute like seniors, and think like seniors.
+**Jakub Lasak** - Databricks Data Engineer (ex-Uber). I write about the Databricks work that gets you hired and promoted.
 
-- [LinkedIn](https://www.linkedin.com/in/jrlasak/) (15.5K followers) - Databricks projects and tips
-- [Substack](https://dataengineer.wiki/substack?utm_source=github&utm_medium=readme&utm_campaign=databricks-code-practice) - Newsletter for data engineers, 4.8K subscribers
+- [LinkedIn](https://www.linkedin.com/in/jrlasak/) (16.5K followers) - Databricks projects and tips
+- [Substack](https://dataengineer.wiki/substack?utm_source=github&utm_medium=readme&utm_campaign=databricks-code-practice) - Newsletter for data engineers, 5.5K subscribers
 - [Podcast](https://dataengineer.wiki/podcast?utm_source=github&utm_medium=readme&utm_campaign=databricks-code-practice) - Databricks and data engineering, on Spotify, Apple, and YouTube
-- [DataEngineer.wiki](https://dataengineer.wiki?utm_source=github&utm_medium=readme&utm_campaign=databricks-code-practice) - Cheat sheets, learning paths, cert guides
+- [DataEngineer.wiki](https://dataengineer.wiki?utm_source=github&utm_medium=readme&utm_campaign=databricks-code-practice) - Interview prep and free Databricks practice
 
-> **Prepping for interviews?** Writing code is one half of the battle - knowing the questions that actually come up is the other. I maintain [Databricks Interview Cheat Sheets](https://dataengineer.wiki/products?utm_source=github&utm_medium=readme&utm_campaign=databricks-code-practice) by seniority level (junior / mid / senior / bundle).
+> **Prepping for interviews?** Writing code is one half of the battle - knowing the questions that actually come up is the other. [Interview Prep](https://dataengineer.wiki/interview-prep/?utm_source=github&utm_medium=readme&utm_campaign=databricks-code-practice) has the questions Databricks interviewers ask at junior, mid and senior level, with the answer that gets the offer at each one.
 
 ## What's Inside
 
