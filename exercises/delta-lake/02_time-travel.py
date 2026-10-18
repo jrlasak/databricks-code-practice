@@ -16,7 +16,7 @@
 # MAGIC **Schema** (`orders`):
 # MAGIC | Column | Type | Notes |
 # MAGIC |--------|------|-------|
-# MAGIC | order_id | STRING | Primary key |
+# MAGIC | order_id | STRING | Order key (repeats in the base table: ORD-042 and ORD-067 appear twice) |
 # MAGIC | customer_id | STRING | FK to customers (some nulls) |
 # MAGIC | product_id | STRING | FK to products |
 # MAGIC | amount | DOUBLE | Order total in USD (includes $0) |
@@ -34,21 +34,21 @@
 
 # COMMAND ----------
 # MAGIC %md
-# MAGIC **Setup complete.** Exercise tables are in `{CATALOG}.{SCHEMA}` (time_travel schema).
-# MAGIC Base tables (orders, customers) are in `{CATALOG}.{BASE_SCHEMA}` (delta_lake schema).
-# MAGIC Each exercise has its own table with pre-built version history:
-# MAGIC - Ex 1 (easy): `tt_ex1_orders` - operations: CREATE, UPDATE 2 rows, DELETE 1 row
-# MAGIC - Ex 2 (easy): `tt_ex2_orders` - operations: CREATE, UPDATE ORD-003, DELETE ORD-003
-# MAGIC - Ex 3 (easy): `tt_ex3_orders` - operations: CREATE, UPDATE, DELETE, INSERT
-# MAGIC - Ex 4 (medium): `tt_ex4_orders` - operations: CREATE (good data), bad UPDATE (all amounts=0)
-# MAGIC - Ex 5 (medium): `tt_ex5_orders` - operations: CREATE, UPDATE ORD-001, DELETE ORD-005, INSERT ORD-101
-# MAGIC - Ex 6 (medium): `tt_ex6_orders` - operations: CREATE, normal UPDATE, **suspicious INSERT**, normal UPDATE
-# MAGIC - Ex 7 (hard): `tt_ex7_orders` - operations: CREATE (good data), bad UPDATE (cancelled low-amount orders)
-# MAGIC - Ex 8 (hard): `tt_ex8_orders` - operations: CREATE, INSERT 3 orders, **bad UPDATE** (amounts x100)
+# MAGIC **Setup complete.** Every exercise table is in `db_code.time_travel`. Write your output tables there too, by full name (for example `db_code.time_travel.tt_ex1_result`). In Python cells, the variables `CATALOG` and `SCHEMA` hold `db_code` and `time_travel`. The base table (`orders`) is in `db_code.delta_lake`.
 # MAGIC
-# MAGIC **Note**: On serverless, auto-OPTIMIZE may insert extra versions between your DML operations.
-# MAGIC The setup records actual version numbers as variables (e.g., `TT_EX2_UPDATE_V`) so
-# MAGIC assertions work regardless of auto-OPTIMIZE behavior. Version 0 (CTAS) is always safe.
+# MAGIC Keep the `# EXERCISE_KEY: ...` line as the first line of each answer cell.
+# MAGIC
+# MAGIC Every `tt_ex*_orders` table has the `orders` schema above and its own version history:
+# MAGIC - Ex 1: `tt_ex1_orders` - CREATE (5 rows), UPDATE of ORD-001 and ORD-002, DELETE of ORD-005
+# MAGIC - Ex 2: `tt_ex2_orders` - CREATE (5 rows), UPDATE of ORD-003, DELETE of ORD-003
+# MAGIC - Checkpoint 3: `tt_ex3_orders` - CREATE (5 rows), UPDATE, DELETE, INSERT
+# MAGIC - Ex 4: `tt_ex4_orders` - CREATE (5 rows), UPDATE that set every amount to 0.00
+# MAGIC - Ex 5: `tt_ex5_orders` - CREATE (5 rows), UPDATE of ORD-001, DELETE of ORD-005, INSERT of ORD-101
+# MAGIC - Ex 6: `tt_ex6_orders` - CREATE (5 rows), UPDATE of ORD-001, INSERT of one order, UPDATE of ORD-002
+# MAGIC - Ex 7: `tt_ex7_orders` - CREATE (5 rows), UPDATE that cancelled every order with amount < 100, UPDATE of ORD-001
+# MAGIC - Ex 8: `tt_ex8_orders` - CREATE (5 rows), INSERT of 3 orders, UPDATE that multiplied two amounts by 100
+# MAGIC
+# MAGIC **Note**: Auto compaction can add an `OPTIMIZE` version after an UPDATE or DELETE, so version numbers can shift. Version 0 is always the CREATE; never hardcode any other version number. Where you need a later version, the setup stores it in a variable: `TT_EX8_INSERT_V` in Exercise 8.
 
 # COMMAND ----------
 # MAGIC %md
@@ -57,7 +57,7 @@
 # MAGIC
 # MAGIC Query a historical version of a Delta table using `VERSION AS OF`.
 # MAGIC
-# MAGIC **Table** (`tt_ex1_orders`): currently 4 rows. Operations performed after creation:
+# MAGIC **Table** (`tt_ex1_orders`): currently 4 rows. Operations performed:
 # MAGIC - v0 (CREATE): 5 rows (ORD-001 to ORD-005 from base)
 # MAGIC - UPDATE: ORD-001 and ORD-002 updated (status='shipped', amount+10)
 # MAGIC - DELETE: ORD-005 deleted
@@ -137,14 +137,13 @@ print("Exercise 2 passed!")
 # MAGIC Inspect the operation history of a Delta table using `DESCRIBE HISTORY`.
 # MAGIC This command returns one row per version, showing what operation was performed.
 # MAGIC
-# MAGIC **Table** (`tt_ex3_orders`): has multiple versions. DML operations performed:
+# MAGIC **Table** (`tt_ex3_orders`): has multiple versions. Operations performed:
 # MAGIC - CREATE TABLE AS SELECT (5 rows)
 # MAGIC - UPDATE on ORD-001
 # MAGIC - DELETE of ORD-005
 # MAGIC - INSERT of ORD-101
 # MAGIC
-# MAGIC **Note**: On serverless, auto-OPTIMIZE may add extra versions between DML operations,
-# MAGIC so total version count may be higher than 4.
+# MAGIC **Note**: Auto compaction can add `OPTIMIZE` versions between these operations, so the history may show more than 4 rows.
 # MAGIC
 # MAGIC **Requirements**:
 # MAGIC 1. Run `DESCRIBE HISTORY` on `tt_ex3_orders`
@@ -157,39 +156,38 @@ print("Exercise 2 passed!")
 # TODO: Run DESCRIBE HISTORY on tt_ex3_orders, then fill in what you observe
 
 total_versions = 0        # Replace: how many versions (rows) does the history show?
-last_dml_operation = ""   # Replace: what is the operation type of the LATEST version? (e.g., "UPDATE", "DELETE", "WRITE", "OPTIMIZE")
-num_dml_operations = 0    # Replace: how many DML operations (non-OPTIMIZE) are in the history?
+latest_operation = ""     # Replace: the `operation` value of the highest version in DESCRIBE HISTORY
+num_dml_operations = 0    # Replace: how many history rows have an operation other than OPTIMIZE? (the CREATE TABLE AS SELECT row counts)
 
 spark.sql(f"""
     CREATE OR REPLACE TABLE {CATALOG}.{SCHEMA}.tt_ex3_history AS
     SELECT CAST({total_versions} AS INT) AS total_versions,
-           '{last_dml_operation}' AS last_dml_operation,
+           '{latest_operation}' AS latest_operation,
            CAST({num_dml_operations} AS INT) AS num_dml_operations
 """)
 
 # COMMAND ----------
 
-# Validate Exercise 3
+# Validate Checkpoint 3
 row = spark.table(f"{CATALOG}.{SCHEMA}.tt_ex3_history").collect()[0]
 
 assert row.total_versions == TT_EX3_TOTAL_VERSIONS, \
-    f"Expected {TT_EX3_TOTAL_VERSIONS} total versions, got {row.total_versions}"
-assert row.last_dml_operation == TT_EX3_LAST_OPERATION, \
-    f"Latest operation should be '{TT_EX3_LAST_OPERATION}', got '{row.last_dml_operation}'"
+    f"total_versions = {row.total_versions} does not match the number of rows DESCRIBE HISTORY returns for tt_ex3_orders"
+assert row.latest_operation == TT_EX3_LATEST_OPERATION, \
+    f"'{row.latest_operation}' is not the operation of the highest version in DESCRIBE HISTORY"
 assert row.num_dml_operations == TT_EX3_DML_COUNT, \
-    f"Expected {TT_EX3_DML_COUNT} DML operations (non-OPTIMIZE), got {row.num_dml_operations}"
+    f"num_dml_operations = {row.num_dml_operations} does not match the number of history rows whose operation is not OPTIMIZE"
 
-print("Exercise 3 passed!")
+print("Checkpoint 3 passed!")
 
 # COMMAND ----------
 # MAGIC %md
 # MAGIC ## Exercise 4: RESTORE to Previous Version
 # MAGIC **Difficulty**: Medium | **Time**: ~10 min
 # MAGIC
-# MAGIC A bad UPDATE set all amounts to 0.00. Restore the table to its original state.
+# MAGIC A bad UPDATE set every amount to 0.00. Restore the table to its original state.
 # MAGIC
-# MAGIC **Table** (`tt_ex4_orders`): currently 5 rows, ALL amounts = 0.00 (a bad UPDATE corrupted them).
-# MAGIC Version 0 has the original good data with positive amounts.
+# MAGIC **Table** (`tt_ex4_orders`): currently 5 rows, all with amount = 0.00. Version 0 holds the original amounts, all positive.
 # MAGIC
 # MAGIC **Expected Output**: After RESTORE, `tt_ex4_orders` has 5 rows with original amounts (all > 0).
 # MAGIC RESTORE modifies the table in place (no separate output table needed).
@@ -218,6 +216,8 @@ assert result.filter("amount = 0.00").count() == 0, \
     "No amounts should be 0.00 after restoring to version 0"
 assert result.filter("amount > 0").count() == 5, \
     "All 5 rows should have positive amounts after restore"
+_ops = [r.operation for r in spark.sql(f"DESCRIBE HISTORY {CATALOG}.{SCHEMA}.tt_ex4_orders").orderBy("version", ascending=False).collect() if r.operation != "OPTIMIZE"]
+assert _ops[0] == "RESTORE", f"The latest change to tt_ex4_orders is {_ops[0]}, not RESTORE"
 
 print("Exercise 4 passed!")
 
@@ -243,9 +243,7 @@ print("Exercise 4 passed!")
 # MAGIC 2. Find order_ids that were added, removed, or modified (any column value differs)
 # MAGIC 3. Save distinct order_ids to `tt_ex5_changes`
 # MAGIC
-# MAGIC **Approach**: Think of it as finding rows that exist in one version but not the other.
-# MAGIC If you compare full rows (not just order_ids), a modified row will appear as "missing"
-# MAGIC from both sides since its values changed. Check both directions to catch all three cases.
+# MAGIC **Approach**: A modified row keeps its `order_id` but changes other values. Your comparison has to catch that as well as rows that were added or removed.
 # MAGIC
 # MAGIC **Constraints**:
 # MAGIC - ORD-002, ORD-003, ORD-004 are unchanged and should NOT appear
@@ -279,14 +277,11 @@ print("Exercise 5 passed!")
 # MAGIC A fraudulent order with amount > 1000 appeared in the table. Use time travel to find
 # MAGIC which version introduced it.
 # MAGIC
-# MAGIC **Table** (`tt_ex6_orders`): currently 6 rows. DML operations performed:
+# MAGIC **Table** (`tt_ex6_orders`): currently 6 rows. Operations performed:
 # MAGIC - CREATE: 5 rows (all amounts < 500)
-# MAGIC - UPDATE: normal (ORD-001 status changed)
-# MAGIC - INSERT: suspicious insert
-# MAGIC - UPDATE: normal (ORD-002 status changed)
-# MAGIC
-# MAGIC **Note**: On serverless, auto-OPTIMIZE may add extra versions. Use `DESCRIBE HISTORY`
-# MAGIC to see actual version numbers, and iterate through all versions.
+# MAGIC - UPDATE: ORD-001 status changed
+# MAGIC - INSERT: one order added
+# MAGIC - UPDATE: ORD-002 status changed
 # MAGIC
 # MAGIC **Expected Output**: Write a single-row table `tt_ex6_audit` with columns:
 # MAGIC - `bad_version` (INT): the version that introduced the bad data
@@ -294,14 +289,14 @@ print("Exercise 5 passed!")
 # MAGIC
 # MAGIC **Requirements**:
 # MAGIC 1. Query the current table to find the row with amount > 1000 (note the order_id)
-# MAGIC 2. Use `DESCRIBE HISTORY` to get all version numbers
+# MAGIC 2. Use `DESCRIBE HISTORY` to list the version numbers (auto compaction can add `OPTIMIZE` versions between the others)
 # MAGIC 3. Check each version to find when that order_id first appeared
 # MAGIC 4. Fill in the placeholder values below
 
 # COMMAND ----------
 
 # EXERCISE_KEY: tt_ex6
-# TODO: Investigate versions to find who introduced the bad data, then fill in values
+# TODO: Find the version that introduced the order with amount > 1000, then fill in the values below
 
 bad_version = 0        # Replace: the version number that introduced the fraudulent order
 bad_order_id = ""      # Replace: the order_id of the fraudulent order
@@ -316,9 +311,13 @@ spark.sql(f"""
 # Validate Exercise 6
 row = spark.table(f"{CATALOG}.{SCHEMA}.tt_ex6_audit").collect()[0]
 
+expected_order_id = spark.sql(
+    f"SELECT order_id FROM {CATALOG}.{SCHEMA}.tt_ex6_orders WHERE amount > 1000"
+).collect()[0][0]
+assert row.bad_order_id == expected_order_id, \
+    f"'{row.bad_order_id}' is not the order with amount > 1000 in the current table"
 assert row.bad_version == TT_EX6_BAD_VERSION, \
-    f"Bad data was introduced in version {TT_EX6_BAD_VERSION}, got {row.bad_version}"
-assert row.bad_order_id == "ORD-999", f"Bad order_id is ORD-999, got {row.bad_order_id}"
+    f"Version {row.bad_version} is not the first version that contains that order. Query each version from DESCRIBE HISTORY with VERSION AS OF."
 
 print("Exercise 6 passed!")
 
@@ -334,17 +333,16 @@ print("Exercise 6 passed!")
 # MAGIC **Table** (`tt_ex7_orders`): currently 5 rows. Operations performed:
 # MAGIC - v0 (CREATE): 5 rows (original good data)
 # MAGIC - UPDATE: bad update set status='cancelled' WHERE amount < 100
+# MAGIC - UPDATE: valid update set ORD-001 status='shipped' (keep this change)
 # MAGIC
-# MAGIC **Expected Output**: After your MERGE, orders with amount < 100 have their original
-# MAGIC status from version 0 restored. Orders with amount >= 100 are unchanged.
+# MAGIC **Expected Output**: ORD-003 and ORD-005 are back to their version 0 status, `pending`. ORD-001 stays `shipped`. ORD-002 and ORD-004 are unchanged (ORD-004 was already `cancelled` at version 0).
 # MAGIC
 # MAGIC **Requirements**:
 # MAGIC 1. Use the version 0 state as source for a MERGE into the current table
 # MAGIC 2. Only update rows where status was incorrectly set to 'cancelled'
-# MAGIC 3. Do NOT use RESTORE (that reverts all changes, not just the bad one)
 # MAGIC
 # MAGIC **Constraints**:
-# MAGIC - RESTORE is not allowed (it's too coarse for selective undo)
+# MAGIC - Do not use RESTORE: it would also undo ORD-001's valid update
 # MAGIC - Only the incorrectly cancelled rows should change
 
 # COMMAND ----------
@@ -370,19 +368,20 @@ for row in result.filter("amount < 100").collect():
 # No incorrectly cancelled rows remaining
 bad_rows = result.filter("status = 'cancelled' AND amount < 100").count()
 assert bad_rows == 0, f"Found {bad_rows} incorrectly cancelled rows (amount < 100)"
+assert result.filter("order_id = 'ORD-001'").collect()[0].status == "shipped", \
+    "ORD-001's later valid update to 'shipped' must survive: restore only the rows the bad UPDATE cancelled"
 
 print("Exercise 7 passed!")
 
 # COMMAND ----------
 # MAGIC %md
 # MAGIC ## Exercise 8: Reproducible Reporting with Time Travel
-# MAGIC **Difficulty**: Hard | **Time**: ~15 min
+# MAGIC **Difficulty**: Medium | **Time**: ~10 min
 # MAGIC
 # MAGIC A bulk UPDATE corrupted some order amounts (multiplied by 100).
-# MAGIC Re-create the daily revenue report from the last known-good state - the version
-# MAGIC where the INSERT (WRITE) happened, before the bad UPDATE.
+# MAGIC Re-create the revenue report from the last known-good state: the version where the INSERT (WRITE) happened, before the bad UPDATE.
 # MAGIC
-# MAGIC **Table** (`tt_ex8_orders`): currently 8 rows. DML operations performed:
+# MAGIC **Table** (`tt_ex8_orders`): currently 8 rows. Operations performed:
 # MAGIC - CREATE: 5 rows from base
 # MAGIC - INSERT: 3 orders added (ORD-101: $250, ORD-102: $175, ORD-103: $75) - total 8 rows
 # MAGIC - UPDATE: bad bulk update multiplied amounts by 100 for ORD-101 and ORD-102
@@ -390,11 +389,11 @@ print("Exercise 7 passed!")
 # MAGIC The setup stored the INSERT version number in `TT_EX8_INSERT_V`.
 # MAGIC
 # MAGIC **Expected Output**: Write a single-row table `tt_ex8_report` with columns:
-# MAGIC - `order_count` (LONG): total number of orders at the INSERT version
-# MAGIC - `total_amount` (DOUBLE): sum of all order amounts at the INSERT version
+# MAGIC - `order_count` (LONG): number of orders at the INSERT version (8)
+# MAGIC - `total_amount` (DOUBLE): sum of `amount` at the INSERT version (1239.49; the corrupted current total is 43314.49)
 # MAGIC
 # MAGIC **Requirements**:
-# MAGIC 1. Query `tt_ex8_orders` at the INSERT version (`TT_EX8_INSERT_V`) - the last clean state
+# MAGIC 1. Query `tt_ex8_orders` at version `TT_EX8_INSERT_V`
 # MAGIC 2. Compute total order count and sum of amounts
 # MAGIC 3. Save as table `tt_ex8_report`
 # MAGIC
@@ -422,7 +421,7 @@ expected_total = spark.sql(
     f"SELECT SUM(amount) FROM {CATALOG}.{SCHEMA}.tt_ex8_orders VERSION AS OF {TT_EX8_INSERT_V}"
 ).collect()[0][0]
 assert abs(row.total_amount - expected_total) < 0.01, \
-    f"Total amount should be {expected_total}, got {row.total_amount}"
+    f"total_amount = {row.total_amount} does not match SUM(amount) at version TT_EX8_INSERT_V"
 # Verify it's different from current (corrupted) total
 current_total = spark.sql(
     f"SELECT SUM(amount) FROM {CATALOG}.{SCHEMA}.tt_ex8_orders"

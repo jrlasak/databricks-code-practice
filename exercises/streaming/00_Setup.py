@@ -2,9 +2,7 @@
 # COMMAND ----------
 # MAGIC %md
 # MAGIC # 00_Setup: Shared Data Generator (streaming zone)
-# MAGIC **Run this notebook once** before solving any streaming exercise. It creates the
-# MAGIC `db_code` catalog, the `streaming` zone schema, every per-topic schema referenced by
-# MAGIC the six topic setups in `setup/`, and the single shared base table `events_source`.
+# MAGIC Every exercise notebook runs this notebook in its second cell, so you never run it by hand. It creates the `db_code` catalog, the `streaming` zone schema, the six per-topic schemas the setups in `setup/` write to, and the shared base table `events_source`.
 # MAGIC
 # MAGIC **What it creates**:
 # MAGIC - Catalog: `db_code`
@@ -17,24 +15,17 @@
 # MAGIC   - `foreachbatch_patterns`
 # MAGIC   - `checkpointing_recovery`
 # MAGIC - Base table:
-# MAGIC   - `streaming.events_source` (35 rows) - the only base table read across topics.
-# MAGIC     `structured-streaming-basics` and `checkpointing-recovery` clone it for their
-# MAGIC     per-exercise streaming sources. Other topics either (a) only check that the
-# MAGIC     BASE_SCHEMA exists or (b) create all their own data inside their per-topic schema.
+# MAGIC   - `streaming.events_source` (35 rows, EV-001..EV-035). `structured_streaming_basics` and `checkpointing_recovery` copy it into per-exercise source tables. The other four topics create their own tables in their own schemas.
 # MAGIC
 # MAGIC **Idempotent**: Safe to re-run. If `events_source` already has >= 35 rows, base
 # MAGIC table creation is skipped. Schema/catalog creation is always idempotent via
 # MAGIC `IF NOT EXISTS`.
 # MAGIC
-# MAGIC **Deterministic**: All rows hardcoded with literal timestamps. No `rand()`, no
-# MAGIC `uuid()`, no `current_timestamp()`.
-# MAGIC
-# MAGIC **Free Edition compatible**: Unity Catalog tables only, no `spark.conf.set(...)`,
-# MAGIC no external storage, all amount columns are DOUBLE.
+# MAGIC **Fixed data**: all 35 rows are hardcoded with literal timestamps, so every run builds the same table and the expected values in each exercise always hold.
 
 # COMMAND ----------
 
-# -- Catalog and Schemas --
+# Catalog and schemas
 
 CATALOG = "db_code"
 
@@ -57,7 +48,7 @@ for schema in [
 
 # COMMAND ----------
 
-# -- Idempotency Check --
+# Idempotency check
 # If the events_source base table already exists with the expected row count, skip
 # recreation. This keeps re-runs cheap and avoids redundant writes.
 
@@ -75,32 +66,21 @@ except Exception:
 
 # COMMAND ----------
 
-# -- events_source: Shared streaming events base table --
+# events_source: the shared streaming events base table
 # Schema: event_id STRING, event_type STRING, user_id STRING, amount DOUBLE, event_ts TIMESTAMP
 #
-# Consumers:
-#   - `structured_streaming_basics` setup CLONES this table into per-exercise sources.
-#     Expects ~35 rows split as: 18 purchase, 9 view, 8 click events.
-#   - `checkpointing_recovery` setup CLONES this table into per-exercise sources.
-#     Expects at least 30 rows; takes the full table for most exercises and the
-#     first 20 rows (ORDER BY event_id LIMIT 20) for exercise 5.
+# Read by:
+#   - structured_streaming_basics: copies all 35 rows (18 purchase, 9 view, 8 click) into the sources of Exercises 1-7; Exercise 8 builds its own 15-row source.
+#   - checkpointing_recovery: copies EV-001..EV-030 (ORDER BY event_id LIMIT 30) for Exercises 1-4 and 7, EV-001..EV-020 (ORDER BY event_id LIMIT 20) for Exercise 5, and EV-001..EV-015 / EV-016..EV-030 into two sources for Exercise 6.
+# The other four topics create their own tables in their own schemas.
 #
-# Other streaming topics either build their own per-topic base tables inside their
-# per-topic schemas (`windowed_aggregations.windows_events`, `stream_stream_joins.orders_stream`,
-# `stream_stream_joins.shipments_stream`, `stream_static_joins.customers_static`) or
-# only check that the `streaming` schema exists, so this single shared base table is
-# sufficient at the zone level.
-#
-# Design choices:
+# The data:
 #   - 35 rows total. Deterministic event_ids EV-001..EV-035, one per minute starting
-#     at 2026-04-01 10:00:00 UTC. This matches the timestamps the per-topic setups
-#     use in their defensive fallback, so any exercise validated standalone will see
-#     the same data as a full pipeline run.
-#   - event_type cycles purchase -> view -> click -> purchase -> view ... yielding the
-#     18 / 9 / 8 split the basics setup expects (counted via positions 1, 4, 7, ...).
+#     at 2026-04-01 10:00:00 UTC.
+#   - Odd positions (EV-001, EV-003, ..., EV-035) are purchases (18); even positions alternate
+#     view (EV-002, EV-006, ..., EV-034: 9) and click (EV-004, EV-008, ..., EV-032: 8).
 #   - Non-purchase events have amount = 0.00; purchase events have varied positive amounts.
-#   - All amount literals are wrapped with CAST(... AS DOUBLE) so the VALUES clause
-#     does not infer DECIMAL (Free Edition / Delta strict type check).
+#   - Amount literals are cast to DOUBLE to match the `amount` column.
 
 if not _SETUP_SKIP:
     spark.sql(f"""
@@ -156,7 +136,7 @@ if not _SETUP_SKIP:
 
 # COMMAND ----------
 
-# -- Confirmation --
+# Confirmation
 _events_source_count = spark.table(f"{CATALOG}.streaming.events_source").count()
 
 print("=" * 60)
@@ -170,10 +150,5 @@ print(f"  Topic schemas : structured_streaming_basics, windowed_aggregations,")
 print(f"                  stream_static_joins, stream_stream_joins,")
 print(f"                  foreachbatch_patterns, checkpointing_recovery")
 print("=" * 60)
-print(f"  Notes:")
-print(f"    - windowed_aggregations.windows_events is created by its own per-topic setup.")
-print(f"    - stream_static_joins.customers_static is created by its own per-topic setup.")
-print(f"    - stream_stream_joins.orders_stream/shipments_stream are created by their")
-print(f"      own per-topic setup.")
-print(f"    - foreachbatch_patterns sources are created by its own per-topic setup.")
+print("  Topic tables are created by each notebook's own setup cell.")
 print("=" * 60)

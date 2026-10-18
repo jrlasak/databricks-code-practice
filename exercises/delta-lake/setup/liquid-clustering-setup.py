@@ -3,7 +3,7 @@
 # MAGIC %md
 # MAGIC ### Setup: Liquid Clustering
 # MAGIC Creates per-exercise tables for liquid clustering practice.
-# MAGIC Run automatically via `%run` from the exercise notebook.
+# MAGIC Runs automatically through `%run` from `05_liquid-clustering.py`; you never run it by hand.
 
 # COMMAND ----------
 
@@ -14,9 +14,11 @@ BASE_SCHEMA = "delta_lake"
 BASE_IDS = "('ORD-001', 'ORD-002', 'ORD-003', 'ORD-004', 'ORD-005')"
 
 def _create_fragmented_clustered_table(name, cluster_col="status"):
-    """Create a liquid clustered table with many small files."""
+    """Create an empty liquid clustered table, then insert the first 20 order_ids two per INSERT: 10 INSERTs, about 10 small files.
+    Dropped first so the history restarts at version 0 (CREATE OR REPLACE would keep earlier OPTIMIZE rows)."""
+    spark.sql(f"DROP TABLE IF EXISTS {CATALOG}.{SCHEMA}.{name}")
     spark.sql(f"""
-        CREATE OR REPLACE TABLE {CATALOG}.{SCHEMA}.{name}
+        CREATE TABLE {CATALOG}.{SCHEMA}.{name}
         CLUSTER BY ({cluster_col})
         TBLPROPERTIES ('delta.autoOptimize.optimizeWrite' = 'false', 'delta.autoOptimize.autoCompact' = 'false')
         AS SELECT * FROM {CATALOG}.{BASE_SCHEMA}.orders WHERE 1=0
@@ -28,10 +30,14 @@ def _create_fragmented_clustered_table(name, cluster_col="status"):
 
 # COMMAND ----------
 
+# Output tables are created only by the exercise cells: drop them so an unsolved exercise fails its check on every run
+for _t in ["lc_ex1_orders", "lc_ex3_report", "lc_ex5_proof", "lc_ex6_orders", "lc_ex7_clustered"]:
+    spark.sql(f"DROP TABLE IF EXISTS {CATALOG}.{SCHEMA}.{_t}")
+
 # Exercise 2: fragmented clustered table (for OPTIMIZE)
 _create_fragmented_clustered_table("lc_ex2_orders")
 
-# Exercise 3: clustered + optimized table (for inspection)
+# Checkpoint 3: clustered + optimized table (for inspection)
 _create_fragmented_clustered_table("lc_ex3_orders")
 spark.sql(f"OPTIMIZE {CATALOG}.{SCHEMA}.lc_ex3_orders")
 

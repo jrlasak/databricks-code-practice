@@ -2,14 +2,14 @@
 
 Single-topic labs that go deep on one technique or capability - hands-on, end to end. Not a broad pipeline; one topic, done thoroughly, until you can do it for real.
 
-1-3 hours each. Sequential - each step layers on the last.
+1-5 hours each; every lab README gives its own estimate. Sequential - each step layers on the last.
 
 ## Labs
 
 | Lab | What You Build | Focus |
 |---|---|---|
-| [6 Delta Optimization Techniques](optimization-techniques/) | Iteratively apply and measure core Delta performance levers on a synthetic 50M-row dataset. | Partitioning, Z-Order, OPTIMIZE, Auto Optimize, Liquid Clustering, VACUUM |
-| [Build a Genie Space](genie-sales-analytics/) | Stand up and tune a production Databricks Genie space on a retail star schema, then benchmark its natural-language answer accuracy against ground-truth SQL. | Genie, Unity Catalog Functions, Star Schema, Benchmarking, AI/BI Dashboards |
+| [6 Delta Optimization Techniques](optimization-techniques/) | Measure files and bytes read on partitioned, Z-Ordered and Liquid Clustered copies of a 10M-row, 2,000-file sales table, then run OPTIMIZE, auto compaction and VACUUM and read what each one changed in the table history. | Partitioning, Z-Order, Liquid Clustering, OPTIMIZE, Auto Compaction, Deletion Vectors, VACUUM |
+| [Build a Genie Agent](genie-sales-analytics/) | Stand up a Databricks Genie Agent on a retail star schema (joins, SQL expressions, 8 example queries, 3 Unity Catalog functions), score it with a 10-question benchmark, then embed it in an AI/BI dashboard. | Genie Agent, Unity Catalog Functions, Star Schema, Benchmarks, AI/BI Dashboards |
 
 ## How a deep-dive works
 
@@ -31,7 +31,7 @@ Each deep-dive is self-contained:
   README.md                      # Scenario + walkthrough
 ```
 
-Exact files vary by lab (some add a `data_generator.py`, others a `genie-setup/` guide folder) - each lab's `README.md` is the source of truth.
+Exact files vary by lab (some keep the notebooks in a `notebooks/` folder, some add a `data_generator.py`, others a `genie-setup/` guide folder) - each lab's `README.md` is the source of truth.
 
 ## How to run
 

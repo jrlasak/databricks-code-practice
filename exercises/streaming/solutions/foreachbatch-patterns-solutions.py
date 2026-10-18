@@ -25,7 +25,7 @@ CHECKPOINT_BASE = f"/Volumes/{CATALOG}/{SCHEMA}/checkpoints"
 # MAGIC **Common mistakes**:
 # MAGIC - Calling `batch_df.writeStream...` inside the function (batch_df is a static DataFrame, not streaming)
 # MAGIC - Forgetting `.awaitTermination()` - the assertion cell runs before the stream finishes and sees an empty table
-# MAGIC - Using `mode("overwrite")` and getting only the last batch (here there is one batch under availableNow so it accidentally passes, but it would silently break with multiple batches)
+# MAGIC - Using `mode("overwrite")` and getting only the last batch (this 40-row source fits in one batch, so it accidentally passes, but it would silently break with multiple batches)
 # MAGIC - Wiring `foreachBatch` AND `format("delta").toTable(...)` together - they are mutually exclusive sinks
 
 # COMMAND ----------
@@ -54,7 +54,7 @@ def foreach_batch_function(batch_df, batch_id):
 # MAGIC
 # MAGIC **Hints**:
 # MAGIC 1. MERGE INTO works only on static DataFrames, so it must run inside `foreachBatch`, not on the streaming DataFrame
-# MAGIC 2. Inside the function, register `batch_df` as a temp view (`batch_df.createOrReplaceTempView(...)`) then call `spark.sql("MERGE INTO ... USING <view> ...")`
+# MAGIC 2. Inside the function, register `batch_df` as a temp view (`batch_df.createOrReplaceTempView(...)`), then run the MERGE with `batch_df.sparkSession.sql("MERGE INTO ... USING <view> ...")`. `spark.sql(...)` runs in a different session and cannot see the view
 # MAGIC 3. The MERGE matches on `event_id`, does `WHEN MATCHED THEN UPDATE SET *` and `WHEN NOT MATCHED THEN INSERT *`
 # MAGIC
 # MAGIC **Common mistakes**:
@@ -95,12 +95,12 @@ def foreach_batch_function(batch_df, batch_id):
 # MAGIC **Hints**:
 # MAGIC 1. Without materialization, each `.write` on `batch_df` recomputes the upstream plan - that means the source Delta scan runs twice
 # MAGIC 2. On classic compute the idiomatic fix is `batch_df.cache()` / `batch_df.unpersist()`. On Databricks Free Edition (serverless) `cache()`/`persist()` is rejected with `[NOT_SUPPORTED_WITH_SERVERLESS]`, so use the serverless-safe substitute: `rows = batch_df.collect()` + `materialized = batch_df.sparkSession.createDataFrame(rows, batch_df.schema)`
-# MAGIC 3. The collected rows live in the driver, so this pattern is safe only for the small microbatches typical of `availableNow` over bounded Delta sources. For huge batches on classic compute you would prefer `cache()`
+# MAGIC 3. The collected rows live in the driver, so this pattern is safe only for small batches like these 40-row sources. For huge batches on classic compute you would prefer `cache()`
 # MAGIC
 # MAGIC **Common mistakes**:
 # MAGIC - Calling `batch_df.cache()` on Free Edition - raises `[NOT_SUPPORTED_WITH_SERVERLESS] PERSIST TABLE is not supported on serverless compute`
 # MAGIC - Calling `cache()` on the streaming DataFrame outside `foreachBatch` - streaming DataFrames cannot be cached at all
-# MAGIC - Skipping the materialize step on big batches and double-scanning the source - assertions still pass on small data but doubles cost on real loads
+# MAGIC - Skipping the materialize step on big batches - every read re-scans the source, which doubles the cost on real loads
 # MAGIC - Writing the second sink with `mode("overwrite")` - it would erase the previous batch's data
 
 # COMMAND ----------
@@ -145,15 +145,13 @@ def foreach_batch_function(batch_df, batch_id):
 # MAGIC ## Exercise 4: Idempotent foreachBatch via batch_id Dedup Key
 # MAGIC
 # MAGIC **Hints**:
-# MAGIC 1. Tag every row in the batch with the `batch_id` argument using `withColumn("batch_id", F.lit(batch_id).cast("long"))`
-# MAGIC 2. Use a MERGE with the join key `(event_id, batch_id)` and ONLY `WHEN NOT MATCHED THEN INSERT *`. No `WHEN MATCHED` clause - a replay must be a no-op, not an update
+# MAGIC 1. Tag every row in the batch with the `batch_id` argument using `withColumn("batch_id", F.lit(batch_id).cast("long"))` (the cast matches the target's `LONG` column)
+# MAGIC 2. Use a MERGE with the join key `(event_id, batch_id)` and ONLY `WHEN NOT MATCHED THEN INSERT *`. No `WHEN MATCHED` clause - a replay must be a no-op, not an update. An `event_id`-only key with no `WHEN MATCHED` would also skip the replay, but it skips any later batch that re-sends an `event_id` too.
 # MAGIC 3. Calling `foreach_batch_function(spark.table(ex4_source), <same_batch_id>)` a second time should perform a MERGE that finds existing rows and does nothing
 # MAGIC
 # MAGIC **Common mistakes**:
-# MAGIC - Joining MERGE on `event_id` alone - on replay the WHEN NOT MATCHED branch finds no new rows, but if you add WHEN MATCHED THEN UPDATE you mutate `batch_id` and the test for "1 distinct batch_id" passes spuriously. Joining on both columns makes the semantics explicit
 # MAGIC - Including `WHEN MATCHED THEN UPDATE SET *` - replays now update rows; the row count stays the same but you have lost idempotency for any downstream consumer reading the change feed
 # MAGIC - Tagging with `F.current_timestamp()` instead of `F.lit(batch_id)` - now every replay has a different "batch identifier" and dedupe fails
-# MAGIC - Forgetting to cast batch_id to LONG - schema mismatch with the target table
 
 # COMMAND ----------
 
@@ -183,7 +181,7 @@ def foreach_batch_function(batch_df, batch_id):
 )
 
 # Manually replay with the same batch_id as the streamed batch.
-# availableNow produces a single microbatch with batch_id=0 for a fresh stream.
+# This 40-row source fits in one microbatch, so a fresh checkpoint gives it batch_id=0.
 applied_batch_id = (
     spark.table(f"{CATALOG}.{SCHEMA}.ex4_target")
     .select("batch_id")
@@ -202,11 +200,11 @@ foreach_batch_function(
 # MAGIC **Hints**:
 # MAGIC 1. Materialize `batch_df` once via `collect()` + `createDataFrame(rows, schema)` - you will read it three times (good filter, negative-amount filter, null-user filter). On Free Edition serverless `batch_df.cache()` is rejected, so this is the serverless-safe substitute
 # MAGIC 2. Use `.filter()` and `.withColumn("reason", F.lit("..."))` to tag the rejects before appending to quarantine
-# MAGIC 3. The quarantine append must match the table schema - the base 5 columns plus `reason`. `withColumn` adds it at the end which matches the target schema column order
+# MAGIC 3. The quarantine table has the 5 base columns plus `reason`. `saveAsTable` in append mode matches columns by name, so adding `reason` with `withColumn` is all the append needs
 # MAGIC
 # MAGIC **Common mistakes**:
 # MAGIC - Calling `batch_df.cache()` on Free Edition - raises `[NOT_SUPPORTED_WITH_SERVERLESS]`
-# MAGIC - Writing rejects without a `reason` column - schema mismatch, append fails
+# MAGIC - Writing rejects without a `reason` column - the append still succeeds (Delta fills the missing column with NULL), so every quarantined row loses the reason it was rejected
 # MAGIC - Using `.union()` to combine the two reject sets without first adding the `reason` column - both reason values end up null
 # MAGIC - Forgetting that the good filter is `amount >= 0 AND user_id IS NOT NULL` - using just one of the predicates leaks bad rows into the main target
 # MAGIC - Writing to quarantine with `mode("overwrite")` - subsequent microbatches erase earlier rejects
@@ -217,8 +215,7 @@ foreach_batch_function(
 from pyspark.sql import functions as F
 
 def foreach_batch_function(batch_df, batch_id):
-    # NOTE: Free Edition serverless rejects batch_df.cache(). Use collect()+createDataFrame
-    # to materialize the (small) microbatch once instead.
+    # Materialize once: the good filter and both reject filters read this copy
     rows = batch_df.collect()
     materialized = batch_df.sparkSession.createDataFrame(rows, batch_df.schema)
 
@@ -262,13 +259,12 @@ def foreach_batch_function(batch_df, batch_id):
 # MAGIC
 # MAGIC **Hints**:
 # MAGIC 1. Materialize `batch_df` once via `collect()` + `createDataFrame(rows, schema)` - you read it for `count()`, for the filtered `count()`, and again for the write. On Free Edition serverless `batch_df.cache()` is rejected, so this is the serverless-safe substitute
-# MAGIC 2. Use `spark.createDataFrame([(batch_id, rows_in, rows_good, rows_quarantined, datetime.now())], schema)` to build the one-row metrics DataFrame, then append it
-# MAGIC 3. Use `F.current_timestamp()` via a column expression OR just build a `datetime.now()` Python value - both work
+# MAGIC 2. Build the metrics row as a one-row DataFrame from a Python tuple `(batch_id, rows_in, rows_good, rows_quarantined, datetime.now())`, then append it to `ex6_metrics`
+# MAGIC 3. `batch_df.sparkSession.createDataFrame([(batch_id, rows_in, rows_good, rows_quarantined, datetime.now())], schema)` with a schema of `LongType()` for the first four fields and `TimestampType()` for `processed_at` matches the `ex6_metrics` columns exactly
 # MAGIC
 # MAGIC **Common mistakes**:
 # MAGIC - Calling `batch_df.cache()` on Free Edition - raises `[NOT_SUPPORTED_WITH_SERVERLESS]`
-# MAGIC - Computing `rows_quarantined` by reading the quarantine table after writing - that's slow and double-counts on retries
-# MAGIC - Using `spark.sql("INSERT INTO ex6_metrics VALUES (...)")` - works but mixes string formatting with values, prone to injection / quoting bugs
+# MAGIC - Computing `rows_good` by reading `ex6_target` after the write - on a replayed batch the table already holds the earlier attempt's rows, so the count comes out too high
 # MAGIC - Skipping the materialize step - the three `.count()` / `.filter()` calls each re-read the source from Delta
 # MAGIC - Writing the metrics row to `ex6_target` by accident (schema mismatch, runtime error)
 
@@ -280,9 +276,7 @@ from pyspark.sql.types import StructType, StructField, LongType, TimestampType
 from datetime import datetime
 
 def foreach_batch_function(batch_df, batch_id):
-    # NOTE: Free Edition serverless rejects batch_df.cache(). Materialize via collect()
-    # + createDataFrame so the three subsequent reads (count, filter+count, filter+write)
-    # do not re-scan the source.
+    # Materialize once: count, filter+count and the write read this copy
     rows = batch_df.collect()
     materialized = batch_df.sparkSession.createDataFrame(rows, batch_df.schema)
 
@@ -313,7 +307,7 @@ def foreach_batch_function(batch_df, batch_id):
         int(rows_quarantined),
         datetime.now(),
     )]
-    (spark.createDataFrame(metrics_row, schema=metrics_schema)
+    (batch_df.sparkSession.createDataFrame(metrics_row, schema=metrics_schema)
         .write
         .format("delta")
         .mode("append")
@@ -337,14 +331,13 @@ def foreach_batch_function(batch_df, batch_id):
 # MAGIC **Hints**:
 # MAGIC 1. The production pattern (classic compute): `batch_df.cache()` -> split into `good_df` / `bad_df` -> MERGE good into main target -> append bad to quarantine -> `unpersist()`
 # MAGIC 2. On Free Edition serverless, swap `cache()` for the materialize pattern: `rows = batch_df.collect()` + `materialized = batch_df.sparkSession.createDataFrame(rows, batch_df.schema)`, then split `materialized` into `good_df` / `bad_df`
-# MAGIC 3. MERGE only works on a static DataFrame registered as a temp view; do it inside the foreachBatch function
+# MAGIC 3. MERGE needs a static source, so run it inside the foreachBatch function: register `good_df` as a temp view and call `batch_df.sparkSession.sql(...)`, or pass `good_df` to `DeltaTable.merge(...)`
 # MAGIC 4. The materialize step must run on `batch_df` itself (the full batch) so both downstream filters share the same in-memory copy
 # MAGIC
 # MAGIC **Common mistakes**:
 # MAGIC - Calling `batch_df.cache()` on Free Edition - raises `[NOT_SUPPORTED_WITH_SERVERLESS]`
 # MAGIC - Materializing `good_df` and `bad_df` separately instead of `batch_df` - the upstream source is still scanned twice (once per filter)
 # MAGIC - MERGE'ing the full batch including bad rows - then negative amounts and NULL user_ids land in the main target
-# MAGIC - Reusing a temp view name across exercises ("fb_batch") and getting cross-exercise pollution - use a unique view name per exercise
 # MAGIC - Using `cache()` outside the function (on the streaming DataFrame) - that is not supported
 
 # COMMAND ----------
@@ -353,9 +346,7 @@ def foreach_batch_function(batch_df, batch_id):
 from pyspark.sql import functions as F
 
 def foreach_batch_function(batch_df, batch_id):
-    # NOTE: Free Edition serverless rejects batch_df.cache(). Materialize via collect()
-    # + createDataFrame so the MERGE (good rows) and the quarantine append (bad rows)
-    # share an in-memory copy of the batch.
+    # Materialize once: the MERGE and the quarantine append read this copy
     rows = batch_df.collect()
     materialized = batch_df.sparkSession.createDataFrame(rows, batch_df.schema)
 

@@ -1,15 +1,15 @@
 # Databricks notebook source
 # COMMAND ----------
 # MAGIC %md
-# MAGIC ### Setup: Stream-Stream Joins
-# MAGIC Creates two streaming source Delta tables (`orders_stream`, `shipments_stream`) and
-# MAGIC per-exercise target tables in the `stream_stream_joins` schema. Timestamps are
-# MAGIC carefully designed so each exercise has predictable output:
+# MAGIC ## Setup: Stream-Stream Joins
+# MAGIC Creates two streaming source Delta tables (`orders_stream`, `shipments_stream`, 32 rows each) in the `stream_stream_joins` schema and drops any target tables and checkpoints from earlier runs. Timestamps decide which pairs fall inside the 5-minute window:
 # MAGIC
 # MAGIC - **ORD-001..ORD-020** -> matched by a shipment WITHIN 5 minutes (20 in-window pairs)
 # MAGIC - **ORD-021..ORD-025** -> matched by a shipment OUTSIDE 5 minutes (5 out-of-window pairs)
 # MAGIC - **ORD-026..ORD-030** -> NO matching shipment (5 unmatched left rows)
 # MAGIC - **SHP-026..SHP-030** -> reference unknown orders ORD-901..ORD-905 (5 orphan shipments)
+# MAGIC - **ORD-200, ORD-201** (11:00, 11:01) -> no shipment; they move the orders watermark to 11:00
+# MAGIC - **SHP-200, SHP-201** (12:00, 12:01) -> reference unknown orders ORD-906, ORD-907; they move the shipments watermark to 12:00
 # MAGIC
 # MAGIC Run automatically via `%run` from the exercise notebook.
 
@@ -29,11 +29,15 @@ CHECKPOINT_BASE = f"/Volumes/{CATALOG}/{SCHEMA}/checkpoints"
 
 # COMMAND ----------
 
-# -- Clean previous runs --
+# Clean previous runs
 # Drop per-exercise target tables and the two streaming source tables, then wipe
 # checkpoints so this setup is fully idempotent.
-for i in range(1, 8):
+for i in range(1, 6):
     spark.sql(f"DROP TABLE IF EXISTS {CATALOG}.{SCHEMA}.ex{i}_target")
+
+# Exercise 6 writes two join outputs and the state measurement table
+for t in ["ex6_unbounded_target", "ex6_bounded_target", "ex6_state"]:
+    spark.sql(f"DROP TABLE IF EXISTS {CATALOG}.{SCHEMA}.{t}")
 
 spark.sql(f"DROP TABLE IF EXISTS {CATALOG}.{SCHEMA}.orders_stream")
 spark.sql(f"DROP TABLE IF EXISTS {CATALOG}.{SCHEMA}.shipments_stream")
@@ -44,16 +48,16 @@ spark.sql(f"CREATE VOLUME IF NOT EXISTS {CATALOG}.{SCHEMA}.checkpoints")
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## Streaming source tables
+# MAGIC ### Streaming source tables
 # MAGIC
-# MAGIC Two Delta tables that the exercises will read as streams. We use Delta tables (not Kafka)
+# MAGIC Two Delta tables that the exercises read as streams. They are Delta tables (not Kafka)
 # MAGIC because Kafka is not available on Free Edition. Reading a Delta table with
 # MAGIC `spark.readStream.table(...)` behaves the same as Kafka for join semantics: each row is a
 # MAGIC streaming event with a logical event-time column.
 
 # COMMAND ----------
 
-# Create orders_stream: 32 rows (30 normal + 2 late watermark-advancement)
+# Create orders_stream: 32 rows (30 normal + 2 watermark-advancing)
 # Base time 2026-04-01 10:00:00; one order per minute.
 spark.sql(f"""
     CREATE OR REPLACE TABLE {CATALOG}.{SCHEMA}.orders_stream (
@@ -98,7 +102,7 @@ spark.sql(f"""
         ('ORD-028', 'CUST-003',  25.00, TIMESTAMP '2026-04-01 10:27:00'),
         ('ORD-029', 'CUST-001', 158.00, TIMESTAMP '2026-04-01 10:28:00'),
         ('ORD-030', 'CUST-004',  42.00, TIMESTAMP '2026-04-01 10:29:00'),
-        -- Late "watermark advancement" orders: these push the orders watermark well past
+        -- Watermark-advancing orders: these push the orders watermark well past
         -- the windows of orders 21-30 so that outer joins can emit unmatched NULL rows
         -- under availableNow. They have no shipments, so they are themselves unmatched-left.
         ('ORD-200', 'CUST-001',  10.00, TIMESTAMP '2026-04-01 11:00:00'),
@@ -107,7 +111,7 @@ spark.sql(f"""
 
 # COMMAND ----------
 
-# Create shipments_stream: 32 rows (30 normal + 2 late watermark-advancement)
+# Create shipments_stream: 32 rows (30 normal + 2 watermark-advancing)
 # - SHP-001..SHP-020 ship within 5 min of their matching order  (in-window matches)
 # - SHP-021..SHP-025 ship 10 min after their order              (out-of-window matches)
 # - SHP-026..SHP-030 reference ORD-901..ORD-905 (orphan shipments)
@@ -155,9 +159,9 @@ spark.sql(f"""
         ('SHP-028', 'ORD-903', 'UPS',    TIMESTAMP '2026-04-01 10:37:00'),
         ('SHP-029', 'ORD-904', 'FedEx',  TIMESTAMP '2026-04-01 10:38:00'),
         ('SHP-030', 'ORD-905', 'USPS',   TIMESTAMP '2026-04-01 10:39:00'),
-        -- Late "watermark advancement" shipments: push the shipments watermark well past
-        -- 11:01 so that left-outer joins can emit unmatched NULL rows for orders 21-30.
-        -- They reference unknown orders, so they are themselves unmatched-right.
+        -- SHP-200 and SHP-201 move the shipments watermark to 12:00. The join uses the minimum of
+        -- both watermarks (11:00, set by ORD-201), which passes the windows of ORD-021..ORD-030
+        -- and SHP-021..SHP-030. They reference unknown orders, so they are themselves unmatched-right.
         ('SHP-200', 'ORD-906', 'UPS',    TIMESTAMP '2026-04-01 12:00:00'),
         ('SHP-201', 'ORD-907', 'FedEx',  TIMESTAMP '2026-04-01 12:01:00')
 """)
@@ -165,9 +169,8 @@ spark.sql(f"""
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## Per-exercise checkpoint subdirectories
-# MAGIC Each exercise writes its checkpoint to `/Volumes/.../checkpoints/exN/`.
-# MAGIC Volumes are created lazily on first write, so we don't pre-create them.
+# MAGIC ### Checkpoints
+# MAGIC Each exercise's checkpoint subdirectory (`/Volumes/db_code/stream_stream_joins/checkpoints/exN/`) appears on the stream's first write.
 
 # COMMAND ----------
 
@@ -179,6 +182,6 @@ print( "  Pair design:")
 print( "    ORD-001..ORD-020 -> matching shipment within 5 minutes  (20 in-window pairs)")
 print( "    ORD-021..ORD-025 -> matching shipment 10 minutes later  (5 out-of-window pairs)")
 print( "    ORD-026..ORD-030 -> no matching shipment                (5 unmatched orders)")
-print( "    ORD-200..ORD-201 -> late orders, no shipment            (2 watermark-advancement rows)")
+print( "    ORD-200..ORD-201 -> watermark-advancing orders, no shipment (2 rows)")
 print( "    SHP-026..SHP-030 -> orphan shipments (ORD-901..ORD-905) (5 unmatched shipments)")
-print( "    SHP-200..SHP-201 -> late orphan shipments               (2 watermark-advancement rows)")
+print( "    SHP-200..SHP-201 -> watermark-advancing orphan shipments (2 rows)")

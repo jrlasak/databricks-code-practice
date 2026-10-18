@@ -4,8 +4,7 @@
 # MAGIC # Time Travel & Restore - Solutions
 # MAGIC **Topic**: Delta Lake | **Exercises**: 7 | **Checkpoints**: 1
 # MAGIC
-# MAGIC Reference solutions, hints, and common mistakes for each exercise.
-# MAGIC Try solving the exercises first before looking here.
+# MAGIC Reference solutions, hints and common mistakes for each exercise. Try each exercise before you read its section.
 
 # COMMAND ----------
 # MAGIC %md
@@ -17,7 +16,6 @@
 # MAGIC 3. Save the result using `CREATE TABLE AS SELECT` or `.write.saveAsTable()`
 # MAGIC
 # MAGIC **Common mistakes**:
-# MAGIC - Using `TIMESTAMP AS OF` instead of `VERSION AS OF` (different syntax)
 # MAGIC - Forgetting that version 0 is the initial create, not version 1
 # MAGIC - Querying without saving to the output table
 
@@ -44,9 +42,9 @@ spark.sql(f"""
 # MAGIC
 # MAGIC **Common mistakes**:
 # MAGIC - Hardcoding a timestamp (fragile, depends on when setup ran)
-# MAGIC - Filtering by version number instead of operation type (auto-OPTIMIZE may shift version numbers)
+# MAGIC - Filtering by version number instead of operation type (auto compaction can shift version numbers)
 # MAGIC - Missing quotes around the timestamp value in the SQL string
-# MAGIC - Using `VERSION AS OF` instead of `TIMESTAMP AS OF` (defeats the exercise purpose)
+# MAGIC - Using `VERSION AS OF` instead of `TIMESTAMP AS OF` (in production you usually know when an incident happened, not its version number)
 
 # COMMAND ----------
 
@@ -69,14 +67,13 @@ spark.sql(f"""
 # MAGIC 1. `DESCRIBE HISTORY table_name` returns one row per version
 # MAGIC 2. The `operation` column shows: CREATE TABLE AS SELECT, UPDATE, DELETE, WRITE, MERGE, OPTIMIZE, etc.
 # MAGIC 3. Count the rows to get total versions, read the `operation` column for each
-# MAGIC 4. On serverless, auto-OPTIMIZE may add extra versions (OPTIMIZE operations) between your DML
-# MAGIC 5. DML operations are non-OPTIMIZE operations (CREATE TABLE AS SELECT, UPDATE, DELETE, WRITE, MERGE, RESTORE)
+# MAGIC 4. For `num_dml_operations`, count every history row whose `operation` is not `OPTIMIZE` (CREATE TABLE AS SELECT, UPDATE, DELETE, WRITE, MERGE and RESTORE all count)
 # MAGIC
 # MAGIC **Common mistakes**:
 # MAGIC - Using `SHOW HISTORY` (wrong command - it's DESCRIBE HISTORY)
 # MAGIC - Confusing version numbering (starts at 0, not 1)
 # MAGIC - Confusing INSERT operation name (it shows as "WRITE", not "INSERT")
-# MAGIC - Assuming version numbers are sequential without gaps (auto-OPTIMIZE can add versions)
+# MAGIC - Assuming the UPDATE is version 1 and the DELETE version 2 (an auto compaction `OPTIMIZE` commit can sit between them and shift the numbers)
 
 # COMMAND ----------
 
@@ -86,14 +83,14 @@ hist = spark.sql(f"DESCRIBE HISTORY {CATALOG}.{SCHEMA}.tt_ex3_orders")
 hist.select("version", "operation").orderBy("version").show()
 
 total_versions = hist.count()
-last_dml_operation = hist.orderBy(hist.version.desc()).select("operation").collect()[0][0]
-# Count DML operations (everything except OPTIMIZE)
+latest_operation = hist.orderBy(hist.version.desc()).select("operation").collect()[0][0]
+# Count every operation except OPTIMIZE (the CREATE TABLE AS SELECT row counts)
 num_dml_operations = hist.filter("operation != 'OPTIMIZE'").count()
 
 spark.sql(f"""
     CREATE OR REPLACE TABLE {CATALOG}.{SCHEMA}.tt_ex3_history AS
     SELECT CAST({total_versions} AS INT) AS total_versions,
-           '{last_dml_operation}' AS last_dml_operation,
+           '{latest_operation}' AS latest_operation,
            CAST({num_dml_operations} AS INT) AS num_dml_operations
 """)
 
@@ -104,7 +101,6 @@ spark.sql(f"""
 # MAGIC **Hints**:
 # MAGIC 1. The RESTORE command reverts a table to a specific version or timestamp
 # MAGIC 2. Syntax: `RESTORE TABLE table_name TO VERSION AS OF N`
-# MAGIC 3. RESTORE creates a new version (it doesn't delete history)
 # MAGIC
 # MAGIC **Common mistakes**:
 # MAGIC - Using `ALTER TABLE` or `CREATE OR REPLACE` instead of RESTORE
@@ -157,7 +153,7 @@ spark.sql(f"""
 #     FULL OUTER JOIN {CATALOG}.{SCHEMA}.tt_ex5_orders cur
 #       ON v0.order_id = cur.order_id
 #     WHERE v0.order_id IS NULL OR cur.order_id IS NULL
-#        OR v0.amount != cur.amount OR v0.status != cur.status
+#        OR NOT (v0.customer_id <=> cur.customer_id) OR NOT (v0.product_id <=> cur.product_id) OR NOT (v0.amount <=> cur.amount) OR NOT (v0.status <=> cur.status) OR NOT (v0.order_date <=> cur.order_date) OR NOT (v0.updated_at <=> cur.updated_at)
 # """)
 
 # COMMAND ----------
@@ -166,14 +162,13 @@ spark.sql(f"""
 # MAGIC
 # MAGIC **Hints**:
 # MAGIC 1. First, find the bad row: `SELECT * FROM tt_ex6_orders WHERE amount > 1000`
-# MAGIC 2. Use `DESCRIBE HISTORY` to get all version numbers (don't hardcode - auto-OPTIMIZE may add extra versions)
-# MAGIC 3. Check each version: `SELECT COUNT(*) FROM tt_ex6_orders VERSION AS OF {v} WHERE order_id = '...'`
+# MAGIC 2. Use `DESCRIBE HISTORY` to get all version numbers (don't hardcode: auto compaction may add versions)
+# MAGIC 3. Check each version: `SELECT COUNT(*) FROM tt_ex6_orders VERSION AS OF <version> WHERE order_id = '<bad order_id>'`
 # MAGIC 4. The version where the count goes from 0 to 1 is when it was introduced
 # MAGIC
 # MAGIC **Common mistakes**:
 # MAGIC - Only checking the current version (need to trace back through history)
 # MAGIC - Starting from the latest version instead of v0 (find the FIRST appearance)
-# MAGIC - Hardcoding version numbers (use DESCRIBE HISTORY to get actual versions)
 
 # COMMAND ----------
 
@@ -211,9 +206,8 @@ spark.sql(f"""
 # MAGIC 3. This is more surgical than RESTORE - you pick which rows to fix
 # MAGIC
 # MAGIC **Common mistakes**:
-# MAGIC - Using RESTORE instead of MERGE (RESTORE reverts everything, not just specific rows)
-# MAGIC - Matching on order_id alone without filtering for cancelled status (would update all matched rows)
-# MAGIC - Forgetting that time travel reads are version-locked (v0 data doesn't change)
+# MAGIC - Matching on order_id alone without filtering for cancelled status (it also reverts ORD-001's later valid update)
+# MAGIC - Using the current table as the MERGE source instead of `VERSION AS OF 0` (the current rows already carry the bad status)
 
 # COMMAND ----------
 
@@ -232,13 +226,11 @@ spark.sql(f"""
 # MAGIC **Hints**:
 # MAGIC 1. The setup stored the INSERT version number in `TT_EX8_INSERT_V` - use it with `VERSION AS OF`
 # MAGIC 2. Aggregate with `COUNT(*)` and `SUM(amount)` in a single query
-# MAGIC 3. Save the result with the exact column names the assertions expect
+# MAGIC 3. Alias the columns `order_count` and `total_amount`
 # MAGIC
 # MAGIC **Common mistakes**:
 # MAGIC - Querying the current version instead of the INSERT version (current has corrupted data)
-# MAGIC - Hardcoding `VERSION AS OF 1` (auto-OPTIMIZE may shift version numbers - use `TT_EX8_INSERT_V`)
-# MAGIC - Using wrong column aliases (must be `order_count` and `total_amount`)
-# MAGIC - Forgetting that `COUNT(*)` returns LONG and `SUM(amount)` returns DOUBLE
+# MAGIC - Hardcoding `VERSION AS OF 1` (auto compaction can shift version numbers - use `TT_EX8_INSERT_V`)
 
 # COMMAND ----------
 

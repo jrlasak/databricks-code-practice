@@ -2,8 +2,9 @@
 # COMMAND ----------
 # MAGIC %md
 # MAGIC ### Setup: Change Data Feed (CDF)
-# MAGIC Creates per-exercise tables with CDF enabled and pre-performed operations.
-# MAGIC Run automatically via `%run` from the exercise notebook.
+# MAGIC Creates one table per exercise in `db_code.change_data_feed` (CDF on for every table except `cdf_ex1_orders`) and applies the INSERT, UPDATE, DELETE and MERGE each exercise reads back.
+# MAGIC
+# MAGIC The exercise notebook runs it for you with `%run`.
 
 # COMMAND ----------
 
@@ -15,9 +16,19 @@ BASE_IDS = "('ORD-001', 'ORD-002', 'ORD-003', 'ORD-004', 'ORD-005')"
 
 # COMMAND ----------
 
-# Exercise 1: table WITHOUT CDF (user enables it)
+# Drop every table first so each one starts again at version 0 on every run (CREATE OR REPLACE would keep the old history)
+for t in ["cdf_ex1_orders", "cdf_ex2_orders", "cdf_ex3_orders", "cdf_ex4_orders", "cdf_ex5_orders",
+          "cdf_ex6_source", "cdf_ex6_target", "cdf_ex7_orders", "cdf_ex7_source"]:
+    spark.sql(f"DROP TABLE IF EXISTS {CATALOG}.{SCHEMA}.{t}")
+
+# Drop the output tables your answers create (and the leftover cdf_ex7_changes), so an unsolved exercise fails its check on every rerun
+for t in ["cdf_ex2_changes", "cdf_ex3_changes", "cdf_ex4_changes", "cdf_ex5_inserts", "cdf_ex7_counts",
+          "cdf_ex7_changes"]:
+    spark.sql(f"DROP TABLE IF EXISTS {CATALOG}.{SCHEMA}.{t}")
+
+# Exercise 1: table without CDF (you enable it)
 spark.sql(f"""
-    CREATE OR REPLACE TABLE {CATALOG}.{SCHEMA}.cdf_ex1_orders
+    CREATE TABLE {CATALOG}.{SCHEMA}.cdf_ex1_orders
     TBLPROPERTIES ('delta.autoOptimize.optimizeWrite' = 'false', 'delta.autoOptimize.autoCompact' = 'false')
     AS SELECT * FROM {CATALOG}.{BASE_SCHEMA}.orders
     WHERE order_id IN {BASE_IDS}
@@ -25,7 +36,7 @@ spark.sql(f"""
 
 # Exercise 2: CDF enabled, then INSERT 2 rows at v1
 spark.sql(f"""
-    CREATE OR REPLACE TABLE {CATALOG}.{SCHEMA}.cdf_ex2_orders
+    CREATE TABLE {CATALOG}.{SCHEMA}.cdf_ex2_orders
     TBLPROPERTIES (delta.enableChangeDataFeed = true, 'delta.autoOptimize.optimizeWrite' = 'false', 'delta.autoOptimize.autoCompact' = 'false')
     AS SELECT * FROM {CATALOG}.{BASE_SCHEMA}.orders
     WHERE order_id IN {BASE_IDS}
@@ -38,7 +49,7 @@ spark.sql(f"""
 
 # Exercise 3: CDF enabled, then UPDATE at v1
 spark.sql(f"""
-    CREATE OR REPLACE TABLE {CATALOG}.{SCHEMA}.cdf_ex3_orders
+    CREATE TABLE {CATALOG}.{SCHEMA}.cdf_ex3_orders
     TBLPROPERTIES (delta.enableChangeDataFeed = true, 'delta.autoOptimize.optimizeWrite' = 'false', 'delta.autoOptimize.autoCompact' = 'false')
     AS SELECT * FROM {CATALOG}.{BASE_SCHEMA}.orders
     WHERE order_id IN {BASE_IDS}
@@ -51,7 +62,7 @@ spark.sql(f"""
 
 # Exercise 4: CDF enabled, then DELETE at v1
 spark.sql(f"""
-    CREATE OR REPLACE TABLE {CATALOG}.{SCHEMA}.cdf_ex4_orders
+    CREATE TABLE {CATALOG}.{SCHEMA}.cdf_ex4_orders
     TBLPROPERTIES (delta.enableChangeDataFeed = true, 'delta.autoOptimize.optimizeWrite' = 'false', 'delta.autoOptimize.autoCompact' = 'false')
     AS SELECT * FROM {CATALOG}.{BASE_SCHEMA}.orders
     WHERE order_id IN {BASE_IDS}
@@ -65,7 +76,7 @@ spark.sql(f"""
 
 # Exercise 5: CDF enabled, then INSERT + UPDATE + DELETE (v1, v2, v3)
 spark.sql(f"""
-    CREATE OR REPLACE TABLE {CATALOG}.{SCHEMA}.cdf_ex5_orders
+    CREATE TABLE {CATALOG}.{SCHEMA}.cdf_ex5_orders
     TBLPROPERTIES (delta.enableChangeDataFeed = true, 'delta.autoOptimize.optimizeWrite' = 'false', 'delta.autoOptimize.autoCompact' = 'false')
     AS SELECT * FROM {CATALOG}.{BASE_SCHEMA}.orders
     WHERE order_id IN {BASE_IDS}
@@ -85,7 +96,7 @@ spark.sql(f"""
 
 # Exercise 6: source with CDF + target (copy of v0 state, needs sync)
 spark.sql(f"""
-    CREATE OR REPLACE TABLE {CATALOG}.{SCHEMA}.cdf_ex6_source
+    CREATE TABLE {CATALOG}.{SCHEMA}.cdf_ex6_source
     TBLPROPERTIES (delta.enableChangeDataFeed = true, 'delta.autoOptimize.optimizeWrite' = 'false', 'delta.autoOptimize.autoCompact' = 'false')
     AS SELECT * FROM {CATALOG}.{BASE_SCHEMA}.orders
     WHERE order_id IN {BASE_IDS}
@@ -105,20 +116,20 @@ spark.sql(f"""
 """)
 # Target: copy of source's initial state (v0) - out of sync
 spark.sql(f"""
-    CREATE OR REPLACE TABLE {CATALOG}.{SCHEMA}.cdf_ex6_target
+    CREATE TABLE {CATALOG}.{SCHEMA}.cdf_ex6_target
     TBLPROPERTIES ('delta.autoOptimize.optimizeWrite' = 'false', 'delta.autoOptimize.autoCompact' = 'false')
     AS SELECT * FROM {CATALOG}.{SCHEMA}.cdf_ex6_source VERSION AS OF 0
 """)
 
 # Exercise 7: CDF enabled, then MERGE at v1
 spark.sql(f"""
-    CREATE OR REPLACE TABLE {CATALOG}.{SCHEMA}.cdf_ex7_orders
+    CREATE TABLE {CATALOG}.{SCHEMA}.cdf_ex7_orders
     TBLPROPERTIES (delta.enableChangeDataFeed = true, 'delta.autoOptimize.optimizeWrite' = 'false', 'delta.autoOptimize.autoCompact' = 'false')
     AS SELECT * FROM {CATALOG}.{BASE_SCHEMA}.orders
     WHERE order_id IN {BASE_IDS}
 """)
 spark.sql(f"""
-    CREATE OR REPLACE TABLE {CATALOG}.{SCHEMA}.cdf_ex7_source AS
+    CREATE TABLE {CATALOG}.{SCHEMA}.cdf_ex7_source AS
     SELECT * FROM VALUES
         ('ORD-001', 'CUST-001', 'PROD-001', 130.00, 'shipped', DATE '2026-03-01', TIMESTAMP '2026-03-01 10:00:00'),
         ('ORD-101', 'CUST-010', 'PROD-005', 49.99, 'pending', DATE '2026-03-01', TIMESTAMP '2026-03-01 10:00:00')

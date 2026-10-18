@@ -11,11 +11,17 @@ SCHEMA = "time_travel"
 BASE_SCHEMA = "delta_lake"
 
 BASE_IDS = "('ORD-001', 'ORD-002', 'ORD-003', 'ORD-004', 'ORD-005')"
+# Every tt_ex*_orders table is dropped and re-created, so each run starts a fresh history at version 0.
 
-# --- Exercise 1: Query by Version Number ---
-# v0: Create table (5 rows from base)
+# Output tables are created only by the exercise cells: drop them so an unsolved exercise fails its check on every run
+for _t in ["tt_ex1_result", "tt_ex2_result", "tt_ex3_history", "tt_ex5_changes", "tt_ex6_audit", "tt_ex8_report"]:
+    spark.sql(f"DROP TABLE IF EXISTS {CATALOG}.{SCHEMA}.{_t}")
+
+# Exercise 1: Query by Version Number
+# v0: 5 rows from base
+spark.sql(f"DROP TABLE IF EXISTS {CATALOG}.{SCHEMA}.tt_ex1_orders")
 spark.sql(f"""
-    CREATE OR REPLACE TABLE {CATALOG}.{SCHEMA}.tt_ex1_orders
+    CREATE TABLE {CATALOG}.{SCHEMA}.tt_ex1_orders
     AS SELECT * FROM {CATALOG}.{BASE_SCHEMA}.orders
     WHERE order_id IN {BASE_IDS}
 """)
@@ -30,15 +36,12 @@ spark.sql(f"""
     DELETE FROM {CATALOG}.{SCHEMA}.tt_ex1_orders
     WHERE order_id = 'ORD-005'
 """)
-# Record actual version numbers (auto-OPTIMIZE may insert extra versions)
-_hist1 = spark.sql(f"DESCRIBE HISTORY {CATALOG}.{SCHEMA}.tt_ex1_orders").orderBy("version").collect()
-TT_EX1_UPDATE_V = next(r.version for r in _hist1 if r.operation == 'UPDATE')
-TT_EX1_DELETE_V = next(r.version for r in _hist1 if r.operation == 'DELETE')
 
-# --- Exercise 2: Query by Timestamp ---
-# v0: Create table (5 rows)
+# Exercise 2: Query by Timestamp
+# v0: 5 rows
+spark.sql(f"DROP TABLE IF EXISTS {CATALOG}.{SCHEMA}.tt_ex2_orders")
 spark.sql(f"""
-    CREATE OR REPLACE TABLE {CATALOG}.{SCHEMA}.tt_ex2_orders
+    CREATE TABLE {CATALOG}.{SCHEMA}.tt_ex2_orders
     AS SELECT * FROM {CATALOG}.{BASE_SCHEMA}.orders
     WHERE order_id IN {BASE_IDS}
 """)
@@ -53,15 +56,12 @@ spark.sql(f"""
     DELETE FROM {CATALOG}.{SCHEMA}.tt_ex2_orders
     WHERE order_id = 'ORD-003'
 """)
-# Record actual version numbers
-_hist2 = spark.sql(f"DESCRIBE HISTORY {CATALOG}.{SCHEMA}.tt_ex2_orders").orderBy("version").collect()
-TT_EX2_UPDATE_V = next(r.version for r in _hist2 if r.operation == 'UPDATE')
-TT_EX2_DELETE_V = next(r.version for r in _hist2 if r.operation == 'DELETE')
 
-# --- Exercise 3: DESCRIBE HISTORY ---
-# v0: Create table (5 rows)
+# Checkpoint 3: DESCRIBE HISTORY
+# v0: 5 rows
+spark.sql(f"DROP TABLE IF EXISTS {CATALOG}.{SCHEMA}.tt_ex3_orders")
 spark.sql(f"""
-    CREATE OR REPLACE TABLE {CATALOG}.{SCHEMA}.tt_ex3_orders
+    CREATE TABLE {CATALOG}.{SCHEMA}.tt_ex3_orders
     AS SELECT * FROM {CATALOG}.{BASE_SCHEMA}.orders
     WHERE order_id IN {BASE_IDS}
 """)
@@ -84,15 +84,16 @@ spark.sql(f"""
 # Record actual version numbers
 _hist3 = spark.sql(f"DESCRIBE HISTORY {CATALOG}.{SCHEMA}.tt_ex3_orders").orderBy("version").collect()
 TT_EX3_TOTAL_VERSIONS = len(_hist3)
-TT_EX3_LAST_OPERATION = _hist3[-1].operation  # Latest version's operation (always WRITE for INSERT)
+TT_EX3_LATEST_OPERATION = _hist3[-1].operation  # Operation of the highest version (checked by the Checkpoint 3 validate cell)
 TT_EX3_DML_COUNT = sum(1 for r in _hist3 if r.operation != 'OPTIMIZE')
 
 # COMMAND ----------
 
-# --- Exercise 4: RESTORE Table ---
-# v0: Create table (5 rows, good data)
+# Exercise 4: RESTORE Table
+# v0: 5 rows, good data
+spark.sql(f"DROP TABLE IF EXISTS {CATALOG}.{SCHEMA}.tt_ex4_orders")
 spark.sql(f"""
-    CREATE OR REPLACE TABLE {CATALOG}.{SCHEMA}.tt_ex4_orders
+    CREATE TABLE {CATALOG}.{SCHEMA}.tt_ex4_orders
     AS SELECT * FROM {CATALOG}.{BASE_SCHEMA}.orders
     WHERE order_id IN {BASE_IDS}
 """)
@@ -102,10 +103,11 @@ spark.sql(f"""
     SET amount = 0.00
 """)
 
-# --- Exercise 5: Diff Two Versions ---
-# v0: Create table (5 rows)
+# Exercise 5: Diff Two Versions
+# v0: 5 rows
+spark.sql(f"DROP TABLE IF EXISTS {CATALOG}.{SCHEMA}.tt_ex5_orders")
 spark.sql(f"""
-    CREATE OR REPLACE TABLE {CATALOG}.{SCHEMA}.tt_ex5_orders
+    CREATE TABLE {CATALOG}.{SCHEMA}.tt_ex5_orders
     AS SELECT * FROM {CATALOG}.{BASE_SCHEMA}.orders
     WHERE order_id IN {BASE_IDS}
 """)
@@ -126,10 +128,11 @@ spark.sql(f"""
     ('ORD-101', 'CUST-010', 'PROD-005', 49.99, 'pending', DATE '2026-03-01', TIMESTAMP '2026-03-01 10:00:00')
 """)
 
-# --- Exercise 6: Audit Trail ---
-# v0: Create table (5 rows, all amounts < 500)
+# Exercise 6: Audit Trail
+# v0: 5 rows, all amounts < 500
+spark.sql(f"DROP TABLE IF EXISTS {CATALOG}.{SCHEMA}.tt_ex6_orders")
 spark.sql(f"""
-    CREATE OR REPLACE TABLE {CATALOG}.{SCHEMA}.tt_ex6_orders
+    CREATE TABLE {CATALOG}.{SCHEMA}.tt_ex6_orders
     AS SELECT * FROM {CATALOG}.{BASE_SCHEMA}.orders
     WHERE order_id IN {BASE_IDS}
 """)
@@ -150,10 +153,8 @@ spark.sql(f"""
     SET status = 'completed'
     WHERE order_id = 'ORD-002'
 """)
-# Record actual version of the bad insert
+# Version that introduced the order with amount > 1000 (checked by the Exercise 6 validate cell)
 _hist6 = spark.sql(f"DESCRIBE HISTORY {CATALOG}.{SCHEMA}.tt_ex6_orders").orderBy("version").collect()
-# The bad insert is the WRITE operation that introduced ORD-999
-# Find the version where ORD-999 first appears by checking WRITE operations
 TT_EX6_BAD_VERSION = None
 for r in _hist6:
     if r.operation == 'WRITE':
@@ -164,24 +165,32 @@ for r in _hist6:
 
 # COMMAND ----------
 
-# --- Exercise 7: Selective Undo via MERGE + Time Travel ---
-# v0: Create table (5 rows)
+# Exercise 7: Selective Undo via MERGE + Time Travel
+# v0: 5 rows
+spark.sql(f"DROP TABLE IF EXISTS {CATALOG}.{SCHEMA}.tt_ex7_orders")
 spark.sql(f"""
-    CREATE OR REPLACE TABLE {CATALOG}.{SCHEMA}.tt_ex7_orders
+    CREATE TABLE {CATALOG}.{SCHEMA}.tt_ex7_orders
     AS SELECT * FROM {CATALOG}.{BASE_SCHEMA}.orders
     WHERE order_id IN {BASE_IDS}
 """)
-# Bad update - accidentally cancelled low-amount orders
+# Bad update - cancels ORD-003 and ORD-005 (amount < 100)
 spark.sql(f"""
     UPDATE {CATALOG}.{SCHEMA}.tt_ex7_orders
     SET status = 'cancelled'
     WHERE amount < 100
 """)
-
-# --- Exercise 8: Reproducible Reporting ---
-# v0: Create table (5 rows)
+# Valid change after the bad update: ORD-001 shipped (must survive the undo)
 spark.sql(f"""
-    CREATE OR REPLACE TABLE {CATALOG}.{SCHEMA}.tt_ex8_orders
+    UPDATE {CATALOG}.{SCHEMA}.tt_ex7_orders
+    SET status = 'shipped'
+    WHERE order_id = 'ORD-001'
+""")
+
+# Exercise 8: Reproducible Reporting
+# v0: 5 rows
+spark.sql(f"DROP TABLE IF EXISTS {CATALOG}.{SCHEMA}.tt_ex8_orders")
+spark.sql(f"""
+    CREATE TABLE {CATALOG}.{SCHEMA}.tt_ex8_orders
     AS SELECT * FROM {CATALOG}.{BASE_SCHEMA}.orders
     WHERE order_id IN {BASE_IDS}
 """)
@@ -201,7 +210,6 @@ spark.sql(f"""
 # Record actual version of the INSERT (last known-good state)
 _hist8 = spark.sql(f"DESCRIBE HISTORY {CATALOG}.{SCHEMA}.tt_ex8_orders").orderBy("version").collect()
 TT_EX8_INSERT_V = next(r.version for r in _hist8 if r.operation == 'WRITE')
-TT_EX8_BAD_UPDATE_V = max(r.version for r in _hist8 if r.operation == 'UPDATE')
 
 # COMMAND ----------
 

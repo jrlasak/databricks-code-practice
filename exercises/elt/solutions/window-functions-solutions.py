@@ -5,7 +5,7 @@
 # MAGIC **Topic**: ELT | **Exercises**: 8
 # MAGIC
 # MAGIC Reference solutions, hints, and common mistakes for each exercise.
-# MAGIC Try solving the exercises first before looking here.
+# MAGIC Try each exercise before you read its solution.
 
 # COMMAND ----------
 
@@ -85,9 +85,9 @@ spark.sql(f"""
 # MAGIC
 # MAGIC **Common mistakes**:
 # MAGIC - Using LEAD instead of LAG (LEAD looks forward, LAG looks backward)
-# MAGIC - Forgetting to ORDER BY order_date (window functions need deterministic ordering)
-# MAGIC - Trying to replace NULL amount_change with 0 (the spec says NULL for first order)
-# MAGIC - Not handling the $0 amount edge case (amount_change = 0 - 80 = -80, not an error)
+# MAGIC - Leaving ORDER BY order_date out of the OVER clause: LAG requires an ORDER BY, so the query fails without it
+# MAGIC - Replacing the NULL amount_change with 0: the first order has no previous amount, so its change stays NULL
+# MAGIC - Filtering out $0 orders: ORD-306 is a real order, and its change is 0.00 - 80.00 = -80.00
 
 # COMMAND ----------
 
@@ -109,13 +109,12 @@ spark.sql(f"""
 # MAGIC ## Exercise 4: Running Totals with Explicit ROWS BETWEEN Frame
 # MAGIC
 # MAGIC **Hints**:
-# MAGIC 1. SUM() with ORDER BY already defaults to ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
-# MAGIC 2. The exercise requires you to write the frame spec explicitly (not rely on the default)
-# MAGIC 3. ROWS vs RANGE: ROWS counts physical rows, RANGE considers logical values (ROWS is safer for running totals)
+# MAGIC 1. With ORDER BY and no frame, SUM() uses RANGE BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW: rows that tie on the ORDER BY columns all get the same running total
+# MAGIC 2. ORD-409 and ORD-411 share 2026-02-20. With the ROWS frame and `order_date` alone in ORDER BY, nothing decides which of the two comes first, so their running totals can change from run to run
+# MAGIC 3. ROWS counts physical rows; RANGE groups rows with equal ORDER BY values. ROWS gives every row its own running total
 # MAGIC
 # MAGIC **Common mistakes**:
-# MAGIC - Omitting the frame spec (it works due to defaults, but the exercise tests explicit framing)
-# MAGIC - Using RANGE instead of ROWS (RANGE would group ties differently, though not an issue with unique dates)
+# MAGIC - Leaving out the frame and ordering by `order_date` alone: the default RANGE frame gives ORD-409 and ORD-411 the same running total, 425.00, instead of 375.00 and 425.00
 # MAGIC - Using UNBOUNDED FOLLOWING instead of CURRENT ROW (gives the partition total for every row)
 # MAGIC - Forgetting PARTITION BY (calculates running total across ALL customers, not per customer)
 
@@ -131,7 +130,7 @@ spark.sql(f"""
         order_date,
         SUM(amount) OVER (
             PARTITION BY customer_id
-            ORDER BY order_date
+            ORDER BY order_date, order_id
             ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
         ) AS running_total
     FROM {CATALOG}.{SCHEMA}.window_ex4_orders
@@ -171,12 +170,11 @@ spark.sql(f"""
 # MAGIC **Hints**:
 # MAGIC 1. FIRST_VALUE returns the first value in the window frame - with ORDER BY order_date, that is the earliest order
 # MAGIC 2. LAST_VALUE requires an explicit frame ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING
-# MAGIC 3. Without the explicit frame, LAST_VALUE only sees up to the current row (not the actual last)
+# MAGIC 3. Without an explicit frame, the default (RANGE BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) stops at the current row and its ties on order_date, so LAST_VALUE never reaches the partition's last order
 # MAGIC
 # MAGIC **Common mistakes**:
-# MAGIC - Forgetting the frame spec for LAST_VALUE (default frame ends at CURRENT ROW, so LAST_VALUE = current row)
-# MAGIC - Using MAX/MIN instead of FIRST_VALUE/LAST_VALUE (these would work for amounts but not for order_id correlation)
-# MAGIC - Confusing the frame for FIRST_VALUE vs LAST_VALUE (FIRST_VALUE works with default frame; LAST_VALUE does not)
+# MAGIC - Leaving the frame off LAST_VALUE: every row gets its own order back, so ORD-601's `last_order_id` comes out ORD-601 instead of ORD-605
+# MAGIC - Using MIN/MAX instead of FIRST_VALUE/LAST_VALUE: they return the smallest and largest amounts, not the first and last orders' amounts (CUST-001's first order is 100.00 but its MIN is 50.00; its last order is 50.00 but its MAX is 300.00)
 # MAGIC - Not applying the same frame to both LAST_VALUE calls (inconsistent results)
 
 # COMMAND ----------
@@ -213,12 +211,12 @@ spark.sql(f"""
 # MAGIC ## Exercise 7: QUALIFY for Top-N Per Group Without Subquery
 # MAGIC
 # MAGIC **Hints**:
-# MAGIC 1. QUALIFY is a Databricks SQL extension that filters window function results inline (like HAVING for GROUP BY)
+# MAGIC 1. QUALIFY filters window function results inline, the way HAVING filters GROUP BY results (not in ANSI SQL; Databricks SQL supports it)
 # MAGIC 2. Use ROW_NUMBER partitioned by customer_id, ordered by amount DESC
 # MAGIC 3. QUALIFY ROW_NUMBER() ... <= 2 keeps the top 2 per group without needing a subquery or CTE
 # MAGIC
 # MAGIC **Common mistakes**:
-# MAGIC - Wrapping in a CTE/subquery instead of using QUALIFY (works, but misses the point of the exercise)
+# MAGIC - Filtering on the window result in WHERE (`WHERE rn <= 2`): WHERE runs before window functions, so the alias does not exist yet. QUALIFY is the filter that runs after them
 # MAGIC - Using RANK instead of ROW_NUMBER (RANK would keep more than 2 rows if there are ties)
 # MAGIC - Leaving the row_number column in the output (SELECT should list only original columns)
 # MAGIC - Ordering amount ASC instead of DESC (gets bottom 2 instead of top 2)
@@ -238,12 +236,12 @@ spark.sql(f"""
 # MAGIC ## Exercise 8: Sessionization - Assign Session IDs Based on 30-Min Gaps
 # MAGIC
 # MAGIC **Hints**:
-# MAGIC 1. Step 1: Use LAG to get the previous event timestamp per user
-# MAGIC 2. Step 2: Flag rows where the gap exceeds 30 minutes (or there is no previous event)
-# MAGIC 3. Step 3: Cumulative SUM of the flags gives you session IDs
+# MAGIC 1. Use LAG to get the previous event timestamp per user
+# MAGIC 2. Flag rows where the gap exceeds 30 minutes (or there is no previous event)
+# MAGIC 3. A cumulative SUM of the flags gives you session IDs
 # MAGIC
 # MAGIC **Common mistakes**:
-# MAGIC - Using minutes incorrectly with unix_timestamp: `(unix_timestamp(event_ts) - unix_timestamp(prev_ts)) / 60 > 30`
+# MAGIC - Comparing seconds to minutes: unix_timestamp returns seconds, so `unix_timestamp(event_ts) - unix_timestamp(prev_event_ts) > 30` checks 30 seconds; divide by 60 first, as the solution does
 # MAGIC - Forgetting that the FIRST event per user should start session 1 (no previous event = new session)
 # MAGIC - Using DENSE_RANK or ROW_NUMBER instead of cumulative SUM (these don't account for gap logic)
 # MAGIC - Calculating the gap across users (must PARTITION BY user_id)

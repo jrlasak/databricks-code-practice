@@ -18,7 +18,7 @@
 # MAGIC
 # MAGIC **Common mistakes**:
 # MAGIC - Forgetting the ON clause (syntax error)
-# MAGIC - Using = instead of SET * (must explicitly list columns or use SET *)
+# MAGIC - Writing `UPDATE *` instead of `UPDATE SET *` (use `SET *` or list each column)
 # MAGIC - Swapping target and source (MERGE INTO is always the target)
 
 # COMMAND ----------
@@ -41,12 +41,12 @@ spark.sql(f"""
 # MAGIC ## Exercise 2: Insert-Only Merge
 # MAGIC
 # MAGIC **Hints**:
-# MAGIC 1. You only need ONE when-clause in this MERGE
+# MAGIC 1. You only need ONE `WHEN` clause in this MERGE
 # MAGIC 2. Matched rows should be completely ignored
 # MAGIC 3. Think about which clause handles "not in target yet"
 # MAGIC
 # MAGIC **Common mistakes**:
-# MAGIC - Adding a WHEN MATCHED clause that does nothing (unnecessary)
+# MAGIC - Writing a full upsert with `WHEN MATCHED THEN UPDATE SET *` (it changes ORD-001 and ORD-002 to status 'shipped')
 # MAGIC - Using INSERT INTO instead of MERGE (doesn't check for duplicates)
 # MAGIC - Confusing NOT MATCHED with NOT MATCHED BY SOURCE
 
@@ -65,7 +65,7 @@ spark.sql(f"""
 # MAGIC ## Exercise 3: Update-Only Merge
 # MAGIC
 # MAGIC **Hints**:
-# MAGIC 1. Mirror of Exercise 2 - only ONE when-clause needed
+# MAGIC 1. You need only ONE `WHEN` clause in this MERGE
 # MAGIC 2. New records in source should be silently dropped
 # MAGIC 3. Only rows that exist in BOTH target and source get modified
 # MAGIC
@@ -132,9 +132,9 @@ spark.sql(f"""
 # MAGIC ## Exercise 5: Conditional Merge - Only Update If Newer
 # MAGIC
 # MAGIC **Hints**:
-# MAGIC 1. WHEN MATCHED accepts an additional AND condition
-# MAGIC 2. Compare the source and target `updated_at` timestamps
-# MAGIC 3. Rows that match but fail the condition are silently skipped
+# MAGIC 1. Compare the source and target `updated_at` timestamps
+# MAGIC 2. Rows that match but fail the condition are silently skipped
+# MAGIC 3. WHEN MATCHED accepts an additional AND condition
 # MAGIC
 # MAGIC **Common mistakes**:
 # MAGIC - Putting the timestamp condition in the ON clause (changes matching, not filtering)
@@ -162,7 +162,7 @@ spark.sql(f"""
 # MAGIC 3. Databricks evaluates WHEN clauses in order - put DELETE first
 # MAGIC
 # MAGIC **Common mistakes**:
-# MAGIC - Putting UPDATE before DELETE (UPDATE catches all matched rows first)
+# MAGIC - Putting the unconditional `WHEN MATCHED THEN UPDATE SET *` before the DELETE clause (the statement fails with NON_LAST_MATCHED_CLAUSE_OMIT_CONDITION: every WHEN MATCHED clause except the last needs a condition)
 # MAGIC - Using a separate DELETE statement instead of MERGE DELETE clause
 # MAGIC - Checking status on the target instead of the source
 
@@ -183,12 +183,12 @@ spark.sql(f"""
 # MAGIC ## Exercise 7: Multi-Condition MERGE
 # MAGIC
 # MAGIC **Hints**:
-# MAGIC 1. You need three WHEN clauses: DELETE, conditional UPDATE, and INSERT
+# MAGIC 1. Rows that match but fail every WHEN MATCHED condition are left alone, so the skip case needs no clause
 # MAGIC 2. Clause order: most specific conditions first (cancelled check, then timestamp check)
-# MAGIC 3. Rows that match but fail all WHEN MATCHED conditions are silently skipped
+# MAGIC 3. You need three WHEN clauses: DELETE, conditional UPDATE, and INSERT
 # MAGIC
 # MAGIC **Common mistakes**:
-# MAGIC - Wrong clause ordering (general UPDATE catches rows before DELETE condition is checked)
+# MAGIC - Putting the timestamp UPDATE before the DELETE: ORD-001 is cancelled and also newer, so the UPDATE claims it first and it is never deleted (clauses are evaluated in order)
 # MAGIC - Forgetting that "no matching WHEN clause" means "do nothing" (not an error)
 # MAGIC - Adding a catch-all WHEN MATCHED THEN UPDATE as the second clause (would update stale records)
 
@@ -210,7 +210,7 @@ spark.sql(f"""
 # MAGIC
 # MAGIC **Hints**:
 # MAGIC 1. A correct SCD Type 2 only writes when something actually changed - otherwise every run creates spurious new versions.
-# MAGIC 2. Single MERGE via "staging union": for each changed source row, emit two rows. One has the real customer_id so it matches the current target (triggers UPDATE to expire). The other has a NULL key so it never matches (triggers INSERT of the new current). Brand-new customers emit just the NULL-key row.
+# MAGIC 2. Single MERGE over a "staging union" subquery: a source row can take only one action (expire or insert), so list each changed customer twice. One copy keeps the real customer_id, matches the current target row and triggers the UPDATE that expires it. The other has a NULL key, never matches and triggers the INSERT of the new current version. Brand-new customers appear once, with the NULL key. With change detection the MERGE is atomic and idempotent.
 # MAGIC 3. Use null-safe comparison (`<=>` or `IS DISTINCT FROM`) so a change from NULL to a value is detected.
 # MAGIC 4. A two-statement (MERGE + INSERT) approach also works and is simpler to read, but it is not atomic: a reader between the two statements sees a customer with zero current rows.
 # MAGIC
@@ -218,7 +218,7 @@ spark.sql(f"""
 # MAGIC - Unconditionally expiring every matched row and re-inserting every source row: non-idempotent, creates a new "current" version on every run even when nothing changed.
 # MAGIC - Using plain `<>` for change detection: returns NULL (treated as false) when either side is NULL, so NULL -> 'x' changes are silently skipped.
 # MAGIC - Forgetting `t.is_current = true` in the ON clause: the MERGE then matches against expired history rows too.
-# MAGIC - Using UPDATE SET * on the expire step: would overwrite customer_id and attributes instead of just flipping `is_current` and `effective_end_date`.
+# MAGIC - Using UPDATE SET * on the expire step: the staged source has no `is_current`, `effective_start_date` or `effective_end_date` columns, so the MERGE fails with an analysis error. Set only `is_current` and `effective_end_date`.
 
 # COMMAND ----------
 
@@ -288,14 +288,15 @@ spark.sql(f"""
 # MAGIC ## Exercise 9: MERGE with Schema Evolution
 # MAGIC
 # MAGIC **Hints**:
-# MAGIC 1. Delta Lake blocks schema changes by default during MERGE
+# MAGIC 1. By default a MERGE keeps the target schema: `UPDATE SET *` and `INSERT *` silently skip source columns the target does not have
 # MAGIC 2. Use `MERGE WITH SCHEMA EVOLUTION` to allow the source to add new columns
 # MAGIC 3. The syntax goes between MERGE and INTO: `MERGE WITH SCHEMA EVOLUTION INTO ...`
+# MAGIC 4. `ALTER TABLE ... ADD COLUMN discount_pct DOUBLE` before a plain MERGE gives the same table, but as a separate commit; `WITH SCHEMA EVOLUTION` adds the column inside the same MERGE
 # MAGIC
 # MAGIC **Common mistakes**:
-# MAGIC - Forgetting WITH SCHEMA EVOLUTION (MERGE fails with schema mismatch error)
+# MAGIC - Forgetting WITH SCHEMA EVOLUTION: the MERGE runs without an error, so nothing tells you the target never gained `discount_pct`
 # MAGIC - Placing WITH SCHEMA EVOLUTION after INTO (wrong position)
-# MAGIC - Manually adding columns first (works but the exercise is about auto-evolution)
+# MAGIC - Setting `spark.databricks.delta.schema.autoMerge.enabled` (serverless compute does not allow it; the statement-level clause works on serverless compute and on Databricks Runtime 15.2 and above)
 
 # COMMAND ----------
 

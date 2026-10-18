@@ -2,7 +2,7 @@
 # COMMAND ----------
 # MAGIC %md
 # MAGIC ### Setup: MERGE Operations
-# MAGIC Creates per-exercise target and source tables. Run automatically via `%run` from the exercise notebook.
+# MAGIC Creates the target and source table for each exercise. Runs automatically: `01_merge-operations.py` calls it with `%run`.
 
 # COMMAND ----------
 
@@ -10,8 +10,7 @@ CATALOG = "db_code"
 SCHEMA = "merge_operations"
 BASE_SCHEMA = "delta_lake"
 
-# Each exercise gets its own target (copy of 5 base orders) and source table.
-# This keeps exercises fully independent - exercise 2 doesn't depend on exercise 1.
+# Each exercise gets its own target (a copy of ORD-001..ORD-005) and its own source table, so you can solve the exercises in any order.
 BASE_IDS = "('ORD-001', 'ORD-002', 'ORD-003', 'ORD-004', 'ORD-005')"
 
 # Target tables: copy 5 orders from base table for each exercise (except Ex 8 which uses customers)
@@ -26,7 +25,7 @@ for i in range(1, 10):
 
 # COMMAND ----------
 
-# Exercise 1-2 source: 2 existing orders (modified) + 2 new
+# Exercise 1-2 source: ORD-001 and ORD-002 with status='shipped' and a newer updated_at (amounts unchanged), plus 2 new orders
 spark.sql(f"""
     CREATE OR REPLACE TABLE {CATALOG}.{SCHEMA}.merge_ex1_source AS
     SELECT order_id, customer_id, product_id,
@@ -144,13 +143,13 @@ spark.sql(f"""
 # Exercise 9 source: has extra column for schema evolution
 spark.sql(f"""
     CREATE OR REPLACE TABLE {CATALOG}.{SCHEMA}.merge_ex9_source AS
-    SELECT order_id, customer_id, product_id, 109.50 AS amount, 'shipped' AS status,
+    SELECT order_id, customer_id, product_id, CAST(109.50 AS DOUBLE) AS amount, 'shipped' AS status,
            order_date, TIMESTAMP '2026-03-01 10:00:00' AS updated_at,
-           10.0 AS discount_pct
+           CAST(10.0 AS DOUBLE) AS discount_pct
     FROM {CATALOG}.{BASE_SCHEMA}.orders WHERE order_id = 'ORD-001'
     UNION ALL
     SELECT * FROM VALUES
-        ('ORD-101', 'CUST-010', 'PROD-005', 49.99, 'pending', DATE '2026-03-01', TIMESTAMP '2026-03-01 10:00:00', 5.0)
+        ('ORD-101', 'CUST-010', 'PROD-005', CAST(49.99 AS DOUBLE), 'pending', DATE '2026-03-01', TIMESTAMP '2026-03-01 10:00:00', CAST(5.0 AS DOUBLE))
     AS t(order_id, customer_id, product_id, amount, status, order_date, updated_at, discount_pct)
 """)
 

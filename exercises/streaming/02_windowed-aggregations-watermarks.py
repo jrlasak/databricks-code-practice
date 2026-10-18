@@ -2,7 +2,7 @@
 # COMMAND ----------
 # MAGIC %md
 # MAGIC # Windowed Aggregations & Watermarks
-# MAGIC **Topic**: Streaming | **Exercises**: 9 | **Total Time**: ~115 min
+# MAGIC **Topic**: Streaming | **Exercises**: 9 | **Total Time**: ~120 min
 # MAGIC
 # MAGIC Practice time-windowed aggregations on event streams: tumbling, sliding, and session windows,
 # MAGIC plus watermarks to bound state and control append-mode window closing. Covers the core stateful
@@ -14,10 +14,9 @@
 # MAGIC **Key concepts**:
 # MAGIC - `window(event_ts, "5 minutes")` for tumbling, `window(event_ts, "10 minutes", "5 minutes")` for sliding
 # MAGIC - `session_window(event_ts, "10 minutes")` for session windows
-# MAGIC - `withWatermark("event_ts", "10 minutes")` bounds state. Under append mode, it controls when
-# MAGIC   a window closes (window.end <= watermark); in processing-time triggers it also drops events
-# MAGIC   whose event_ts is below the live watermark.
+# MAGIC - `withWatermark("event_ts", "10 minutes")` sets the watermark to the newest `event_ts` seen minus 10 minutes. Under append mode a window is emitted, and its state dropped, once window.end <= watermark; a row that arrives after its window has closed may be dropped.
 # MAGIC - Append mode emits only CLOSED windows; complete mode emits the full result table every batch
+# MAGIC - `foreachBatch(fn)` calls `fn(batch_df, batch_id)` once per micro-batch; `batch_df` is a plain DataFrame, so you write it with the batch writer (`batch_df.write.mode("overwrite").saveAsTable(...)`)
 # MAGIC - Boundaries are start-inclusive, end-exclusive: an event at exactly 10:05:00 belongs to [10:05, 10:10)
 # MAGIC
 # MAGIC **Source table** (from setup): `db_code.windowed_aggregations.windows_events`
@@ -36,11 +35,12 @@
 # MAGIC - 48 "main" events span 10:00:00 -> 10:34:00, distributed across seven 5-min windows
 # MAGIC - 1 "late" event (EVT-049) at 09:30:00 - isolated 30 min before the main cluster
 # MAGIC - Max event_ts = 10:34:00; end-of-stream watermark (10-min delay) = 10:24:00
-# MAGIC - Append-mode closes windows where window.end <= watermark (non-strict, Spark's actual rule).
+# MAGIC - Append mode emits a window once `window.end <= watermark`.
 # MAGIC   Closed windows at watermark 10:24:00:
 # MAGIC   [09:30,09:35), [10:00,10:05), [10:05,10:10), [10:10,10:15), [10:15,10:20) = 5 windows.
 # MAGIC   [10:20,10:25) has window.end = 10:25:00 which is NOT <= 10:24:00, so it stays open.
 # MAGIC - Open windows [10:20,10:25), [10:25,10:30), [10:30,10:35) are held in state.
+# MAGIC - The 49 rows are written in one commit (one file), so `availableNow` reads them in a single micro-batch and the watermark only moves after it: EVT-049 is counted in [09:30,09:35). If the same rows arrived over several commits (a live feed), they would land in several micro-batches and the drop rule in Key concepts would apply; a row behind the watermark is still counted while its window is open.
 
 # COMMAND ----------
 
@@ -54,12 +54,17 @@
 # MAGIC %md
 # MAGIC **Setup complete.** Source table `db_code.windowed_aggregations.windows_events` has 49 rows
 # MAGIC (48 main events + 1 late event at 09:30:00). All exercise output tables live in
-# MAGIC `db_code.windowed_aggregations.exN_output`. Checkpoints under
-# MAGIC `/Volumes/db_code/windowed_aggregations/checkpoints/exN/`.
+# MAGIC `db_code.windowed_aggregations.exN_output`.
+# MAGIC
+# MAGIC **Python variables**: the setup defines three variables you can use in your code: `CATALOG = "db_code"`, `SCHEMA = "windowed_aggregations"` and `CHECKPOINT_BASE = "/Volumes/db_code/windowed_aggregations/checkpoints"`. Write tables by their full name (`db_code.windowed_aggregations.exN_output`).
+# MAGIC
+# MAGIC **Checkpoints**: each stream checkpoints to its own subdirectory, `f"{CHECKPOINT_BASE}/exN"` (Ex 6 uses `ex6_no_watermark` and `ex6_watermark`).
 # MAGIC
 # MAGIC **Pattern**: Each exercise reads `windows_events` as a stream, applies a windowed
 # MAGIC aggregation, and writes the result table. Use `.trigger(availableNow=True)` and
 # MAGIC `.awaitTermination()` on every stream so the validate cell runs against the final state.
+# MAGIC
+# MAGIC **Redo an exercise**: a checkpoint remembers which rows its stream already read, so running a fixed TODO cell again reads nothing new. Re-run the `%run ./setup/windowed-aggregations-watermarks-setup` cell first: it drops every output table and checkpoint of this notebook.
 
 # COMMAND ----------
 # MAGIC %md
@@ -72,16 +77,15 @@
 # MAGIC plus one extra window at 09:30 -> 09:35 containing the single late event.
 # MAGIC
 # MAGIC **Target**: Write to `db_code.windowed_aggregations.ex1_output`. 22 rows - one per
-# MAGIC (window, event_type) combination that has at least one event.
+# MAGIC (window, event_type) combination that has at least one event. For [10:00,10:05): click 4, view 3, purchase 2.
 # MAGIC
 # MAGIC **Requirements**:
 # MAGIC 1. Read `windows_events` as a stream via `spark.readStream.table(...)`
 # MAGIC 2. Group by `window(event_ts, "5 minutes")` and `event_type`
 # MAGIC 3. Aggregate as `count(*) AS event_count`
 # MAGIC 4. Select `window.start AS window_start`, `window.end AS window_end`, `event_type`, `event_count`
-# MAGIC    (flatten the window struct so assertions can read start/end directly)
-# MAGIC 5. Use `trigger(availableNow=True)`, write as Delta with overwrite semantics (use `foreachBatch`
-# MAGIC    to overwrite the target each batch), and call `.awaitTermination()`
+# MAGIC    (flatten the window struct so downstream queries read `window_start` and `window_end` as plain columns)
+# MAGIC 5. Use `outputMode("complete")` and `foreachBatch` with a function that overwrites `ex1_output` each batch
 # MAGIC
 # MAGIC **Constraints**:
 # MAGIC - Do NOT add a watermark in this exercise - include ALL events including the late one
@@ -139,15 +143,14 @@ print("Exercise 1 passed!")
 # MAGIC
 # MAGIC **Source** (`db_code.windowed_aggregations.windows_events`): 49 rows.
 # MAGIC
-# MAGIC **Target**: Write to `db_code.windowed_aggregations.ex2_output`. One row per (window, user_id)
-# MAGIC combination that has at least one event.
+# MAGIC **Target**: Write to `db_code.windowed_aggregations.ex2_output`. 27 rows, one per (window, user_id) pair that has at least one event. USER-001 in [10:00,10:05) totals 145.0; USER-005's only row is [09:30,09:35) with 99.0.
 # MAGIC
 # MAGIC **Requirements**:
 # MAGIC 1. Read the source as a stream
 # MAGIC 2. Group by `window(event_ts, "5 minutes")` and `user_id`
 # MAGIC 3. Aggregate as `sum(amount) AS total_amount`
 # MAGIC 4. Select `window.start AS window_start`, `window.end AS window_end`, `user_id`, `total_amount`
-# MAGIC 5. Use `trigger(availableNow=True)`, `foreachBatch` overwrite, `awaitTermination`
+# MAGIC 5. Use `outputMode("complete")` with a `foreachBatch` overwrite
 # MAGIC
 # MAGIC **Constraints**:
 # MAGIC - No watermark - include the late event
@@ -208,25 +211,25 @@ print("Exercise 2 passed!")
 # MAGIC **Difficulty**: Medium | **Time**: ~10 min
 # MAGIC
 # MAGIC Compute event counts using a 10-minute sliding window that slides every 5 minutes.
-# MAGIC Each event will appear in TWO overlapping windows (except those at the very edges).
+# MAGIC Each event appears in exactly TWO overlapping windows (10-minute window / 5-minute slide = 2).
 # MAGIC
 # MAGIC **Source** (`db_code.windowed_aggregations.windows_events`): 49 rows.
 # MAGIC
-# MAGIC **Target**: Write to `db_code.windowed_aggregations.ex3_output`. Columns: `window_start`,
-# MAGIC `window_end`, `event_count`.
+# MAGIC **Target**: Write to `db_code.windowed_aggregations.ex3_output`. Columns: `window_start`, `window_end`, `event_count`. 10 rows: 8 windows starting 09:55, 10:00, ..., 10:30, plus [09:25,09:35) and [09:30,09:40) with 1 event each.
 # MAGIC
 # MAGIC **Requirements**:
 # MAGIC 1. Use `window(event_ts, "10 minutes", "5 minutes")` - 10-minute window, 5-minute slide
 # MAGIC 2. Group by the window only (no other key)
 # MAGIC 3. Aggregate as `count(*) AS event_count`
 # MAGIC 4. Flatten to `window_start`, `window_end`, `event_count`
-# MAGIC 5. Use `trigger(availableNow=True)`, `foreachBatch` overwrite, `awaitTermination`
+# MAGIC 5. Use `outputMode("complete")` with a `foreachBatch` overwrite
+# MAGIC
+# MAGIC **Expected Output**:
+# MAGIC - Window [09:55,10:05) contains only the 9 events in [10:00,10:05) (no events fall in [09:55,10:00)).
+# MAGIC - The window starting at 10:00 (covering 10:00 -> 10:10) contains all events in [10:00, 10:10) = 9 + 6 = 15 events
 # MAGIC
 # MAGIC **Constraints**:
 # MAGIC - No watermark - include the late event
-# MAGIC - Window [09:55,10:05) contains only the 9 events in [10:00,10:05) (no events fall in [09:55,10:00)).
-# MAGIC - The window starting at 10:00 (covering 10:00 -> 10:10) contains all events in [10:00, 10:10) = 9 + 6 = 15 events
-# MAGIC - The late event EVT-049 (09:30:00) appears in TWO sliding windows: [09:25,09:35) and [09:30,09:40), each containing only that one event. Expect to see them in the output.
 
 # COMMAND ----------
 
@@ -290,7 +293,7 @@ print("Exercise 3 passed!")
 # MAGIC 2. Group by `user_id` and the session_window
 # MAGIC 3. Aggregate as `count(*) AS event_count`
 # MAGIC 4. Flatten: `user_id`, `session_window.start AS session_start`, `session_window.end AS session_end`, `event_count`
-# MAGIC 5. Use `trigger(availableNow=True)`, `foreachBatch` overwrite, `awaitTermination`
+# MAGIC 5. Use `outputMode("complete")` with a `foreachBatch` overwrite
 # MAGIC
 # MAGIC **Constraints**:
 # MAGIC - No watermark - session_window in complete mode does not require a watermark
@@ -343,42 +346,25 @@ print("Exercise 4 passed!")
 # MAGIC **Difficulty**: Medium | **Time**: ~15 min
 # MAGIC
 # MAGIC Add `withWatermark("event_ts", "10 minutes")` to a 5-min tumbling-window count of all events.
-# MAGIC Use **append output mode** so only CLOSED windows are emitted. A window is closed once the
-# MAGIC stream's watermark reaches its window.end (Spark's non-strict rule: window.end <= watermark).
-# MAGIC Windows that are still open (window_end > watermark) remain in state and are NOT written to
-# MAGIC the output.
+# MAGIC Use **append output mode** so only CLOSED windows are emitted.
 # MAGIC
 # MAGIC **Source** (`db_code.windowed_aggregations.windows_events`): 49 rows.
 # MAGIC - Max event_ts = 10:34:00, so end-of-stream watermark (with 10-min delay) = 10:24:00
 # MAGIC - Windows whose `window.end` <= 10:24:00 are closed and emitted; later windows stay open
 # MAGIC
-# MAGIC **Target**: Write to `db_code.windowed_aggregations.ex5_output`. Rows: one per CLOSED tumbling
-# MAGIC window. Open windows ([10:20,10:25), [10:25,10:30), [10:30,10:35)) are NOT emitted.
+# MAGIC **Target**: Write to `db_code.windowed_aggregations.ex5_output`. One row per closed tumbling window. [10:00,10:05) has 9 events; [09:30,09:35) has 1.
 # MAGIC
 # MAGIC **Requirements**:
 # MAGIC 1. Read the source as a stream via `spark.readStream.table(...)`
 # MAGIC 2. Apply `withWatermark("event_ts", "10 minutes")` on the streaming DataFrame BEFORE the
 # MAGIC    aggregation
 # MAGIC 3. Group by `window(event_ts, "5 minutes")` only (no other key); aggregate `count(*) AS event_count`
-# MAGIC 4. Use `outputMode("append")` so only closed windows are emitted
-# MAGIC 5. Write directly with `.toTable(...)` (append mode supports direct Delta writes - no foreachBatch needed)
-# MAGIC 6. Flatten: `window_start`, `window_end`, `event_count`
-# MAGIC 7. Use `trigger(availableNow=True)`, `awaitTermination`
+# MAGIC 4. Use `outputMode("append")`
+# MAGIC 5. Flatten: `window_start`, `window_end`, `event_count`
+# MAGIC 6. Write directly with `.toTable(...)` (no foreachBatch needed)
 # MAGIC
 # MAGIC **Constraints**:
-# MAGIC - Spark emits a window in append mode when its end is at or below the watermark
-# MAGIC   (window.end <= watermark, non-strict).
-# MAGIC - At end-of-stream watermark 10:24:00, closed windows are:
-# MAGIC   [09:30,09:35), [10:00,10:05), [10:05,10:10), [10:10,10:15), [10:15,10:20).
-# MAGIC - [10:20, 10:25) has window.end = 10:25:00 which is NOT <= 10:24:00, so it stays OPEN.
-# MAGIC - Expected rows: 5 closed windows. Open windows ([10:20,10:25), [10:25,10:30), [10:30,10:35))
-# MAGIC   are NOT emitted.
-# MAGIC - Note on late data: with `trigger(availableNow=True)`, the engine reads all available data
-# MAGIC   before the watermark advances, so the late event at 09:30:00 ends up in a closed window
-# MAGIC   [09:30, 09:35). In production with a non-availableNow trigger, the same query would also
-# MAGIC   drop late events whose event_ts falls below the current watermark. Append mode here
-# MAGIC   demonstrates the closed-window emission rule; the late-drop rule applies only when the
-# MAGIC   watermark has already advanced past a row's event_ts at the moment it arrives.
+# MAGIC - Expected rows: 5, one per closed window: [09:30,09:35), [10:00,10:05), [10:05,10:10), [10:10,10:15), [10:15,10:20). [10:20,10:25), [10:25,10:30) and [10:30,10:35) stay open.
 
 # COMMAND ----------
 
@@ -422,7 +408,7 @@ print("Exercise 5 passed!")
 
 # COMMAND ----------
 # MAGIC %md
-# MAGIC ## Exercise 6: Run Same Query With and Without Watermark, Diff the Outputs
+# MAGIC ## Exercise 6: Same Query With and Without a Watermark
 # MAGIC **Difficulty**: Medium | **Time**: ~15 min
 # MAGIC
 # MAGIC Run the SAME 5-min tumbling event count twice and write to TWO tables:
@@ -443,20 +429,13 @@ print("Exercise 5 passed!")
 # MAGIC 3. Both streams group by `window(event_ts, "5 minutes")` only and compute `count(*) AS event_count`
 # MAGIC 4. Flatten to `window_start`, `window_end`, `event_count` in BOTH outputs
 # MAGIC 5. Use DIFFERENT checkpoint paths for the two streams (`ex6_no_watermark` and `ex6_watermark`)
-# MAGIC 6. Use `trigger(availableNow=True)` and `awaitTermination()` on each
 # MAGIC
 # MAGIC **Constraints**:
 # MAGIC - No-watermark output (complete mode) must contain ALL 8 windows including [09:30,09:35)
 # MAGIC   and the 3 windows starting at 10:20, 10:25, 10:30
-# MAGIC - Watermark output (append mode) must contain ONLY the 5 closed windows ([09:30,09:35),
-# MAGIC   [10:00..10:20)); the 3 open windows ([10:20,10:25), [10:25,10:30), [10:30,10:35)) MUST
-# MAGIC   be absent (still in state because window.end is NOT <= watermark 10:24:00)
+# MAGIC - Watermark output (append mode) must contain ONLY the 5 closed windows, [09:30,09:35) and the four from [10:00,10:05) to [10:15,10:20); the 3 open windows MUST be absent
 # MAGIC - The diff between the two output row counts (8 - 5 = 3) equals the number of still-open
 # MAGIC   windows held in state at end-of-stream
-# MAGIC - Note on late data: under `availableNow=True` the late event at 09:30 ends up in a closed
-# MAGIC   window because the entire batch is processed before the watermark advances. With a
-# MAGIC   continuous trigger in production, an event whose event_ts is already below the watermark
-# MAGIC   at arrival would be dropped instead.
 
 # COMMAND ----------
 
@@ -479,7 +458,7 @@ late_in_no_watermark = no_watermark.filter("window_start = TIMESTAMP'2026-03-10 
 assert late_in_no_watermark.count() == 1, "no_watermark output MUST include the late window [09:30,09:35)"
 assert late_in_no_watermark.collect()[0]["event_count"] == 1, "Late window count should be 1 (EVT-049)"
 
-# Watermark + append mode: only CLOSED windows (window.end <= watermark, non-strict).
+# Watermark + append mode: only CLOSED windows (window.end <= watermark).
 # Closed: [09:30,09:35), [10:00,10:05), [10:05,10:10), [10:10,10:15), [10:15,10:20) = 5
 # [10:20,10:25) has window.end=10:25:00 which is NOT <= watermark 10:24:00, so it stays open.
 assert with_wm.count() == 5, f"watermark output should have 5 closed windows, got {with_wm.count()}"
@@ -499,32 +478,22 @@ print("Exercise 6 passed!")
 # MAGIC ## Exercise 7: Watermarked Aggregation Grouped by Window + user_id
 # MAGIC **Difficulty**: Hard | **Time**: ~15 min
 # MAGIC
-# MAGIC Build a watermark-aware aggregation grouped by `(window, user_id)` and verify per-cell counts
-# MAGIC under append-mode emission. Only closed windows (window.end <= watermark) reach the output.
-# MAGIC The watermark + append-mode combo is the standard production pattern for stateful streaming.
-# MAGIC This same code, run with a continuous trigger in production, also handles late data via
-# MAGIC watermark dropping. On Free Edition with `availableNow=True` we observe only the
-# MAGIC closed-window emission half - all events are read in one batch before the watermark
-# MAGIC advances, so no row arrives "late" relative to the live watermark.
+# MAGIC Build a watermark-aware aggregation grouped by `(window, user_id)`. Only closed windows (window.end <= watermark) reach the output. Watermark + append mode is the standard production pattern for stateful streaming.
 # MAGIC
 # MAGIC **Source** (`db_code.windowed_aggregations.windows_events`): 49 rows.
 # MAGIC
-# MAGIC **Target**: Write to `db_code.windowed_aggregations.ex7_output`. Rows: one per (closed window,
-# MAGIC user_id) pair that has at least one event. Open windows (window_end > 10:24:00) MUST NOT
-# MAGIC appear in the output - they remain held in state.
+# MAGIC **Target**: Write to `db_code.windowed_aggregations.ex7_output`. 15 rows, one per (closed window, user_id) pair. Columns: `window_start`, `window_end`, `user_id`, `event_count`, `total_amount`. USER-001 in [10:00,10:05): `event_count` 4, `total_amount` 145.0. USER-005 appears once, in [09:30,09:35), with 1 event and 99.0.
 # MAGIC
 # MAGIC **Requirements**:
 # MAGIC 1. Apply `withWatermark("event_ts", "10 minutes")` to the streaming source
 # MAGIC 2. Group by `window(event_ts, "5 minutes")` AND `user_id`
 # MAGIC 3. Aggregate `count(*) AS event_count` and `sum(amount) AS total_amount`
-# MAGIC 4. Output mode = `append`; flatten window struct
-# MAGIC 5. Write to `ex7_output` with `.toTable(...)`, `trigger(availableNow=True)`, `awaitTermination`
+# MAGIC 4. Output mode = `append`; flatten the window struct to `window.start AS window_start`, `window.end AS window_end`
+# MAGIC 5. Write to `ex7_output` with `.toTable(...)`
 # MAGIC
 # MAGIC **Constraints**:
-# MAGIC - Output covers only closed windows (5 distinct closed windows under append-mode emission:
-# MAGIC   [09:30,09:35), [10:00,10:05), [10:05,10:10), [10:10,10:15), [10:15,10:20))
+# MAGIC - Output covers only the 5 closed windows: [09:30,09:35), [10:00,10:05), [10:05,10:10), [10:10,10:15), [10:15,10:20)
 # MAGIC - Open windows (window_start >= 10:20:00) MUST NOT appear
-# MAGIC - Per (window, user_id) cell counts must match the source distribution
 
 # COMMAND ----------
 
@@ -576,22 +545,19 @@ print("Exercise 7 passed!")
 # MAGIC **Source** (`db_code.windowed_aggregations.windows_events`): 49 rows.
 # MAGIC
 # MAGIC **Target**: Write to `db_code.windowed_aggregations.ex8_output`. Columns: `window_start`,
-# MAGIC `window_end`, `total_amount`. Append mode -> only CLOSED windows present.
+# MAGIC `window_end`, `total_amount`. 5 closed windows: [09:30,09:35) 99.0, [10:00,10:05) 415.0, [10:05,10:10) 265.0, plus [10:10,10:15) and [10:15,10:20).
 # MAGIC
 # MAGIC **Requirements**:
 # MAGIC 1. Apply `withWatermark("event_ts", "10 minutes")`
 # MAGIC 2. Group by `window(event_ts, "5 minutes")` only, aggregate `sum(amount) AS total_amount`
-# MAGIC 3. Use `outputMode("append")` and `.toTable(...)` (append mode supports direct Delta writes)
-# MAGIC 4. Flatten window struct
-# MAGIC 5. `trigger(availableNow=True)`, `awaitTermination`
+# MAGIC 3. Flatten the window struct
+# MAGIC 4. Use `outputMode("append")` and `.toTable(...)`
 # MAGIC
 # MAGIC **Constraints**:
 # MAGIC - Append mode WILL FAIL without a watermark - watermark is mandatory for stateful aggregations
 # MAGIC   in append mode
 # MAGIC - Output must NOT contain any window with window_start >= 10:20:00 (those are still open;
 # MAGIC   their window.end is NOT <= watermark 10:24:00)
-# MAGIC - Closed windows (window.end <= watermark) are emitted, including [09:30,09:35)
-# MAGIC - Expected rows: 5 closed windows ([09:30,09:35), [10:00,10:05), [10:05,10:10), [10:10,10:15), [10:15,10:20))
 
 # COMMAND ----------
 
@@ -641,8 +607,7 @@ print("Exercise 8 passed!")
 # MAGIC ## Exercise 9: Tumbling Window Grouped by Two Keys with Watermark
 # MAGIC **Difficulty**: Hard | **Time**: ~15 min
 # MAGIC
-# MAGIC Compute event counts grouped by `event_type` AND `region` per 5-min tumbling window, with a
-# MAGIC watermark for append-mode correctness. Verify per-cell counts for the most populated window.
+# MAGIC Count events per `event_type` and `region` in each 5-min tumbling window, with a watermark so append mode can emit closed windows.
 # MAGIC
 # MAGIC **Source** (`db_code.windowed_aggregations.windows_events`): 49 rows. `region` is NA or EU.
 # MAGIC
@@ -653,14 +618,13 @@ print("Exercise 8 passed!")
 # MAGIC 1. Apply `withWatermark("event_ts", "10 minutes")`
 # MAGIC 2. Group by `window(event_ts, "5 minutes")`, `event_type`, `region`
 # MAGIC 3. Aggregate `count(*) AS event_count`
-# MAGIC 4. Use `outputMode("append")`, write with `.toTable(...)`, `trigger(availableNow=True)`,
-# MAGIC    `awaitTermination`
-# MAGIC 5. Flatten window struct
+# MAGIC 4. Flatten the window struct
+# MAGIC 5. Use `outputMode("append")` and write with `.toTable(...)`
 # MAGIC
 # MAGIC **Constraints**:
-# MAGIC - Output covers only the 5 closed windows (including [09:30,09:35))
+# MAGIC - Output covers only the closed windows [09:30,09:35) and [10:00,10:05) to [10:15,10:20), 5 in total
 # MAGIC - Open windows (window_start >= 10:20:00) must be absent (window.end > watermark 10:24:00)
-# MAGIC - Per-key counts verified below
+# MAGIC - Expected: 24 rows. [10:00,10:05) has 6 cells: (click, NA) 3, (click, EU) 1, (view, NA) 2, (view, EU) 1, (purchase, NA) 1, (purchase, EU) 1. [09:30,09:35) has one cell: (click, NA) 1.
 
 # COMMAND ----------
 

@@ -2,8 +2,8 @@
 # MAGIC %md
 # MAGIC # 01 - Setup Tables
 # MAGIC Creates the `bramblepeak_retail` catalog, the `sales` schema, and the 7 tables of a clean
-# MAGIC **retail sales star schema** - with rich Unity Catalog column comments. Those comments are
-# MAGIC the single biggest lever on Genie accuracy: Genie reads them before it writes any SQL.
+# MAGIC **retail sales star schema** - with rich Unity Catalog column comments. Genie reads these
+# MAGIC comments before it writes any SQL, so they are one of the cheapest levers on its accuracy.
 # MAGIC
 # MAGIC | Table | Grain | Role |
 # MAGIC |-------|-------|------|
@@ -13,7 +13,7 @@
 # MAGIC | `dim_store` | one row per store / channel | store dimension |
 # MAGIC | `fact_sales` | one row per order line | the sales fact |
 # MAGIC | `sales_targets` | one row per region × month | monthly revenue targets |
-# MAGIC | `performance_insights` | one row per ranked driver | precomputed gap drivers (filled by notebook 04) |
+# MAGIC | `performance_insights` | one row per ranked driver | precomputed drivers of the month-over-month revenue decline (filled by notebook 04) |
 # MAGIC
 # MAGIC Column names are clean `snake_case` on purpose - no spaces, so no Delta column mapping and no
 # MAGIC backticks anywhere in Genie. Re-running is safe (`CREATE OR REPLACE` / `IF NOT EXISTS`).
@@ -51,7 +51,7 @@ CREATE OR REPLACE TABLE {DIM_DATE} (
     year          INT     COMMENT 'Calendar year.',
     is_weekend    BOOLEAN COMMENT 'TRUE for Saturday/Sunday.'
 )
-COMMENT 'Date dimension, one row per calendar day spanning the trailing 12 months. The "current month" in every demo question is the most recent month present: SELECT MAX(year_month) FROM this table.'
+COMMENT 'Date dimension, one row per calendar day spanning the trailing 12 months. The "current month" in any question is the most recent month present: SELECT MAX(year_month) FROM this table.'
 """)
 print("dim_date ready")
 
@@ -87,14 +87,14 @@ print("dim_product ready")
 spark.sql(f"""
 CREATE OR REPLACE TABLE {DIM_CUSTOMER} (
     customer_key   INT     COMMENT 'Surrogate key. Join target for fact_sales.customer_key.',
-    customer_id    STRING  COMMENT 'Business customer code, e.g. CUST-004821.',
+    customer_id    STRING  COMMENT 'Business customer code, e.g. CUST-104821.',
     customer_name  STRING  COMMENT 'Customer full name.',
     loyalty_tier   STRING  COMMENT 'Loyalty program tier: Standard, Plus, or VIP. VIP are the highest-value members.',
     region         STRING  COMMENT 'Customer home region: West, Midwest, Northeast, South.',
     country        STRING  COMMENT 'Customer country (this dataset is US-only: "USA").',
     signup_date    DATE    COMMENT 'Date the customer joined the loyalty program.'
 )
-COMMENT 'Customer dimension, one row per customer. ~500 customers.'
+COMMENT 'Customer dimension, one row per customer. ~20,000 customers.'
 """)
 print("dim_customer ready")
 
@@ -141,7 +141,7 @@ CREATE OR REPLACE TABLE {FACT_SALES} (
     cost_amount     DOUBLE  COMMENT 'Total cost of goods for this line in USD = quantity*unit_cost.',
     gross_margin    DOUBLE  COMMENT 'Gross profit for this line in USD = net_sales - cost_amount. Sum it for total margin; divide by net_sales for margin percent.'
 )
-COMMENT 'Sales fact, one row per order line. ~120,000 rows over 12 months. net_sales is the revenue measure; gross_margin is the profit measure.'
+COMMENT 'Sales fact, one row per order line. ~115,000 rows over 12 months. net_sales is the revenue measure; gross_margin is the profit measure.'
 """)
 print("fact_sales ready")
 
@@ -173,16 +173,16 @@ spark.sql(f"""
 CREATE OR REPLACE TABLE {PERFORMANCE_INSIGHTS} (
     region                   STRING  COMMENT 'Region the insight is about.',
     year_month               STRING  COMMENT 'Month the insight is about, YYYY-MM.',
-    rank                     INT     COMMENT 'Rank 1..N - 1 is the single biggest driver of the gap to target.',
+    rank                     INT     COMMENT 'Rank 1..N - 1 is the single biggest driver of the region''s month-over-month revenue decline.',
     driver_type              STRING  COMMENT 'What kind of driver: "CATEGORY" or "PRODUCT".',
     dimension_value          STRING  COMMENT 'The category name or product name this driver row refers to.',
     revenue_current          DOUBLE  COMMENT 'Net revenue for this driver in the analyzed month, USD.',
     revenue_prior            DOUBLE  COMMENT 'Net revenue for this driver in the prior month, USD.',
     revenue_delta            DOUBLE  COMMENT 'revenue_current - revenue_prior, USD. Negative means it shrank (a detractor).',
-    contribution_to_gap_pct  DOUBLE  COMMENT 'Share of the regions month-over-month revenue decline attributable to this driver, in percent.',
+    contribution_to_gap_pct  DOUBLE  COMMENT 'Share of this region''s month-over-month revenue decline attributable to this driver, in percent. Growing categories show 0. PRODUCT rows break down their category''s share, so they do not add to the CATEGORY rows.',
     insight                  STRING  COMMENT 'One-sentence natural-language summary of this driver.'
 )
-COMMENT 'Precomputed ranked drivers of each regions revenue gap. Populated by 04_Compute_Insights. Read by the top_drivers() and explain_driver() UC functions. Empty until notebook 04 runs (that is expected, not an error).'
+COMMENT 'Precomputed ranked drivers of each region''s month-over-month revenue decline. Populated by 04_Compute_Insights. Read by the top_drivers() and explain_driver() UC functions. Empty until notebook 04 runs (that is expected, not an error).'
 """)
 print("performance_insights ready (empty)")
 

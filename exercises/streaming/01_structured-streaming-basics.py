@@ -2,23 +2,22 @@
 # COMMAND ----------
 # MAGIC %md
 # MAGIC # Structured Streaming Basics
-# MAGIC **Topic**: Streaming | **Exercises**: 8 | **Total Time**: ~90 min
+# MAGIC **Topic**: Streaming | **Exercises**: 8 | **Total Time**: ~80 min
 # MAGIC
 # MAGIC Practice the Structured Streaming foundation on Databricks: `readStream` and `writeStream`
 # MAGIC against Delta tables, choosing triggers (`processingTime` vs `availableNow`), picking the
 # MAGIC right output mode (`append` / `complete` / `update`), naming queries and reading
-# MAGIC `lastProgress`, and deduplicating streams. Every query uses `trigger(availableNow=True)`
-# MAGIC and `awaitTermination()` so the notebook terminates cleanly on Free Edition.
+# MAGIC `lastProgress`, and deduplicating streams.
 # MAGIC
 # MAGIC **Solutions**: If stuck, see `solutions/structured-streaming-basics-solutions.py` for hints and answers.
 # MAGIC
 # MAGIC **Key concepts**:
-# MAGIC - `spark.readStream.table(...)` reads a Delta table as a stream of newly committed rows
+# MAGIC - `spark.readStream.table(...)` reads a Delta table as a stream: the rows already in the table first, then each new commit
 # MAGIC - `trigger(availableNow=True)` processes everything available and stops (use this on Free Edition)
 # MAGIC - Output modes: `append` (only new rows), `complete` (full result table), `update` (changed rows)
 # MAGIC - Streaming queries always need a `checkpointLocation` for state and offset tracking
 # MAGIC - `.queryName(...)` makes a stream identifiable; `query.lastProgress` exposes runtime metrics
-# MAGIC - `dropDuplicates(["key"])` deduplicates a stream using watermarked state
+# MAGIC - Deduplicating a stream on a key keeps every seen key in state unless a watermark bounds it
 
 # COMMAND ----------
 
@@ -34,16 +33,19 @@
 # MAGIC `db_code.structured_streaming_basics`.
 # MAGIC
 # MAGIC **Sources** (Delta tables in `db_code.structured_streaming_basics`):
-# MAGIC - Each exercise has its own `exN_source` table cloned from `db_code.streaming.events_source`
+# MAGIC - Exercises 1-7 each have their own `exN_source` table, a copy of `db_code.streaming.events_source` (35 events)
 # MAGIC - Exercise 8 has a custom source with intentional duplicate `event_id`s
 # MAGIC
 # MAGIC **Targets**: each exercise writes to its own `exN_target` table (Ex 5 writes to
 # MAGIC `ex5_target_available_now`; Ex 7 writes both a target table and an `ex7_progress` metrics table).
 # MAGIC
-# MAGIC **Checkpoints**: use `f"{CHECKPOINT_BASE}/exN"` (Ex 5 uses `/ex5_an` for the `availableNow` query).
+# MAGIC **Python variables**: the setup defines three variables you can use in your code: `CATALOG = "db_code"`, `SCHEMA = "structured_streaming_basics"` and `CHECKPOINT_BASE = "/Volumes/db_code/structured_streaming_basics/checkpoints"`. Write tables by their full name (`db_code.structured_streaming_basics.exN_target`).
 # MAGIC
-# MAGIC **Pattern**: every streaming query MUST use `.trigger(availableNow=True)` and
-# MAGIC `.awaitTermination()` so the notebook does not block.
+# MAGIC **Checkpoints**: each exercise checkpoints to its own subdirectory, `f"{CHECKPOINT_BASE}/exN"` (Ex 5 uses `/ex5_an` for the `availableNow` query).
+# MAGIC
+# MAGIC **Pattern**: every query in this notebook ends with `.trigger(availableNow=True)` and `.awaitTermination()`, so the stream processes what is available, stops, and the next cell sees the finished table.
+# MAGIC
+# MAGIC **Retrying an exercise**: a checkpoint remembers which rows its stream already read, so running a fixed TODO cell again reads nothing new. Before a retry, reset that exercise: `dbutils.fs.rm(f"{CHECKPOINT_BASE}/ex2", True)` and `spark.sql("DROP TABLE IF EXISTS db_code.structured_streaming_basics.ex2_target")` (use your exercise's number; for Exercise 5 the names are `ex5_an` and `ex5_target_available_now`; for Exercise 7 also drop `db_code.structured_streaming_basics.ex7_progress`), or re-run the `%run ./setup/structured-streaming-basics-setup` cell, which drops every target and checkpoint of this notebook.
 
 # COMMAND ----------
 # MAGIC %md
@@ -61,12 +63,12 @@
 # MAGIC **Requirements**:
 # MAGIC 1. Read `ex1_source` with `spark.readStream` (Delta source)
 # MAGIC 2. Write to `ex1_target` as Delta with output mode `append`
-# MAGIC 3. Set a `checkpointLocation` under `CHECKPOINT_BASE` (e.g., `f"{CHECKPOINT_BASE}/ex1"`)
-# MAGIC 4. Use `.trigger(availableNow=True)` so the stream terminates after one batch
+# MAGIC 3. Set `checkpointLocation` to `f"{CHECKPOINT_BASE}/ex1"`
+# MAGIC 4. Use `.trigger(availableNow=True)` so the stream processes every available row and then stops
 # MAGIC 5. Call `.awaitTermination()` so the next cell runs only after the stream finishes
 # MAGIC
 # MAGIC **Constraints**:
-# MAGIC - Use `trigger(availableNow=True)` (NOT `trigger(once=True)`, NOT `trigger(processingTime=...)`)
+# MAGIC - Use `availableNow`, not `trigger(once=True)` (deprecated) or `processingTime` (not supported on serverless)
 # MAGIC - Checkpoint path must be in a Volume
 
 # COMMAND ----------
@@ -111,8 +113,7 @@ print("Exercise 1 passed!")
 # MAGIC 1. Read `ex2_source` with `spark.readStream`
 # MAGIC 2. Keep only rows where `event_type = 'purchase'`
 # MAGIC 3. Write to `ex2_target` as Delta in append mode
-# MAGIC 4. Use `.trigger(availableNow=True)` and `.awaitTermination()`
-# MAGIC 5. Checkpoint at `f"{CHECKPOINT_BASE}/ex2"`
+# MAGIC 4. Checkpoint to `f"{CHECKPOINT_BASE}/ex2"`, end with `.trigger(availableNow=True)` and call `.awaitTermination()`
 # MAGIC
 # MAGIC **Constraints**:
 # MAGIC - Apply the filter on the streaming DataFrame, not as a post-write SQL query
@@ -152,13 +153,13 @@ print("Exercise 2 passed!")
 # MAGIC
 # MAGIC **Target**: Write to `db_code.structured_streaming_basics.ex3_target`. Expected 35 rows.
 # MAGIC The target must include all original columns PLUS an `amount_with_tax` DOUBLE column.
+# MAGIC For example, `EV-003` (amount 120.50) gets `amount_with_tax` 132.55.
 # MAGIC
 # MAGIC **Requirements**:
 # MAGIC 1. Read `ex3_source` with `spark.readStream`
 # MAGIC 2. Add a new column `amount_with_tax = amount * 1.10`
 # MAGIC 3. Write to `ex3_target` as Delta in append mode
-# MAGIC 4. Use `.trigger(availableNow=True)` and `.awaitTermination()`
-# MAGIC 5. Checkpoint at `f"{CHECKPOINT_BASE}/ex3"`
+# MAGIC 4. Checkpoint to `f"{CHECKPOINT_BASE}/ex3"`, end with `.trigger(availableNow=True)` and call `.awaitTermination()`
 # MAGIC
 # MAGIC **Constraints**:
 # MAGIC - The new column must be named exactly `amount_with_tax`
@@ -192,13 +193,10 @@ print("Exercise 3 passed!")
 
 # COMMAND ----------
 # MAGIC %md
-# MAGIC ## Exercise 4: Append-Only Ingestion - Pick the Right Output Mode
+# MAGIC ## Exercise 4: Pick the Right Output Mode for an Ingestion Stream
 # MAGIC **Difficulty**: Medium | **Time**: ~10 min
 # MAGIC
-# MAGIC Output mode is one of `append`, `complete`, or `update`. Each is only legal for certain
-# MAGIC query shapes. For an ingestion sink that simply copies streamed events into a target,
-# MAGIC only ONE mode is correct - the other two fail. This exercise has you write the pipeline
-# MAGIC AND record which mode is correct (and which two would fail and why).
+# MAGIC Output mode is one of `append`, `complete` or `update`, and each works only for certain query shapes and sinks. This query copies events into a Delta table with no aggregation: exactly one mode works, and the other two raise an error when the stream starts. Write the pipeline, then record the mode you used in `correct_mode`.
 # MAGIC
 # MAGIC **Source** (`db_code.structured_streaming_basics.ex4_source`): 35 events.
 # MAGIC
@@ -206,15 +204,10 @@ print("Exercise 3 passed!")
 # MAGIC
 # MAGIC **Requirements**:
 # MAGIC 1. Read `ex4_source` and write it unchanged to `ex4_target`
-# MAGIC 2. Pass the correct output mode to `outputMode(...)` on the writeStream
-# MAGIC 3. Use `.trigger(availableNow=True)` and `.awaitTermination()`
-# MAGIC 4. Checkpoint at `f"{CHECKPOINT_BASE}/ex4"`
-# MAGIC 5. Set a Python variable `correct_mode` to the string of the mode you used (one of
+# MAGIC 2. Call `outputMode(...)` explicitly on the writeStream with the mode you chose (do not rely on the default)
+# MAGIC 3. Checkpoint to `f"{CHECKPOINT_BASE}/ex4"`, end with `.trigger(availableNow=True)` and call `.awaitTermination()`
+# MAGIC 4. Set a Python variable `correct_mode` to the string of the mode you used (one of
 # MAGIC    `"append"`, `"complete"`, `"update"`)
-# MAGIC
-# MAGIC **Constraints**:
-# MAGIC - The pipeline has no aggregation, so `complete` and `update` are illegal here
-# MAGIC - You must call `outputMode(...)` explicitly even if the default would work
 
 # COMMAND ----------
 
@@ -228,12 +221,14 @@ print("Exercise 3 passed!")
 # COMMAND ----------
 
 # Validate Exercise 4
+import hashlib
+
 result = spark.table(f"{CATALOG}.{SCHEMA}.ex4_target")
 
 assert result.count() == 35, f"Expected 35 rows, got {result.count()}"
 assert "correct_mode" in dir(), "Set a variable `correct_mode` to your chosen output mode"
-assert correct_mode == "append", \
-    f"For an append-only ingestion sink (no aggregation), the correct mode is 'append'. Got '{correct_mode}'"
+assert hashlib.sha256(correct_mode.encode()).hexdigest() == "ae524b54d9b5acbe3bbf0a4f4825bae82bca8b0a474878c2713394ea284ef929", \
+    f"'{correct_mode}' is not the mode that works for a plain copy into a Delta sink. Check which modes need an aggregation and which modes the Delta sink accepts."
 # Verify a specific value to catch wrong data
 ev5_amount = result.filter("event_id = 'EV-005'").select("amount").collect()[0][0]
 assert ev5_amount == 75.25, f"EV-005 amount should be 75.25, got {ev5_amount}"
@@ -246,10 +241,8 @@ print("Exercise 4 passed!")
 # MAGIC **Difficulty**: Medium | **Time**: ~10 min
 # MAGIC
 # MAGIC Triggers control when a micro-batch fires. Two modes you must know:
-# MAGIC - `processingTime='30 seconds'`: long-running query, fires every 30 seconds, keeps compute
-# MAGIC   warm. Lower latency, higher cost.
-# MAGIC - `availableNow=True`: processes everything currently available, then stops. Compute spins
-# MAGIC   down between scheduled runs. Higher latency, lower cost.
+# MAGIC - `processingTime='30 seconds'`: a long-running query that checks for new data every 30 seconds and runs a micro-batch when there is some; the query and its compute stay up.
+# MAGIC - `availableNow=True`: processes everything currently available, then stops; a scheduled job starts it again later, and compute shuts down in between.
 # MAGIC
 # MAGIC **Free Edition note**: `Trigger.ProcessingTime` is NOT supported on Free Edition (which is
 # MAGIC serverless-only). Per the Databricks docs: "On serverless compute, only `Trigger.AvailableNow()`
@@ -267,8 +260,7 @@ print("Exercise 4 passed!")
 # MAGIC    `.awaitTermination()`.
 # MAGIC 2. Set a Python variable `latency_winner` to the trigger string that gives LOWER LATENCY
 # MAGIC    (one of `"processingTime"` or `"availableNow"`).
-# MAGIC 3. Set a Python variable `cost_winner` to the trigger string that minimizes COST on Free
-# MAGIC    Edition / scheduled jobs (the one where compute spins down between runs).
+# MAGIC 3. Set a Python variable `cost_winner` to the trigger string that gives LOWER COST (one of `"processingTime"` or `"availableNow"`).
 # MAGIC
 # MAGIC **Constraints**:
 # MAGIC - Do NOT use `.trigger(processingTime=...)` here - it would fail on Free Edition serverless.
@@ -285,16 +277,18 @@ print("Exercise 4 passed!")
 # COMMAND ----------
 
 # Validate Exercise 5
+import hashlib
+
 an = spark.table(f"{CATALOG}.{SCHEMA}.ex5_target_available_now")
 
 assert an.count() == 35, f"availableNow target should have 35 rows, got {an.count()}"
 
 assert "latency_winner" in dir(), "Set `latency_winner` to 'processingTime' or 'availableNow'"
 assert "cost_winner" in dir(), "Set `cost_winner` to 'processingTime' or 'availableNow'"
-assert latency_winner == "processingTime", \
-    f"processingTime gives lower latency (continuous compute). Got '{latency_winner}'"
-assert cost_winner == "availableNow", \
-    f"availableNow minimizes cost (compute spins down between runs). Got '{cost_winner}'"
+assert hashlib.sha256(latency_winner.encode()).hexdigest() == "96e8d9790f722b3903b5c94684dd31fffdc7545064f9c4966c388e531ba0b368", \
+    f"'{latency_winner}' is not the lower-latency trigger. Which one keeps the query running between batches?"
+assert hashlib.sha256(cost_winner.encode()).hexdigest() == "5a43126b98f5b7a5460bfe7a907807bcf3c1eccf8098f3fa6a8f30312b59069f", \
+    f"'{cost_winner}' is not the lower-cost trigger. Which one lets compute shut down between runs?"
 
 print("Exercise 5 passed!")
 
@@ -303,11 +297,12 @@ print("Exercise 5 passed!")
 # MAGIC ## Exercise 6: Streaming Aggregation in Complete Output Mode
 # MAGIC **Difficulty**: Medium | **Time**: ~10 min
 # MAGIC
-# MAGIC Stateful aggregations (groupBy without windowing) require `complete` output mode when
-# MAGIC writing to a Delta sink without a watermark - the engine emits the FULL result table after
+# MAGIC Stateful aggregations grouped by a plain column (here `event_type`, no event-time window) need `complete` output mode when
+# MAGIC writing to a Delta sink: `append` works on an aggregation only when the grouping includes an event-time window or column
+# MAGIC that has a watermark. In `complete` mode the engine emits the FULL result table after
 # MAGIC every micro-batch, overwriting the previous result. This is fine for small grouping
-# MAGIC dimensions (handful of event types). For large key spaces, you would add a watermark and
-# MAGIC switch to `update`.
+# MAGIC dimensions (handful of event types). For large key spaces, you would write the aggregate
+# MAGIC with `foreachBatch` and a MERGE instead of rewriting the full table.
 # MAGIC
 # MAGIC **Source** (`db_code.structured_streaming_basics.ex6_source`): 35 events with 3 distinct
 # MAGIC `event_type` values: `purchase` (18), `view` (9), `click` (8).
@@ -319,13 +314,11 @@ print("Exercise 5 passed!")
 # MAGIC 1. Read `ex6_source` with `spark.readStream`
 # MAGIC 2. Group by `event_type` and compute `count(*) AS cnt`
 # MAGIC 3. Write to `ex6_target` with `outputMode("complete")`
-# MAGIC 4. Use `.trigger(availableNow=True)` and `.awaitTermination()`
-# MAGIC 5. Checkpoint at `f"{CHECKPOINT_BASE}/ex6"`
+# MAGIC 4. Checkpoint to `f"{CHECKPOINT_BASE}/ex6"`, end with `.trigger(availableNow=True)` and call `.awaitTermination()`
 # MAGIC
 # MAGIC **Constraints**:
-# MAGIC - The count column MUST be named `cnt` (the validator checks this name)
-# MAGIC - Use `complete` mode - `append` would fail because there is no watermark, and the result
-# MAGIC   table is being overwritten on every batch
+# MAGIC - The count column MUST be named `cnt` (the validation cell reads that column)
+# MAGIC - Use `complete` mode: `append` fails here because the grouping has no event-time column with a watermark
 
 # COMMAND ----------
 
@@ -372,16 +365,12 @@ print("Exercise 6 passed!")
 # MAGIC - `ex7_progress`: 1 row with columns `query_name STRING`, `num_input_rows BIGINT`
 # MAGIC
 # MAGIC **Requirements**:
-# MAGIC 1. Start a streaming write from `ex7_source` to `ex7_target` with `.queryName("ss_basics_ex7")`
-# MAGIC 2. Use `.trigger(availableNow=True)` and `.awaitTermination()`
-# MAGIC 3. Checkpoint at `f"{CHECKPOINT_BASE}/ex7"`
-# MAGIC 4. After the stream terminates, read `query.lastProgress` and extract the query name and
-# MAGIC    `numInputRows`. Write these as a 1-row Delta table `ex7_progress` with columns
-# MAGIC    `query_name STRING`, `num_input_rows BIGINT`.
+# MAGIC 1. Start a streaming write from `ex7_source` to `ex7_target` with `.queryName("ss_basics_ex7")`, checkpoint `f"{CHECKPOINT_BASE}/ex7"` and `.trigger(availableNow=True)`
+# MAGIC 2. Keep the `StreamingQuery` that `.toTable(...)` returns in a variable `query`, then call `query.awaitTermination()` as a separate statement (chained onto `.toTable(...)`, it returns `None` and you lose the query). Then read `query.lastProgress["name"]` and `query.lastProgress["numInputRows"]`, and write them with `mode("overwrite")` as a 1-row Delta table `ex7_progress` with columns `query_name STRING`, `num_input_rows BIGINT`.
 # MAGIC
 # MAGIC **Constraints**:
 # MAGIC - The query name string MUST be `ss_basics_ex7`
-# MAGIC - Use `lastProgress`, not `recentProgress` (the validator checks the single-batch row)
+# MAGIC - Use `lastProgress`, not `recentProgress` (the validation cell expects one row from the last batch)
 
 # COMMAND ----------
 
@@ -411,16 +400,12 @@ print("Exercise 7 passed!")
 
 # COMMAND ----------
 # MAGIC %md
-# MAGIC ## Exercise 8: Deduplicate a Stream with dropDuplicates
-# MAGIC **Difficulty**: Hard | **Time**: ~20 min
+# MAGIC ## Exercise 8: Deduplicate a Stream by event_id
+# MAGIC **Difficulty**: Medium | **Time**: ~10 min
 # MAGIC
-# MAGIC Exactly-once delivery is a common requirement: even if the source delivers an event
-# MAGIC multiple times (retries, replay, upstream bug), the target must contain each event_id
-# MAGIC exactly once. `dropDuplicates(["event_id"])` on a streaming DataFrame stores seen keys in
-# MAGIC state and drops duplicates on subsequent batches.
+# MAGIC Duplicate events are a fact of life (retries, replays, upstream bugs), and the target must still contain each `event_id` once. Remove the repeats on the streaming DataFrame itself, so the dedup is part of the streaming plan and also catches a repeat that arrives in a later micro-batch.
 # MAGIC
-# MAGIC **Source** (`db_code.structured_streaming_basics.ex8_source`): 15 rows with deliberate
-# MAGIC duplicates -
+# MAGIC **Source** (`db_code.structured_streaming_basics.ex8_source`): 15 rows with deliberate duplicates:
 # MAGIC - EV-101 appears 3 times
 # MAGIC - EV-102, EV-104, EV-107 each appear 2 times
 # MAGIC - The remaining 6 event_ids appear once
@@ -431,13 +416,12 @@ print("Exercise 7 passed!")
 # MAGIC
 # MAGIC **Requirements**:
 # MAGIC 1. Read `ex8_source` with `spark.readStream`
-# MAGIC 2. Apply `dropDuplicates(["event_id"])` on the streaming DataFrame
+# MAGIC 2. Keep one row per `event_id` in the stream
 # MAGIC 3. Write to `ex8_target` as Delta in append mode
-# MAGIC 4. Use `.trigger(availableNow=True)` and `.awaitTermination()`
-# MAGIC 5. Checkpoint at `f"{CHECKPOINT_BASE}/ex8"`
+# MAGIC 4. Checkpoint to `f"{CHECKPOINT_BASE}/ex8"`, end with `.trigger(availableNow=True)` and call `.awaitTermination()`
 # MAGIC
 # MAGIC **Constraints**:
-# MAGIC - Use `dropDuplicates` on the STREAMING DataFrame (not a post-write `SELECT DISTINCT`)
+# MAGIC - Deduplicate the STREAMING DataFrame (not a post-write `SELECT DISTINCT`)
 # MAGIC - Dedup key is `event_id` only
 
 # COMMAND ----------

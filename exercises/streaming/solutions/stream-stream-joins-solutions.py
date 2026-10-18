@@ -2,7 +2,7 @@
 # COMMAND ----------
 # MAGIC %md
 # MAGIC # Stream-Stream Joins - Solutions
-# MAGIC **Topic**: Streaming | **Exercises**: 7
+# MAGIC **Topic**: Streaming | **Exercises**: 6
 # MAGIC
 # MAGIC Reference solutions, hints, and common mistakes for each exercise.
 # MAGIC Try solving the exercises first before looking here.
@@ -21,8 +21,8 @@ CHECKPOINT_BASE = f"/Volumes/{CATALOG}/{SCHEMA}/checkpoints"
 # MAGIC **Hints**:
 # MAGIC 1. Read each side with `spark.readStream.table(...)`. Once both are streaming DataFrames,
 # MAGIC    the `.join(...)` call on streaming DFs is a stream-stream join automatically.
-# MAGIC 2. The join condition is just `orders.order_id == shipments.order_id` (default join type
-# MAGIC    is inner).
+# MAGIC 2. Join on the column name, `on="order_id"` (default join type is inner), so the output keeps
+# MAGIC    one `order_id` column.
 # MAGIC 3. The write side needs `.format("delta")`, a checkpoint location, `trigger(availableNow=True)`,
 # MAGIC    and `.toTable(...)`.
 # MAGIC
@@ -31,8 +31,7 @@ CHECKPOINT_BASE = f"/Volumes/{CATALOG}/{SCHEMA}/checkpoints"
 # MAGIC - Forgetting `.awaitTermination()` - the next cell runs before the stream completes and the
 # MAGIC   target table is empty when assertions fire.
 # MAGIC - Using `trigger(once=True)` - deprecated. Use `trigger(availableNow=True)`.
-# MAGIC - Forgetting to drop the duplicated `order_id` column. The join produces two `order_id`
-# MAGIC   columns by default; select explicitly or use the `on=` form so the column is coalesced.
+# MAGIC - Keeping both `order_id` columns. A join on an expression (`orders.order_id == shipments.order_id`) returns two `order_id` columns; pass `on="order_id"` or select the columns explicitly so the output has one.
 
 # COMMAND ----------
 
@@ -120,12 +119,10 @@ joined = orders_wm.join(shipments_wm, on="order_id", how="inner").select(
 # MAGIC    SQL; in PySpark you can also write `orders_wm.order_ts + expr("INTERVAL 5 MINUTES")`.
 # MAGIC
 # MAGIC **Common mistakes**:
-# MAGIC - Putting the time-range predicate in a `.filter(...)` AFTER the join. The output rows are
-# MAGIC   the same, but state stays unbounded because Spark cannot infer the bound.
+# MAGIC - Putting the time-range predicate in a `.filter(...)` after the join. In this inner join the optimizer moves it into the join condition, so nothing breaks, but the same habit in a left or right outer join leaves the join with no time bound and Spark rejects the query.
 # MAGIC - Using a one-sided bound (only `shipment_ts >= order_ts`) - that doesn't cap how far apart
 # MAGIC   matches can be in event time, so state still grows.
-# MAGIC - Forgetting `withWatermark` on one side. Spark may run, but the bound on that side is not
-# MAGIC   enforced and the state for that side grows unboundedly.
+# MAGIC - Forgetting `withWatermark` on one side. The inner join still runs, but the OTHER side's state is never expired: without a shipments watermark Spark cannot know when an order has seen its last possible shipment, so orders pile up in state (and the mirror case for a missing orders watermark).
 
 # COMMAND ----------
 
@@ -173,7 +170,7 @@ joined = orders_wm.join(shipments_wm, on=join_cond, how="inner").select(
 # MAGIC 1. Switch the join type to `"leftOuter"` (or `"left_outer"`). Everything else from Exercise
 # MAGIC    3 stays the same.
 # MAGIC 2. NULL rows for unmatched left orders are emitted when the watermark passes the order's
-# MAGIC    window end (`order_ts + 5 minutes`). The setup includes two late "advancement" orders
+# MAGIC    window end (`order_ts + 5 minutes`). The setup includes two watermark-advancing orders
 # MAGIC    so the watermark gets there.
 # MAGIC 3. The output schema should still have all 7 columns. Unmatched-left rows have NULL in
 # MAGIC    `shipment_id`, `carrier`, and `shipment_ts`.
@@ -183,7 +180,7 @@ joined = orders_wm.join(shipments_wm, on=join_cond, how="inner").select(
 # MAGIC   Spark raises `AnalysisException` if either is missing.
 # MAGIC - Expecting unmatched rows to appear immediately. They only emit AFTER the watermark passes
 # MAGIC   the upper bound of the window. With `availableNow`, the watermark advances based on event
-# MAGIC   time across the data - late rows that push it forward let earlier unmatched rows be emitted.
+# MAGIC   time across the data - rows with later event times push it forward and let earlier unmatched rows be emitted.
 # MAGIC - Passing `on="order_id"` (a string column name) instead of a full join condition
 # MAGIC   expression. For stream-stream outer joins with a time predicate you need the expression
 # MAGIC   form so the predicate is part of the join.
@@ -241,9 +238,7 @@ joined = orders_wm.join(shipments_wm, on=join_cond, how="leftOuter").select(
 # MAGIC   In `rightOuter`, the LEFT side gets nulls.
 # MAGIC - Filtering the output for `order_id IS NOT NULL` and wondering why unmatched shipments
 # MAGIC   disappear - that filter removes exactly the rows the outer join produced.
-# MAGIC - Treating right-outer state as equivalent to left-outer state. The watermark math is
-# MAGIC   symmetric here, but in general the choice of outer side affects which rows linger and
-# MAGIC   for how long.
+# MAGIC - Expecting both sides to leave state at the same time. With `shipment_ts BETWEEN order_ts AND order_ts + INTERVAL 5 MINUTES`, an order stays in state until the watermark passes `order_ts + 5 minutes`, a shipment only until it passes `shipment_ts`.
 
 # COMMAND ----------
 
@@ -285,83 +280,39 @@ joined = orders_wm.join(shipments_wm, on=join_cond, how="rightOuter").select(
 
 # COMMAND ----------
 # MAGIC %md
-# MAGIC ## Exercise 6: Diagnose Unbounded State (No Watermark, No Time Bound)
+# MAGIC ## Exercise 6: Measure Unbounded Join State
 # MAGIC
 # MAGIC **Hints**:
-# MAGIC 1. The code is intentionally the same as Exercise 1. The point is recognizing this pattern
-# MAGIC    in code review.
-# MAGIC 2. Under `availableNow`, both streams terminate after one or two micro-batches, so state
-# MAGIC    "leaks" don't accumulate visibly - but in a continuous job they would.
-# MAGIC 3. To verify state growth in production: query the StreamingQueryProgress
-# MAGIC    (`spark.streams.active[i].lastProgress`) and watch `stateOperators[*].numRowsTotal` grow
-# MAGIC    unboundedly across micro-batches.
+# MAGIC 1. Reuse the Exercise 1 join for the unbounded side and the Exercise 3 join for the bounded side. Give each its own checkpoint and target, and keep the `StreamingQuery` each `.toTable(...)` returns.
+# MAGIC 2. Under `availableNow`, each query stops after one or two micro-batches, so the state growth over time does not show; on a stream that keeps running it would. What does show is how many rows each join still holds when it stops.
+# MAGIC 3. `query.lastProgress["stateOperators"]` is a list with one entry per stateful operator. A stream-stream join has one, and its `numRowsTotal` is the number of rows in its state.
 # MAGIC
-# MAGIC **Common mistakes** (the kind that put this pattern in production):
-# MAGIC - Adding a watermark and assuming state is bounded - it isn't, you also need a time-range
-# MAGIC   predicate.
-# MAGIC - Adding a time-range predicate as a `.filter(...)` after the join - Spark won't recognize
-# MAGIC   it as a join time bound and won't drop state.
-# MAGIC - Adding a one-sided predicate (`shipment_ts >= order_ts`) - this is a bound on order but
-# MAGIC   not a bound on lateness; state still grows on the orders side.
-# MAGIC - "We don't see state growth in dev" - dev runs are short. Production state growth shows up
-# MAGIC   as ballooning checkpoints, slow micro-batches after hours/days, and eventually OOMs.
+# MAGIC **Common mistakes**:
+# MAGIC - Reading `lastProgress` before `.awaitTermination()` returns - it may describe an earlier batch, not the final one.
+# MAGIC - Typing the numbers you saw in the query progress into `ex6_state` instead of reading them from `lastProgress` in code.
+# MAGIC - Overwriting the first `StreamingQuery` variable with the second query: keep one handle per join so you can read each one's `lastProgress`.
 
 # COMMAND ----------
 
 # EXERCISE_KEY: stream_stream_ex6
-# Intentionally unbounded: no withWatermark, no time-range predicate.
-# This is the broken pattern. The fix is in Exercise 3.
+from pyspark.sql.functions import expr
+
+# Unbounded: no withWatermark, no time-range predicate (the Exercise 1 join)
 orders = spark.readStream.table(f"{CATALOG}.{SCHEMA}.orders_stream")
 shipments = spark.readStream.table(f"{CATALOG}.{SCHEMA}.shipments_stream")
 
-joined = orders.join(shipments, on="order_id", how="inner").select(
-    "order_id",
-    "customer_id",
-    "amount",
-    "order_ts",
-    "shipment_id",
-    "carrier",
-    "shipment_ts",
-)
-
-(joined.writeStream
+unbounded_query = (orders.join(shipments, on="order_id", how="inner")
+    .select("order_id", "customer_id", "amount", "order_ts", "shipment_id", "carrier", "shipment_ts")
+    .writeStream
     .format("delta")
-    .option("checkpointLocation", f"{CHECKPOINT_BASE}/ex6")
+    .option("checkpointLocation", f"{CHECKPOINT_BASE}/ex6_unbounded")
     .trigger(availableNow=True)
-    .toTable(f"{CATALOG}.{SCHEMA}.ex6_target")
-    .awaitTermination()
+    .toTable(f"{CATALOG}.{SCHEMA}.ex6_unbounded_target")
 )
+unbounded_query.awaitTermination()
+unbounded_state_rows = unbounded_query.lastProgress["stateOperators"][0]["numRowsTotal"]
 
-# COMMAND ----------
-# MAGIC %md
-# MAGIC ## Exercise 7: Verify That Out-of-Window Pairs Are Dropped
-# MAGIC
-# MAGIC **Hints**:
-# MAGIC 1. The code is the same as Exercise 3. The new skill is reading the OUTPUT and proving the
-# MAGIC    bound is in effect: every surviving row satisfies `shipment_ts - order_ts <= 5 minutes`,
-# MAGIC    AND all known out-of-window pairs are absent.
-# MAGIC 2. To verify the bound is part of the JOIN (not a post-filter), inspect
-# MAGIC    `query.lastProgress["stateOperators"]` and look for the join state operator with a
-# MAGIC    bounded `watermarkPredicate`.
-# MAGIC 3. In production, the assertion to add to your test suite is:
-# MAGIC    `assert spark.table(target).filter("shipment_ts > order_ts + INTERVAL 5 MINUTES").count() == 0`.
-# MAGIC
-# MAGIC **Common mistakes**:
-# MAGIC - Writing the same logical query but with the time predicate as a `.filter(...)` after the
-# MAGIC   join. The output assertions still pass, but state is unbounded. The way to catch this in
-# MAGIC   review is to look for the time predicate INSIDE the join condition, not in a downstream
-# MAGIC   transform.
-# MAGIC - Testing only that the right rows ARE present, not that wrong rows are ABSENT. Out-of-
-# MAGIC   window pairs are an easy regression - add explicit "must-not-appear" assertions.
-# MAGIC - Assuming a >5-minute pair in production "just won't happen". Late-arriving data is the
-# MAGIC   norm, not the exception. Pick a time bound that matches your business latency budget
-# MAGIC   and TEST that pairs beyond it are dropped.
-
-# COMMAND ----------
-
-# EXERCISE_KEY: stream_stream_ex7
-from pyspark.sql.functions import expr
-
+# Bounded: watermark on both sides + time-range predicate in the join condition (the Exercise 3 join)
 orders_wm = (
     spark.readStream.table(f"{CATALOG}.{SCHEMA}.orders_stream")
     .withWatermark("order_ts", "1 minute")
@@ -377,20 +328,26 @@ join_cond = (
     & (shipments_wm.shipment_ts <= orders_wm.order_ts + expr("INTERVAL 5 MINUTES"))
 )
 
-joined = orders_wm.join(shipments_wm, on=join_cond, how="inner").select(
-    orders_wm.order_id,
-    orders_wm.customer_id,
-    orders_wm.amount,
-    orders_wm.order_ts,
-    shipments_wm.shipment_id,
-    shipments_wm.carrier,
-    shipments_wm.shipment_ts,
-)
-
-(joined.writeStream
+bounded_query = (orders_wm.join(shipments_wm, on=join_cond, how="inner")
+    .select(
+        orders_wm.order_id,
+        orders_wm.customer_id,
+        orders_wm.amount,
+        orders_wm.order_ts,
+        shipments_wm.shipment_id,
+        shipments_wm.carrier,
+        shipments_wm.shipment_ts,
+    )
+    .writeStream
     .format("delta")
-    .option("checkpointLocation", f"{CHECKPOINT_BASE}/ex7")
+    .option("checkpointLocation", f"{CHECKPOINT_BASE}/ex6_bounded")
     .trigger(availableNow=True)
-    .toTable(f"{CATALOG}.{SCHEMA}.ex7_target")
-    .awaitTermination()
+    .toTable(f"{CATALOG}.{SCHEMA}.ex6_bounded_target")
 )
+bounded_query.awaitTermination()
+bounded_state_rows = bounded_query.lastProgress["stateOperators"][0]["numRowsTotal"]
+
+spark.createDataFrame(
+    [(int(unbounded_state_rows), int(bounded_state_rows))],
+    "unbounded_state_rows BIGINT, bounded_state_rows BIGINT",
+).write.mode("overwrite").saveAsTable(f"{CATALOG}.{SCHEMA}.ex6_state")

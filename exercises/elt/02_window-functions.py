@@ -7,18 +7,21 @@
 # MAGIC Practice Spark SQL window functions: ROW_NUMBER dedup with QUALIFY, RANK vs DENSE_RANK
 # MAGIC tie handling, LAG for period-over-period, running totals with explicit frame specs,
 # MAGIC NTILE quartile bucketing, FIRST_VALUE/LAST_VALUE, QUALIFY for top-N, and sessionization.
+# MAGIC Each exercise writes its result as a Delta table, named on its **Target** line.
+# MAGIC
+# MAGIC TODO cells are Python: run SQL with `spark.sql(...)`. The setup cells define the Python variables `CATALOG` (`db_code`) and `SCHEMA` (`window_functions`) for you.
 # MAGIC
 # MAGIC **Solutions**: If stuck, see `solutions/window-functions-solutions.py` for hints and answers.
 # MAGIC
-# MAGIC **Tables used** (from setup):
-# MAGIC - `db_code.window_functions.window_ex1_orders` - orders with multiple per customer (dedup)
-# MAGIC - `db_code.window_functions.window_ex2_orders` - orders per customer (RANK vs DENSE_RANK)
-# MAGIC - `db_code.window_functions.window_ex3_orders` - orders per customer (LAG comparison)
-# MAGIC - `db_code.window_functions.window_ex4_orders` - orders for running totals
-# MAGIC - `db_code.window_functions.window_ex5_customer_spend` - aggregated customer spend (NTILE)
-# MAGIC - `db_code.window_functions.window_ex6_orders` - orders for FIRST_VALUE/LAST_VALUE
-# MAGIC - `db_code.window_functions.window_ex7_orders` - orders for QUALIFY top-N
-# MAGIC - `db_code.window_functions.window_ex8_events` - clickstream events (sessionization)
+# MAGIC **Tables** (in `db_code.window_functions`, created by the setup cells below; each exercise reads its own table):
+# MAGIC - `window_ex1_orders` - 12 orders, 7 customers plus 1 row with NULL `customer_id` (Ex 1)
+# MAGIC - `window_ex2_orders` - 20 orders, 6 customers, tied order counts (Ex 2)
+# MAGIC - `window_ex3_orders` - 12 orders, 3 customers with 4 each (Ex 3)
+# MAGIC - `window_ex4_orders` - 11 orders, 3 customers with 3-4 each, one same-day pair (Ex 4)
+# MAGIC - `window_ex5_customer_spend` - 8 customers with `total_spend` (Ex 5)
+# MAGIC - `window_ex6_orders` - 15 orders, 4 customers with 2-5 each (Ex 6)
+# MAGIC - `window_ex7_orders` - 12 orders, 3 customers with 4 each (Ex 7)
+# MAGIC - `window_ex8_events` - 15 clickstream events, 2 users (Ex 8)
 
 # COMMAND ----------
 
@@ -27,19 +30,6 @@
 # COMMAND ----------
 
 # MAGIC %run ./setup/window-functions-setup
-
-# COMMAND ----------
-# MAGIC %md
-# MAGIC **Setup complete.** Exercise tables are in `db_code.window_functions`.
-# MAGIC Each exercise reads from its own source table and writes results to a separate output table.
-# MAGIC - Ex 1 (easy): `window_ex1_orders` - 12 rows, 7 customers (some with multiple orders, 1 NULL customer_id)
-# MAGIC - Ex 2 (easy): `window_ex2_orders` - 20 rows, 6 customers with varying order counts (ties exist)
-# MAGIC - Ex 3 (medium): `window_ex3_orders` - 12 rows, 3 customers with 4 orders each
-# MAGIC - Ex 4 (medium): `window_ex4_orders` - 10 rows, 3 customers with 3-4 orders each
-# MAGIC - Ex 5 (medium): `window_ex5_customer_spend` - 8 customers with total spend
-# MAGIC - Ex 6 (medium): `window_ex6_orders` - 15 rows, 4 customers with 2-5 orders each
-# MAGIC - Ex 7 (medium): `window_ex7_orders` - 12 rows, 3 customers with 4 orders each
-# MAGIC - Ex 8 (hard): `window_ex8_events` - 15 clickstream events across 2 users
 
 # COMMAND ----------
 # MAGIC %md
@@ -59,7 +49,7 @@
 # MAGIC 1. Use ROW_NUMBER() partitioned by `customer_id`, ordered by `updated_at` DESC
 # MAGIC 2. Use QUALIFY to keep only the latest order per customer (row_number = 1)
 # MAGIC 3. Exclude rows where `customer_id` IS NULL
-# MAGIC 4. Write all original columns (no row_number column in output) to a Delta table
+# MAGIC 4. Output the original columns only (no row number column)
 # MAGIC
 # MAGIC **Constraints**:
 # MAGIC - Input has 12 rows, output must have exactly 7
@@ -112,7 +102,6 @@ print("Exercise 1 passed!")
 # MAGIC 1. Aggregate orders by customer_id to get order_count
 # MAGIC 2. Apply RANK() ordered by order_count DESC as `rank_val`
 # MAGIC 3. Apply DENSE_RANK() ordered by order_count DESC as `dense_rank_val`
-# MAGIC 4. Write to Delta table
 # MAGIC
 # MAGIC **Constraints**:
 # MAGIC - 6 rows in output (one per customer)
@@ -176,7 +165,6 @@ print("Exercise 2 passed!")
 # MAGIC 1. Use LAG(amount) partitioned by `customer_id`, ordered by `order_date`
 # MAGIC 2. Add `prev_amount` column (the previous order's amount, NULL for first order)
 # MAGIC 3. Add `amount_change` column = `amount - prev_amount` (NULL for first order)
-# MAGIC 4. Write to Delta table with all 6 columns
 # MAGIC
 # MAGIC **Constraints**:
 # MAGIC - First order per customer has NULL prev_amount and NULL amount_change
@@ -202,6 +190,8 @@ assert "amount_change" in result.columns, "Missing amount_change column"
 # First order per customer should have NULL prev_amount
 first_orders = result.filter("prev_amount IS NULL")
 assert first_orders.count() == 3, f"Expected 3 rows with NULL prev_amount (first per customer), got {first_orders.count()}"
+null_change_firsts = result.filter("order_id IN ('ORD-301', 'ORD-305', 'ORD-309') AND amount_change IS NULL").count()
+assert null_change_firsts == 3, "amount_change should be NULL on each customer's first order"
 
 # CUST-002 second order: amount=0, prev=80, change=-80
 cust2_second = result.filter("order_id = 'ORD-306'").collect()[0]
@@ -222,21 +212,21 @@ print("Exercise 3 passed!")
 # MAGIC Calculate a cumulative order amount per customer using an explicit window frame.
 # MAGIC The running total should include all rows from the start of the partition up to the current row.
 # MAGIC
-# MAGIC **Source** (`window_ex4_orders`): 10 rows. CUST-001 (3 orders), CUST-002 (4 orders),
-# MAGIC CUST-003 (3 orders).
+# MAGIC **Source** (`window_ex4_orders`): 11 rows. CUST-001 (3 orders), CUST-002 (4 orders),
+# MAGIC CUST-003 (4 orders, two of them on 2026-02-20).
 # MAGIC
-# MAGIC **Target**: Write to `db_code.window_functions.window_ex4_running_totals`. 10 rows with columns:
+# MAGIC **Target**: Write to `db_code.window_functions.window_ex4_running_totals`. 11 rows with columns:
 # MAGIC `order_id`, `customer_id`, `amount`, `order_date`, `running_total`.
 # MAGIC
 # MAGIC **Requirements**:
-# MAGIC 1. Use SUM(amount) with PARTITION BY `customer_id`, ORDER BY `order_date`
+# MAGIC 1. Use SUM(amount) with PARTITION BY `customer_id`, ORDER BY `order_date`, `order_id`
 # MAGIC 2. Use explicit frame: ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
 # MAGIC 3. Add `running_total` column with the cumulative sum
-# MAGIC 4. Write to Delta table
 # MAGIC
 # MAGIC **Constraints**:
 # MAGIC - CUST-001 running totals: 100.00, 250.00, 450.00
 # MAGIC - CUST-002 final running total: 80 + 120 + 60 + 90 = 350.00
+# MAGIC - ORD-409 and ORD-411 share `order_date` 2026-02-20: ORD-409's running total is 375.00, ORD-411's is 425.00
 
 # COMMAND ----------
 
@@ -251,7 +241,7 @@ print("Exercise 3 passed!")
 # Validate Exercise 4
 result = spark.table(f"{CATALOG}.{SCHEMA}.window_ex4_running_totals")
 
-assert result.count() == 10, f"Expected 10 rows, got {result.count()}"
+assert result.count() == 11, f"Expected 11 rows, got {result.count()}"
 assert "running_total" in result.columns, "Missing running_total column"
 
 # CUST-001 first order: running total = 100.00
@@ -266,9 +256,12 @@ assert cust1_last == 450.00, f"CUST-001 final running_total should be 450.00, go
 cust2_last = result.filter("order_id = 'ORD-407'").select("running_total").collect()[0][0]
 assert cust2_last == 350.00, f"CUST-002 final running_total should be 350.00, got {cust2_last}"
 
-# CUST-003 mid-point: 200 + 175 = 375.00
-cust3_mid = result.filter("order_id = 'ORD-409'").select("running_total").collect()[0][0]
-assert cust3_mid == 375.00, f"CUST-003 second running_total should be 375.00, got {cust3_mid}"
+# CUST-003 same-day pair on 2026-02-20: ORD-409 = 200 + 175 = 375.00, ORD-411 = 375 + 50 = 425.00
+cust3_409 = result.filter("order_id = 'ORD-409'").select("running_total").collect()[0][0]
+assert cust3_409 == 375.00, \
+    f"ORD-409 running_total should be 375.00, got {cust3_409}. ORD-409 and ORD-411 share 2026-02-20: order by order_date, then order_id"
+cust3_411 = result.filter("order_id = 'ORD-411'").select("running_total").collect()[0][0]
+assert cust3_411 == 425.00, f"ORD-411 running_total should be 425.00, got {cust3_411}"
 
 print("Exercise 4 passed!")
 
@@ -289,7 +282,6 @@ print("Exercise 4 passed!")
 # MAGIC **Requirements**:
 # MAGIC 1. Use NTILE(4) ordered by `total_spend` ascending
 # MAGIC 2. Add `spend_quartile` column (1 = lowest, 4 = highest)
-# MAGIC 3. Write to Delta table
 # MAGIC
 # MAGIC **Constraints**:
 # MAGIC - CUST-008 (spend=75) should be in quartile 1
@@ -321,7 +313,6 @@ q4 = result.filter("customer_id = 'CUST-007'").select("spend_quartile").collect(
 assert q4 == 4, f"CUST-007 (highest spend) should be quartile 4, got {q4}"
 
 # Each quartile should have exactly 2 customers (8 / 4 = 2)
-from pyspark.sql import functions as F
 quartile_counts = result.groupBy("spend_quartile").count().collect()
 for row in quartile_counts:
     assert row["count"] == 2, f"Quartile {row['spend_quartile']} should have 2 customers, got {row['count']}"
@@ -345,13 +336,12 @@ print("Exercise 5 passed!")
 # MAGIC
 # MAGIC **Target**: Write to `db_code.window_functions.window_ex6_first_last`. 15 rows with columns:
 # MAGIC `order_id`, `customer_id`, `amount`, `order_date`, `first_order_id`, `first_order_amount`,
-# MAGIC `last_order_id`, `last_order_amount`.
+# MAGIC `last_order_id`, `last_order_amount` (leave out the source's `status` column).
 # MAGIC
 # MAGIC **Requirements**:
 # MAGIC 1. Use FIRST_VALUE(order_id) and FIRST_VALUE(amount) partitioned by `customer_id`, ordered by `order_date`
 # MAGIC 2. Use LAST_VALUE(order_id) and LAST_VALUE(amount) with explicit frame ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING
 # MAGIC 3. Add `first_order_id`, `first_order_amount`, `last_order_id`, `last_order_amount` columns
-# MAGIC 4. Write to Delta table with all 8 columns
 # MAGIC
 # MAGIC **Constraints**:
 # MAGIC - CUST-001 first: ORD-601 (100.00), last: ORD-605 (50.00)
@@ -401,8 +391,8 @@ print("Exercise 6 passed!")
 # MAGIC ## Exercise 7: QUALIFY for Top-N Per Group Without Subquery
 # MAGIC **Difficulty**: Medium | **Time**: ~10 min
 # MAGIC
-# MAGIC Get the top 2 highest-value orders per customer using the QUALIFY clause (Databricks SQL
-# MAGIC extension). No subqueries or CTEs needed.
+# MAGIC Get the top 2 highest-value orders per customer using the QUALIFY clause (not in ANSI SQL, supported
+# MAGIC by Databricks SQL). No subqueries or CTEs needed.
 # MAGIC
 # MAGIC **Source** (`window_ex7_orders`): 12 rows across 3 customers (4 orders each).
 # MAGIC - CUST-001 amounts: 100, 250, 175, 300
@@ -416,7 +406,6 @@ print("Exercise 6 passed!")
 # MAGIC 1. Use ROW_NUMBER() partitioned by `customer_id`, ordered by `amount` DESC
 # MAGIC 2. Use QUALIFY to keep only the top 2 per customer (row_number <= 2)
 # MAGIC 3. Do NOT include the row_number column in the output
-# MAGIC 4. Write to Delta table
 # MAGIC
 # MAGIC **Constraints**:
 # MAGIC - CUST-001 top 2: ORD-704 (300.00), ORD-702 (250.00)
@@ -466,8 +455,6 @@ print("Exercise 7 passed!")
 # MAGIC **Difficulty**: Hard | **Time**: ~20 min
 # MAGIC
 # MAGIC Assign session IDs to clickstream events based on a 30-minute inactivity gap.
-# MAGIC If more than 30 minutes pass between consecutive events for the same user,
-# MAGIC the later event starts a new session.
 # MAGIC
 # MAGIC **Source** (`window_ex8_events`): 15 events across 2 users.
 # MAGIC - USER-001: 9 events forming 3 sessions (gaps at 45 min and 60 min)
@@ -477,11 +464,9 @@ print("Exercise 7 passed!")
 # MAGIC `event_id`, `user_id`, `event_type`, `event_ts`, `payload`, `session_id`.
 # MAGIC
 # MAGIC **Requirements**:
-# MAGIC 1. Use LAG(event_ts) partitioned by `user_id`, ordered by `event_ts` to find the previous event time
-# MAGIC 2. Flag a new session when the gap from previous event exceeds 30 minutes (or it is the first event)
-# MAGIC 3. Use a cumulative SUM of the new-session flag to assign incrementing `session_id` per user
-# MAGIC 4. Session IDs start at 1 per user and increment for each new session
-# MAGIC 5. Write to Delta table with all original columns plus `session_id`
+# MAGIC 1. A user's first event starts session 1.
+# MAGIC 2. A gap of more than 30 minutes since that user's previous event starts a new session.
+# MAGIC 3. `session_id` is an integer per user: 1, 2, 3, ... in `event_ts` order.
 # MAGIC
 # MAGIC **Constraints**:
 # MAGIC - USER-001 should have 3 sessions (session_id 1, 2, 3)

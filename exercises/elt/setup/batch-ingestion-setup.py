@@ -1,7 +1,7 @@
 # Databricks notebook source
 # MAGIC %md
 # MAGIC # Setup: Batch Data Ingestion & File Formats
-# MAGIC Creates per-exercise source files in Volumes and target table schemas.
+# MAGIC Writes each exercise's source files to `/Volumes/db_code/batch_ingestion/source_files/` and creates the empty `ex3_transactions` table that Exercise 3 loads into.
 
 # COMMAND ----------
 
@@ -52,7 +52,7 @@ print("Exercise 1: 2 pipe-delimited CSV files (12 products total) written to ex1
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## Exercise 2: JSON files with flat structure (explicit schema read)
+# MAGIC ## Exercise 2: One flat JSON file (read with an explicit schema)
 
 # COMMAND ----------
 
@@ -98,23 +98,12 @@ dbutils.fs.mkdirs(f"{VOLUME_PATH}/ex3_csv")
 dbutils.fs.put(f"{VOLUME_PATH}/ex3_csv/transactions_20260115.csv", ex3_batch1, overwrite=True)
 dbutils.fs.put(f"{VOLUME_PATH}/ex3_csv/transactions_20260118.csv", ex3_batch2, overwrite=True)
 
-# Create the empty target Delta table for COPY INTO
-spark.sql(f"""
-CREATE TABLE IF NOT EXISTS {CATALOG}.{SCHEMA}.ex3_transactions (
-  transaction_id STRING,
-  customer_id STRING,
-  amount DOUBLE,
-  currency STRING,
-  tx_date DATE
-)
-""")
-
-print("Exercise 3: 2 CSV files (8 transactions) + empty target table created for COPY INTO")
+print("Exercise 3: 2 CSV files (8 transactions) written to ex3_csv/")
 
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## Exercise 4: JSON files with nested structs
+# MAGIC ## Exercise 4: One JSON file with nested structs
 
 # COMMAND ----------
 
@@ -216,7 +205,7 @@ for i in range(1, 7):
     spark.sql(f"DROP TABLE IF EXISTS {CATALOG}.{SCHEMA}.ex{i}_output")
 spark.sql(f"DROP TABLE IF EXISTS {CATALOG}.{SCHEMA}.ex3_transactions")
 
-# Recreate COPY INTO target table (must exist before COPY INTO can run)
+# Create the empty COPY INTO target table (it must exist before COPY INTO runs)
 spark.sql(f"""
 CREATE TABLE IF NOT EXISTS {CATALOG}.{SCHEMA}.ex3_transactions (
   transaction_id STRING,

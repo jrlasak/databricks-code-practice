@@ -6,7 +6,7 @@
 
 <img src="https://dataengineer.wiki/download/profilepicture.jpg?utm_source=github&utm_medium=readme&utm_campaign=databricks-code-practice" alt="Jakub Lasak" width="80" style="border-radius: 50%;" />
 
-**Jakub Lasak** - Databricks Data Engineer (ex-Uber). I write about the Databricks skills that get you hired and promoted.
+**Jakub Lasak** - Databricks Data Engineer (ex-Uber). I write about the Databricks work that gets you hired and promoted.
 
 - 🔗 [LinkedIn](https://www.linkedin.com/in/jrlasak/) - Databricks projects and tips
 - 📬 [Substack Newsletter](https://dataengineer.wiki/substack?utm_source=github&utm_medium=readme&utm_campaign=databricks-code-practice) - Exclusive content for Data Engineers
@@ -16,86 +16,89 @@
 
 ## 1. Purpose & Overview
 
-Modern lakehouse performance hinges on _layout_ and _file hygiene_. This project is a guided lab that lets you iteratively apply and observe core Delta Lake optimization levers:
+Modern lakehouse performance hinges on _layout_ and _file hygiene_. This is a read-and-run deep-dive: there are no exercises; you run every cell and read the evidence it produces. It applies six Delta Lake optimization levers to the same 10M-row sales table and measures each one, three per notebook.
+
+In `01_Data_Layout`:
 
 - Physical partitioning
 - Z-Ordering
-- Manual compaction (OPTIMIZE)
-- Auto Optimize (optimizeWrites + autoCompact)
 - Liquid Clustering
+
+In `02_File_Maintenance`:
+
+- Manual compaction (OPTIMIZE)
+- Auto Optimize (`optimizeWrite` + `autoCompact`)
 - VACUUM lifecycle hygiene
 
-You will generate a synthetic 50M-row sales dataset, capture baseline query metrics, then layer techniques - measuring their impact (files scanned, data read, scan time) via the Spark UI and table metadata.
+You own `sales`, the order-line fact table of a wholesale distributor: 10M lines from 4,000 business accounts in 10 countries over two years. The account-support app looks up one account's lines for one product, and on the table as loaded, that lookup reads all of the table's roughly 2,000 files. Each technique above is a candidate fix, and the measurements tell you which one is worth its maintenance cost.
 
-All instructions and code live in the notebook: **[`project.py`](project.py)**. Open it first; proceed cell by cell.
+You will generate a synthetic 10M-row sales dataset, capture baseline query metrics, then apply each technique to its own copy of the table and measure its impact (files read, bytes read, duration) in the query profile and with `DESCRIBE DETAIL`. In `01_Data_Layout` every layout is measured on two lookups: one account's lines for one product with the account's country, and the same lookup without the country. The second lookup shows where partitioning stops helping and clustering keeps skipping.
+
+**Time:** about 2 hours across three notebooks: `00_Setup_Environment` about 15 minutes, `01_Data_Layout` about 1 hour, `02_File_Maintenance` about 45 minutes. Most of it is reading: the cells themselves run for 1 to 2 minutes in `00` and in `01`, and about 4 minutes in `02`.
+
+Run the notebooks in [`notebooks/`](notebooks/) in order: `00_Setup_Environment` (catalog and data), `01_Data_Layout` (partitioning, Z-Order, Liquid Clustering), `02_File_Maintenance` (compaction, auto compaction, VACUUM).
 
 ## 2. Learning Objectives
 
 By completing the lab you will be able to:
 
 - Choose between partitioning, Z-Ordering, and Liquid Clustering based on data shape & query patterns
-- Diagnose small-file and data-skipping issues using `DESCRIBE DETAIL` + Spark UI
+- Diagnose small-file and data-skipping issues using `DESCRIBE DETAIL` + the query profile
 - Apply manual compaction and contrast with auto compaction
-- Understand retention safety around VACUUM
-- Build a lightweight empirical metrics log to justify optimization choices
+- Explain why VACUUM keeps 7 days of unreferenced files and what lowering that retention risks
+- Record files read, bytes read and duration for each layout in one comparison table, and use it to justify an optimization choice
 
 ## 3. What You Will Build
 
-A sequence of Delta tables representing successive optimization strategies:
-| Logical Role | Table Key (see registry) | Technique Illustrated |
-|--------------|--------------------------|-----------------------|
-| Baseline raw | `sales_raw` | Many small files, unoptimized |
-| Country-partitioned | `sales_partitioned` | Low-cardinality partitioning |
-| Z-Ordered copy | `sales_raw_zorder` | Multi-column data skipping |
-| Fragmented (pre-compaction) | `sales_to_compact` | Small file proliferation |
-| Auto Optimize enabled | `sales_auto_compact` | Automatic write sizing + async compaction |
-| Liquid Clustered | `sales_liquid_clustered` | Adaptive clustering |
+One Delta table per optimization strategy; every variant is built from the `sales_raw` baseline:
 
-A single helper registry centralizes fully qualified names for reproducibility.
+| Notebook | Logical Role | Table | Technique Illustrated |
+|----------|--------------|-------|-----------------------|
+| `00` | Baseline raw | `sales_raw` | Many small files, unoptimized |
+| `01` | Country-partitioned | `sales_partitioned` | Low-cardinality partitioning |
+| `01` | Z-Ordered copy | `sales_raw_zorder` | Multi-column data skipping |
+| `01` | Liquid Clustered | `sales_liquid_clustered` | Incremental clustering on declared keys |
+| `02` | Fragmented (pre-compaction) | `sales_to_compact` | Small file proliferation |
+| `02` | Auto Optimize enabled | `sales_auto_compact` | Automatic write sizing + post-write auto compaction |
+
+The `TABLES` registry and `tbl()` helper in `notebooks/variables.py` hold every fully qualified table name, so each cell refers to a table by its short key (`tbl('raw')`).
 
 ## 4. Architecture & Runtime Assumptions
 
-- Databricks (Community / Free or higher tier). Some VACUUM retention behaviors differ on Free Edition (cannot disable retention safety).
+- Databricks Free Edition or a paid workspace. On serverless compute (the only compute on Free Edition) you cannot disable the VACUUM retention check.
 - Spark SQL + PySpark (no external data sources required)
 - Delta Lake tables stored in a user-created catalog & schema (created automatically if permitted)
 
 ## 5. Prerequisites
 
 - Basic Spark & Delta Lake familiarity (DataFrames, SQL, catalog objects)
-- Comfort reading Spark UI (scan details, tasks, input size)
+- Comfort reading a query profile (files and bytes read, pruning)
 - Python (for minor helper code)
 
 ## 6. How to Start
 
 1. **Create a Databricks Account**
    - Sign up for a [Databricks Free Edition account](https://www.databricks.com/learn/free-edition) if you don't already have one.
-   - Familiarize yourself with the workspace, clusters, and notebook interface.
+   - Familiarize yourself with the workspace and notebook interface.
 
 2. **Import this repository to Databricks**
-   - In Databricks, go to the Workspace sidebar and click the "Repos" section, click "Add Repo".
-     - Alternatively, go to your personal folder, click "create" and select "git folder".
+   - In Databricks, click **Workspace** in the sidebar, open your home folder, then click **Create > Git folder**.
    - Paste the GitHub URL for this repository.
    - Authenticate with GitHub if prompted, and select the main branch.
    - The repo will appear as a folder in your workspace, allowing you to edit, run notebooks, and manage files directly from Databricks.
-   - For more details, see the official Databricks documentation: [Repos in Databricks](https://docs.databricks.com/repos/index.html).
+   - For more details, see the official Databricks documentation: [Git folders in Databricks](https://docs.databricks.com/aws/en/repos/).
 
-3. Open `project.py`
-4. Execute cells sequentially - pick the serverless cluster. The notebook is idempotent - data generation skips if the base table already exists.
-5. After each optimization action, open the Spark UI (SQL / DataFrame tab) and record metrics.
+3. Open the `notebooks/` folder, attach `00_Setup_Environment` to **Serverless** compute and run it. It creates the `delta_optimization_project` catalog and writes the 10M-row `sales_raw` table in about 2,000 files; a re-run reuses the table.
+4. Run `01_Data_Layout`, then `02_File_Maintenance`, cell by cell.
+5. After each benchmark query, click **See performance** under the cell output, open the query profile, and read the IO metrics (files and bytes read, pruning) and the wall-clock duration. Record them in the comparison table at the end of `01_Data_Layout`.
 
 ## 7. Extending the Lab
 
-Try adding:
-
-1. Date-based partition layer vs country: compare scan metrics.
-2. Programmatic metrics capture notebook that stores results into a Delta table for plotting trends.
-3. Incremental data growth simulation + periodic Z-Order refresh policy.
-4. Photon vs non-Photon runtime comparison (CPU cost vs performance).
-5. Streaming ingestion (Auto Loader) to stress clustering adaptiveness.
+Try the experiments listed at the end of `02_File_Maintenance`, under **Suggested Next Experiments**.
 
 ## 8. Feedback Wanted
 
-I want this to be maximally useful for learners. After running the notebook, please consider opening a Discussion or Issue with:
+Tell me where this lab slowed you down. After running the notebooks, open a Discussion or Issue with:
 
 1. Were the notebook instructions clear at each step? Where did you pause or re-read?
 2. Which optimization concept remained fuzzy, and what supporting visual or explanation would help?
@@ -105,22 +108,21 @@ Happy to credit you as a contributor if you provide actionable feedback.
 
 ## 9. Troubleshooting Quick Tips
 
-| Symptom                                 | Possible Cause                       | Action                                                                      |
-| --------------------------------------- | ------------------------------------ | --------------------------------------------------------------------------- |
-| Baseline table regenerates unexpectedly | Catalog/schema context lost          | Re-run config cell to `USE CATALOG` + `USE SCHEMA`                          |
-| Z-Order command not found               | Wrong runtime / missing Delta extras | Ensure cluster has Delta support (DBR 11+ recommended)                      |
-| VACUUM removed no files                 | Retention window not elapsed         | Check history timestamps; wait or (demo only) lower retention (not on Free) |
-| Minimal scan improvement after Z-Order  | Predicate low selectivity            | Test narrower filters; ensure chosen columns are in WHERE                   |
+| Symptom | Possible Cause | Action |
+| ------- | -------------- | ------ |
+| `NameError: name 'tbl' is not defined` | The serverless session restarted after an idle break and lost the notebook's variables | Re-run the `%run ./variables` cell at the top of the notebook you are in |
+| Baseline query reads only a few files | `sales_raw` was compacted since it was written (background auto compaction or predictive optimization) | Re-run `00_Setup_Environment`: it regenerates `sales_raw` whenever it holds fewer than 1,800 files |
+| VACUUM removed no files | Retention window not elapsed | Check history timestamps: the files become eligible 7 days after they left the table (`delta.deletedFileRetentionDuration`) |
+| Z-Order or Liquid query reads most of its files | The copy was compacted into 1 or 2 large files, so there is nothing to skip | Check `numFiles` in `DESCRIBE DETAIL` for that copy: it should hold about 9 files of about 18 MB. If it holds 1 or 2, re-run the copy cell in `01_Data_Layout`, which creates the table with `delta.targetFileSize = '16mb'` before the load |
 
 ## 10. Cleanup
 
-Run the final cleanup cell (commented by default) to drop the entire catalog if you want to fully reset.
+Run `notebooks/03_Cleanup` to drop the `delta_optimization_project` catalog and every table in it. It runs:
 
 ```sql
--- Optional
--- DROP CATALOG IF EXISTS delta_optimization_project CASCADE;
+DROP CATALOG IF EXISTS delta_optimization_project CASCADE;
 ```
 
 ---
 
-Open `project.py` now and start with the configuration cell. Record metrics; experimentation beats theory. Enjoy!
+Record metrics after every step; the numbers are the point.

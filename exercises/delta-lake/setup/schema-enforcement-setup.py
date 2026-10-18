@@ -2,7 +2,7 @@
 # COMMAND ----------
 # MAGIC %md
 # MAGIC ### Setup: Schema Enforcement & Evolution
-# MAGIC Creates per-exercise target and source tables with various schema configurations.
+# MAGIC Creates the tables for Exercises 1-12 in `db_code.schema_enforcement`: copies of orders ORD-001 to ORD-005 as targets, sources with extra columns, a product schema or a STRING `amount`, and tables with NOT NULL and CHECK constraints already applied.
 # MAGIC Run automatically via `%run` from the exercise notebook.
 
 # COMMAND ----------
@@ -89,7 +89,7 @@ spark.sql(f"""
 spark.sql(f"ALTER TABLE {CATALOG}.{SCHEMA}.schema_ex8_orders ALTER COLUMN status SET NOT NULL")
 spark.sql(f"ALTER TABLE {CATALOG}.{SCHEMA}.schema_ex8_orders ADD CONSTRAINT positive_amount CHECK (amount > 0)")
 
-# Exercise 9: table with multiple CHECK constraints (for information_schema query)
+# Exercise 9: table with 2 CHECK constraints (read with SHOW TBLPROPERTIES)
 spark.sql(f"""
     CREATE OR REPLACE TABLE {CATALOG}.{SCHEMA}.schema_ex9_orders
     AS SELECT * FROM {CATALOG}.{BASE_SCHEMA}.orders
@@ -97,6 +97,8 @@ spark.sql(f"""
 """)
 spark.sql(f"ALTER TABLE {CATALOG}.{SCHEMA}.schema_ex9_orders ADD CONSTRAINT positive_amount CHECK (amount > 0)")
 spark.sql(f"ALTER TABLE {CATALOG}.{SCHEMA}.schema_ex9_orders ADD CONSTRAINT valid_status CHECK (status IN ('pending', 'completed', 'shipped', 'cancelled'))")
+# Exercise 9 output table: dropped so every run starts without an earlier answer
+spark.sql(f"DROP TABLE IF EXISTS {CATALOG}.{SCHEMA}.schema_ex9_constraints")
 
 # Exercise 10 source: two extra columns (for MERGE schema evolution)
 # CAST numeric columns to DOUBLE to match target schema

@@ -15,7 +15,7 @@
 # MAGIC - `trigger(availableNow=True)` processes all available files and stops
 # MAGIC - Checkpoints track which files have been processed
 # MAGIC - Schema inference, hints, and evolution control how Auto Loader handles schema changes
-# MAGIC - Rescued data column captures records that don't match the inferred/expected schema
+# MAGIC - The rescued data column keeps values that don't match the schema (wrong type, unknown column) instead of losing them as silent NULLs
 # MAGIC - `foreachBatch` enables MERGE-based upsert pipelines with streaming sources
 
 # COMMAND ----------
@@ -28,7 +28,7 @@
 
 # COMMAND ----------
 # MAGIC %md
-# MAGIC **Setup complete.** Exercise files and tables are in `db_code.auto_loader`.
+# MAGIC Exercise files and tables are in `db_code.auto_loader`.
 # MAGIC
 # MAGIC **Source files** (in Unity Catalog Volumes):
 # MAGIC - Ex 1: `/Volumes/db_code/auto_loader/source_files/ex1_files/` - JSON, 10 order records across 5 batches
@@ -38,9 +38,15 @@
 # MAGIC - Ex 5: `/Volumes/db_code/auto_loader/source_files/ex5_files/` - CSV (pipe-delimited), 5 records across 2 files
 # MAGIC - Ex 6: `/Volumes/db_code/auto_loader/source_files/ex6_files/` - JSON, 4 records (2 updates, 2 new). Target table `ex6_target` has 3 existing rows.
 # MAGIC
-# MAGIC **Checkpoints**: Use `CHECKPOINT_BASE` variable (`/Volumes/db_code/auto_loader/checkpoints/`) for all checkpoint locations.
+# MAGIC **Every exercise**:
+# MAGIC - Give each stream its own checkpoint folder under `CHECKPOINT_BASE` (set by the setup cell to `/Volumes/db_code/auto_loader/checkpoints`, no trailing slash, so join with `f"{CHECKPOINT_BASE}/ex2"`).
+# MAGIC - Every exercise that infers its schema (all but Ex 4) also needs `cloudFiles.schemaLocation` under `CHECKPOINT_BASE`, in a folder of its own. Auto Loader stores the inferred schema there.
+# MAGIC - Write with `trigger(availableNow=True)`, not the deprecated `trigger(once=True)`, and end with `.awaitTermination()` so the check cell reads the finished table.
+# MAGIC - Write to `db_code.auto_loader.exN_output`, except Ex 6, which MERGEs into `db_code.auto_loader.ex6_target`.
 # MAGIC
-# MAGIC **Pattern**: Each exercise reads from a source directory, writes to `db_code.auto_loader.exN_output` (except Ex 6 which MERGEs into `ex6_target`).
+# MAGIC **In your code**: TODO cells are Python. The setup cell defines `CATALOG` (`db_code`), `SCHEMA` (`auto_loader`), `VOLUME_BASE` (`/Volumes/db_code/auto_loader/source_files`) and `CHECKPOINT_BASE`.
+# MAGIC
+# MAGIC **Retrying an exercise**: rerun the `%run ./setup/auto-loader-setup` cell first. A checkpoint remembers which files it has read, so a retry on the same checkpoint reads nothing. Setup deletes all checkpoints and every `exN_output` table and rebuilds `ex6_target`, so rerun any exercise you want to keep.
 
 # COMMAND ----------
 # MAGIC %md
@@ -53,27 +59,23 @@
 # MAGIC
 # MAGIC **Source**: JSON files in `/Volumes/db_code/auto_loader/source_files/ex1_files/` (5 batches, 10 records total)
 # MAGIC
-# MAGIC **Schema** (per JSON record):
-# MAGIC | Column | Type | Notes |
-# MAGIC |--------|------|-------|
-# MAGIC | order_id | STRING | ORD-201 through ORD-210 |
-# MAGIC | customer_id | STRING | CUST-001 through CUST-005 |
-# MAGIC | amount | DOUBLE | Order total |
-# MAGIC | status | STRING | completed, pending, shipped, cancelled |
-# MAGIC | order_ts | TIMESTAMP | Order timestamp |
+# MAGIC **Schema** (values in the JSON records; with default inference every column lands in `ex1_output` as STRING):
+# MAGIC | Column | JSON value | Notes |
+# MAGIC |--------|------------|-------|
+# MAGIC | order_id | string | ORD-201 through ORD-210 |
+# MAGIC | customer_id | string | CUST-001 through CUST-005 |
+# MAGIC | amount | number | Order total |
+# MAGIC | status | string | completed, pending, shipped, cancelled |
+# MAGIC | order_ts | string (ISO timestamp) | Order timestamp |
 # MAGIC
 # MAGIC **Target**: Write to `db_code.auto_loader.ex1_output`. Expected 10 rows.
 # MAGIC
 # MAGIC **Requirements**:
 # MAGIC 1. Use `spark.readStream.format("cloudFiles")` with `cloudFiles.format` = `json`
-# MAGIC 2. Read from the ex1_files source path
-# MAGIC 3. Set a checkpoint location under `CHECKPOINT_BASE`
+# MAGIC 2. Read from `/Volumes/db_code/auto_loader/source_files/ex1_files/`
+# MAGIC 3. Set `cloudFiles.schemaLocation` (where Auto Loader stores the inferred schema) and the write's `checkpointLocation`, both under `CHECKPOINT_BASE`, one folder each (for example `/Volumes/db_code/auto_loader/checkpoints/ex1_schema` and `/Volumes/db_code/auto_loader/checkpoints/ex1`)
 # MAGIC 4. Write as Delta to the target table using `trigger(availableNow=True)`
 # MAGIC 5. Wait for the stream to finish with `.awaitTermination()`
-# MAGIC
-# MAGIC **Constraints**:
-# MAGIC - Use `trigger(availableNow=True)`, NOT `trigger(once=True)`
-# MAGIC - Checkpoint path must be in a Volume
 
 # COMMAND ----------
 
@@ -101,9 +103,7 @@ print("Exercise 1 passed!")
 # MAGIC ## Exercise 2: Schema Hints for Type Control
 # MAGIC **Difficulty**: Medium | **Time**: ~10 min
 # MAGIC
-# MAGIC Auto Loader infers schema from sampled JSON files. When JSON stores numbers without
-# MAGIC decimal points (e.g., `100` instead of `100.0`), Auto Loader infers LONG instead of DOUBLE.
-# MAGIC Use schema hints to override the inferred type for `amount` to DOUBLE.
+# MAGIC Auto Loader infers the schema from sampled JSON files. By default it infers every JSON column as STRING; with `cloudFiles.inferColumnTypes` set to `true` it infers `100` (no decimal point) as LONG. Either way, use a schema hint to pin `amount` to DOUBLE.
 # MAGIC
 # MAGIC **Source**: JSON files in `/Volumes/db_code/auto_loader/source_files/ex2_files/` (6 records, `amount` is integer in JSON)
 # MAGIC
@@ -112,12 +112,9 @@ print("Exercise 1 passed!")
 # MAGIC **Requirements**:
 # MAGIC 1. Use `cloudFiles` format with `cloudFiles.format` = `json`
 # MAGIC 2. Add a schema hint to force `amount` to DOUBLE
-# MAGIC 3. Write to the target table with `trigger(availableNow=True)`
-# MAGIC 4. The `amount` column in the output must be DoubleType, not LongType
 # MAGIC
 # MAGIC **Constraints**:
 # MAGIC - Do NOT provide a full schema - use schema inference with hints
-# MAGIC - The hint must handle the `amount` column specifically
 
 # COMMAND ----------
 
@@ -138,9 +135,9 @@ assert result.count() == 6, f"Expected 6 rows, got {result.count()}"
 amount_type = [f.dataType for f in result.schema.fields if f.name == "amount"][0]
 assert isinstance(amount_type, _DoubleType), f"amount should be DoubleType, got {amount_type}"
 assert result.filter("order_id = 'ORD-305'").select("amount").collect()[0][0] == 0.0, \
-    "ORD-305 amount should be 0.0 (zero order)"
+    "ORD-305 amount does not match its JSON value (a zero order)"
 assert result.filter("order_id = 'ORD-304'").select("amount").collect()[0][0] == 500.0, \
-    "ORD-304 amount should be 500.0"
+    "ORD-304 amount does not match its JSON value"
 
 print("Exercise 2 passed!")
 
@@ -149,9 +146,7 @@ print("Exercise 2 passed!")
 # MAGIC ## Exercise 3: Schema Evolution Handling
 # MAGIC **Difficulty**: Medium | **Time**: ~15 min
 # MAGIC
-# MAGIC In production, upstream sources add new columns over time. Auto Loader can detect
-# MAGIC schema changes and evolve the target table automatically. This exercise uses two batches
-# MAGIC of files: batch 1 has the base schema, batch 2 adds a `priority` column.
+# MAGIC In production, upstream sources add new columns over time. Auto Loader evolves the schema it reads with, and `mergeSchema` on the write lets the Delta table take the new column. This exercise uses two batches of files: batch 1 has the base schema, batch 2 adds a `priority` column.
 # MAGIC
 # MAGIC **Source**: Two directories -
 # MAGIC - `/Volumes/db_code/auto_loader/source_files/ex3_files_batch1/` (4 records, base schema)
@@ -160,20 +155,17 @@ print("Exercise 2 passed!")
 # MAGIC **Target**: Write to `db_code.auto_loader.ex3_output`. Expected 7 rows total. `priority` column must exist.
 # MAGIC
 # MAGIC **Requirements**:
-# MAGIC 1. Configure Auto Loader with schema evolution mode set to `addNewColumns`
-# MAGIC 2. Process batch 1 first to establish the base schema, then process batch 2 which has the new column
-# MAGIC 3. The target table should have the `priority` column after processing batch 2
-# MAGIC 4. Rows from batch 1 should have `priority` = null
+# MAGIC 1. Run a first stream on `ex3_files_batch1/` that creates `db_code.auto_loader.ex3_output` with the base schema.
+# MAGIC 2. Run a second stream on `ex3_files_batch2/` that writes to the same table and adds the `priority` column.
+# MAGIC 3. Give each stream its own schema location and its own checkpoint under `CHECKPOINT_BASE`, so the second stream infers `priority` from batch 2 when it starts.
+# MAGIC 4. Set `cloudFiles.schemaEvolutionMode` to `addNewColumns` on both streams (already the default when Auto Loader infers the schema; set it so the intent is visible), and set `mergeSchema` to `true` on the write so the Delta table adds `priority`.
 # MAGIC
-# MAGIC **Approach**: Process the files in two steps. First stream reads batch 1 to create the table
-# MAGIC with the base schema. Second stream reads batch 2 which has the new column. Use separate
-# MAGIC schema locations and separate checkpoints for each stream. The `addNewColumns` schema
-# MAGIC evolution mode tells Auto Loader to accept new columns, and `mergeSchema` on the write
-# MAGIC side lets Delta evolve the target table schema.
+# MAGIC After both streams, the 4 batch 1 rows have `priority` = null and the 3 batch 2 rows have a value (ORD-405 is `high`).
+# MAGIC
+# MAGIC **Note**: with one long-lived stream and one schema location, `addNewColumns` stops the stream once with `UNKNOWN_FIELD_EXCEPTION` after recording the new column, and the next run, usually a job retry, continues with it.
 # MAGIC
 # MAGIC **Constraints**:
-# MAGIC - Use `cloudFiles.schemaEvolutionMode` option
-# MAGIC - Both batches must end up in the same target table
+# MAGIC - Both batches end up in the same target table
 # MAGIC - Do NOT manually ALTER TABLE to add the column
 
 # COMMAND ----------
@@ -207,28 +199,23 @@ print("Exercise 3 passed!")
 # MAGIC ## Exercise 4: Rescued Data Column
 # MAGIC **Difficulty**: Medium | **Time**: ~10 min
 # MAGIC
-# MAGIC When Auto Loader encounters records that don't match the expected schema (e.g., a string
-# MAGIC value in a numeric column), it can rescue those records into a special column instead of
-# MAGIC dropping them silently. This is critical in production - you need to know what data failed
-# MAGIC to parse and why.
+# MAGIC When Auto Loader parses a value that doesn't match the schema (e.g., a string in a numeric column), the row still lands with that column NULL. Without a rescued data column the original value is lost; with one, Auto Loader keeps it in the rescued data column as JSON, together with the source file path. This is critical in production - you need to know what data failed to parse and why.
 # MAGIC
 # MAGIC **Source**: JSON files in `/Volumes/db_code/auto_loader/source_files/ex4_files/`
-# MAGIC - 4 records with valid `amount` (numeric)
-# MAGIC - 2 records with invalid `amount` ("INVALID", "N/A" - strings instead of numbers)
+# MAGIC - Each record has `order_id`, `customer_id` and `status` (all STRING) and `amount`; there is no `order_ts`
+# MAGIC - 4 records have a numeric `amount`, 2 have a string ("INVALID" on ORD-505, "N/A" on ORD-506)
 # MAGIC
 # MAGIC **Target**: Write to `db_code.auto_loader.ex4_output`. Expected 6 rows.
 # MAGIC - 4 rows with `amount` populated and `_rescued_data` = null
 # MAGIC - 2 rows with `amount` = null and `_rescued_data` containing the mismatched value
 # MAGIC
 # MAGIC **Requirements**:
-# MAGIC 1. Provide a schema that expects `amount` as DOUBLE
-# MAGIC 2. Enable the rescued data column
-# MAGIC 3. All 6 records should appear in the output (none dropped)
-# MAGIC 4. Records with invalid `amount` should have their original data in `_rescued_data`
+# MAGIC 1. Provide a schema with all four columns, `amount` as DOUBLE (a column you leave out also lands in `_rescued_data`)
+# MAGIC 2. Add the rescued data column: with your own schema it only appears when you set its name with the `rescuedDataColumn` reader option
+# MAGIC 3. Records with invalid `amount` should have their original data in `_rescued_data`
 # MAGIC
 # MAGIC **Constraints**:
-# MAGIC - You MUST provide a schema (not rely on inference) so Auto Loader knows `amount` should be DOUBLE
-# MAGIC - The rescued data column name is `_rescued_data` by default
+# MAGIC - Name the column `_rescued_data` (the name Auto Loader uses when it infers the schema)
 
 # COMMAND ----------
 
@@ -281,11 +268,10 @@ print("Exercise 4 passed!")
 # MAGIC 2. Set the delimiter to pipe (`|`)
 # MAGIC 3. Enable header detection so column names come from the first row
 # MAGIC 4. Use a schema hint to cast `amount` as DOUBLE (CSV reads everything as STRING by default)
-# MAGIC 5. Write to the target table with `trigger(availableNow=True)`
 # MAGIC
 # MAGIC **Constraints**:
 # MAGIC - Do NOT hardcode column names in a full schema - use header + hints
-# MAGIC - The delimiter option for CSV in cloudFiles is `delimiter` (not `sep`)
+# MAGIC - Set the separator with `sep` or its alias `delimiter`
 
 # COMMAND ----------
 
@@ -305,28 +291,31 @@ assert "order_id" in result.columns, "Missing order_id column"
 assert "amount" in result.columns, "Missing amount column"
 assert result.filter("order_id = 'ORD-551'").count() == 1, "ORD-551 should exist"
 assert result.filter("order_id = 'ORD-555'").count() == 1, "ORD-555 should exist"
-# Verify amount is numeric (not string)
+# Verify amount is DOUBLE (schema hint applied)
+from pyspark.sql.types import DoubleType as _DoubleType
+amount_type = [f.dataType for f in result.schema.fields if f.name == "amount"][0]
+assert isinstance(amount_type, _DoubleType), f"amount should be DoubleType, got {amount_type}"
 amt_551 = result.filter("order_id = 'ORD-551'").select("amount").collect()[0][0]
-assert float(amt_551) == 88.50, f"ORD-551 amount should be 88.50, got {amt_551}"
+assert amt_551 == 88.50, f"ORD-551 amount should be 88.50, got {amt_551}"
 amt_554 = result.filter("order_id = 'ORD-554'").select("amount").collect()[0][0]
-assert float(amt_554) == 330.00, f"ORD-554 amount should be 330.00, got {amt_554}"
+assert amt_554 == 330.00, f"ORD-554 amount should be 330.00, got {amt_554}"
 
 print("Exercise 5 passed!")
 
 # COMMAND ----------
 # MAGIC %md
-# MAGIC ## Exercise 6: Auto Loader + MERGE for Incremental Dedup Upsert
+# MAGIC ## Exercise 6: Auto Loader + MERGE for Incremental Upsert
 # MAGIC **Difficulty**: Hard | **Time**: ~20 min
 # MAGIC
-# MAGIC The real production pattern: read new files incrementally with Auto Loader, then MERGE
-# MAGIC them into a target Delta table to handle both inserts and updates. This combines streaming
-# MAGIC ingestion with Delta Lake's MERGE for a complete incremental pipeline.
+# MAGIC This is the production pattern: read new files incrementally with Auto Loader, then MERGE them into a target Delta table so one run handles both inserts and updates.
 # MAGIC
 # MAGIC **Source**: JSON files in `/Volumes/db_code/auto_loader/source_files/ex6_files/` (4 records)
 # MAGIC - ORD-601 (status update: pending -> shipped)
 # MAGIC - ORD-602 (status update: pending -> completed)
 # MAGIC - ORD-604 (new order)
 # MAGIC - ORD-605 (new order)
+# MAGIC
+# MAGIC With default inference every JSON value arrives as STRING, while `ex6_target` stores `amount` as DOUBLE and `order_ts` as TIMESTAMP: make the source types match the target before the MERGE.
 # MAGIC
 # MAGIC **Target** (`db_code.auto_loader.ex6_target`): 3 existing rows
 # MAGIC | order_id | customer_id | amount | status | order_ts |
@@ -344,12 +333,10 @@ print("Exercise 5 passed!")
 # MAGIC
 # MAGIC **Requirements**:
 # MAGIC 1. Read source files using Auto Loader (`cloudFiles` format)
-# MAGIC 2. Use `foreachBatch` to process each micro-batch with a MERGE
+# MAGIC 2. Use `foreachBatch` to process each micro-batch with a MERGE; inside the function, run the MERGE through the batch's own session (`batch_df.sparkSession`), not the notebook's `spark`.
 # MAGIC 3. MERGE on `order_id`: update matched, insert not matched
-# MAGIC 4. Use `trigger(availableNow=True)` and `.awaitTermination()`
 # MAGIC
 # MAGIC **Constraints**:
-# MAGIC - MERGE into `ex6_target` (already has 3 rows from setup)
 # MAGIC - Do NOT overwrite the target table - MERGE only
 
 # COMMAND ----------

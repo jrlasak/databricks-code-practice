@@ -7,11 +7,12 @@
 # MAGIC Practice the bronze/silver/gold medallion pattern end to end: raw ingestion,
 # MAGIC metadata enrichment, deduplication, data cleaning, aggregation, incremental
 # MAGIC processing with MERGE, and cross-tier quality reporting. Every exercise reads
-# MAGIC from Delta tables in Unity Catalog and writes results to Delta output tables.
+# MAGIC its own source tables in `db_code.medallion_architecture` and writes its result
+# MAGIC as a Delta table to the **Target** it names.
 # MAGIC
 # MAGIC **Solutions**: If stuck, see `solutions/medallion-architecture-solutions.py` for hints and answers.
 # MAGIC
-# MAGIC **Source tables** (created by setup notebook):
+# MAGIC **Tables** (the setup notebook creates every source table for you):
 # MAGIC
 # MAGIC | Exercise | Source Table(s) | Output Table | Rows |
 # MAGIC |----------|----------------|--------------|------|
@@ -20,9 +21,9 @@
 # MAGIC | 3 (medium) | `bronze_orders_ex3` | `silver_orders_ex3` | 14 -> 10 |
 # MAGIC | 4 (medium) | `bronze_orders_ex4` | `silver_orders_ex4` | 12 -> 9 |
 # MAGIC | 5 (medium) | `silver_orders_ex5` | `gold_daily_summary_ex5` | 20 -> 8 |
-# MAGIC | 6 (hard) | `silver_orders_ex6` + `bronze_batch_ex6` | `silver_orders_ex6_merged` | 6+8 -> 9 |
+# MAGIC | 6 (hard) | `silver_orders_ex6` + `bronze_batch_ex6` | `silver_orders_ex6_merged` | 6+9 -> 9 |
 # MAGIC | 7 (hard) | `gold_summary_ex7` + `silver_new_ex7` | `gold_summary_ex7_merged` | 5+12 -> 8 |
-# MAGIC | 8 (hard) | `qc_bronze_ex8` + `qc_silver_ex8` + `qc_gold_ex8` | `quality_report_ex8` | -> 6 rows |
+# MAGIC | 8 (hard) | `qc_bronze_ex8` + `qc_silver_ex8` + `qc_gold_ex8` + `qc_customers_ex8` | `quality_report_ex8` | 12+10+8 -> 6 |
 # MAGIC
 # MAGIC **Schema** (`raw_orders_ex1`):
 # MAGIC | Column | Type | Notes |
@@ -45,9 +46,8 @@
 
 # COMMAND ----------
 # MAGIC %md
-# MAGIC **Setup complete.** All source and output tables are in `db_code.medallion_architecture`.
-# MAGIC Each exercise has its own independent source tables and writes to its own output table.
-# MAGIC - Ex 1-2 (easy): Raw to bronze - append and metadata enrichment
+# MAGIC TODO cells are Python: the variables `CATALOG` (`db_code`) and `SCHEMA` (`medallion_architecture`) are already set, and you run SQL with `spark.sql(...)`.
+# MAGIC - Ex 1-2 (easy): Raw to bronze - full load and metadata enrichment
 # MAGIC - Ex 3-4 (medium): Bronze to silver - dedup and cleaning
 # MAGIC - Ex 5 (medium): Silver to gold - aggregation
 # MAGIC - Ex 6-7 (hard): Incremental MERGE at silver and gold tiers
@@ -55,12 +55,11 @@
 
 # COMMAND ----------
 # MAGIC %md
-# MAGIC ## Exercise 1: Raw Append to Bronze Preserving All Fields
+# MAGIC ## Exercise 1: Raw Load to Bronze Preserving All Fields
 # MAGIC **Difficulty**: Easy | **Time**: ~5 min
 # MAGIC
-# MAGIC Append raw order data to a bronze Delta table, preserving all fields including
-# MAGIC messy data. Bronze is the raw layer: no dedup, no cleaning, no transformation.
-# MAGIC Every row from the source lands in bronze exactly as-is.
+# MAGIC Load raw order data into a bronze Delta table, preserving all fields including
+# MAGIC messy data. Bronze keeps the source as it arrived: no dedup, no filtering, no cleaning.
 # MAGIC
 # MAGIC **Source** (`raw_orders_ex1`): 10 rows including a duplicate (ORD-003 appears twice),
 # MAGIC a null customer_id (ORD-007), and a $0 amount (ORD-009).
@@ -70,10 +69,9 @@
 # MAGIC **Requirements**:
 # MAGIC 1. Create the target table using CREATE OR REPLACE TABLE ... AS SELECT from `raw_orders_ex1`
 # MAGIC 2. Include ALL columns: order_id, customer_id, product_id, amount, status, order_date, updated_at
-# MAGIC 3. Do NOT deduplicate, do NOT filter nulls - bronze preserves raw data exactly
+# MAGIC 3. Keep every row as it is, including the ORD-003 duplicate and the NULL `customer_id`
 # MAGIC
 # MAGIC **Constraints**:
-# MAGIC - Output must be a Delta table in Unity Catalog
 # MAGIC - All 10 rows must appear (including the duplicate ORD-003 and the null customer_id ORD-007)
 
 # COMMAND ----------
@@ -111,9 +109,9 @@ print("Exercise 1 passed!")
 # MAGIC ## Exercise 2: Bronze with Ingestion Metadata Columns
 # MAGIC **Difficulty**: Easy | **Time**: ~5 min
 # MAGIC
-# MAGIC Append raw orders to a bronze table, adding two ingestion metadata columns
-# MAGIC that track when and where the data arrived. Production bronze tables always
-# MAGIC carry metadata for lineage and debugging.
+# MAGIC Load raw orders into a bronze table, adding two ingestion metadata columns
+# MAGIC that track when and where the data arrived. Bronze tables usually carry metadata
+# MAGIC for lineage and debugging.
 # MAGIC
 # MAGIC **Source** (`raw_orders_ex2`): 8 rows of raw orders.
 # MAGIC
@@ -123,7 +121,7 @@ print("Exercise 1 passed!")
 # MAGIC 1. SELECT all columns from `raw_orders_ex2`
 # MAGIC 2. Add `_ingested_at` column set to `current_timestamp()`
 # MAGIC 3. Add `_source_file` column set to the literal string `'raw_orders_batch_001'`
-# MAGIC 4. Write as Delta table using CREATE OR REPLACE TABLE ... AS SELECT
+# MAGIC 4. Create the target with CREATE OR REPLACE TABLE ... AS SELECT
 # MAGIC
 # MAGIC **Constraints**:
 # MAGIC - All 8 rows must appear (no filtering)
@@ -171,27 +169,25 @@ print("Exercise 2 passed!")
 # MAGIC **Difficulty**: Medium | **Time**: ~10 min
 # MAGIC
 # MAGIC Deduplicate bronze orders, keeping the latest version per order_id based on
-# MAGIC `_ingested_at`. This is the standard bronze-to-silver dedup pattern using
-# MAGIC ROW_NUMBER window function or Databricks QUALIFY clause.
+# MAGIC `_ingested_at`. This is the standard bronze-to-silver dedup: rank each order's rows with `ROW_NUMBER()` and keep rank 1, or filter in one step with `QUALIFY`.
 # MAGIC
-# MAGIC **Source** (`bronze_orders_ex3`): 14 rows with duplicates:
-# MAGIC - ORD-301 appears 2 times (different _ingested_at)
+# MAGIC **Source** (`bronze_orders_ex3`): 14 rows with duplicates. Columns: `order_id`, `customer_id`, `product_id`, `amount`, `status`, `order_date`, `_ingested_at` (TIMESTAMP), `_source_file`.
+# MAGIC - ORD-301 appears 2 times (status `pending`, then `completed` as `_ingested_at` increases)
 # MAGIC - ORD-305 appears 2 times
-# MAGIC - ORD-308 appears 3 times
-# MAGIC - 2 rows have NULL customer_id (ORD-304, ORD-310) - keep them (dedup only, no null filtering)
+# MAGIC - ORD-308 appears 3 times (status `pending`, `pending`, then `shipped` as `_ingested_at` increases)
+# MAGIC - 2 rows have a NULL `customer_id` (ORD-304, ORD-310)
 # MAGIC
 # MAGIC **Target**: Write to `db_code.medallion_architecture.silver_orders_ex3`. Expected 10 rows.
 # MAGIC
 # MAGIC **Requirements**:
 # MAGIC 1. Deduplicate on order_id, keeping the row with the latest `_ingested_at`
 # MAGIC 2. Select: order_id, customer_id, product_id, amount, status, order_date
-# MAGIC 3. Do NOT filter out NULL customer_ids - this exercise is dedup only
-# MAGIC 4. Write as Delta table at `{CATALOG}.{SCHEMA}.silver_orders_ex3`
+# MAGIC 3. Keep the rows with a NULL `customer_id`: cleaning happens in a later step, not during dedup
 # MAGIC
 # MAGIC **Constraints**:
 # MAGIC - Use ROW_NUMBER() OVER (PARTITION BY ... ORDER BY ...) or QUALIFY
 # MAGIC - No duplicate order_ids in the output
-# MAGIC - ORD-308 should appear exactly once (latest _ingested_at: batch_07.json)
+# MAGIC - ORD-308 appears exactly once: the `batch_07.json` row, which has the latest `_ingested_at` (`2026-03-12 11:00:00`) and status `shipped`
 # MAGIC - NULL customer_id rows (ORD-304, ORD-310) must be present
 
 # COMMAND ----------
@@ -219,6 +215,11 @@ assert ord308_count == 1, f"ORD-308 should appear exactly once after dedup, got 
 # ORD-301 appears exactly once
 ord301_count = result.filter("order_id = 'ORD-301'").count()
 assert ord301_count == 1, f"ORD-301 should appear exactly once after dedup, got {ord301_count}"
+# The latest copy wins
+assert result.filter("order_id = 'ORD-308'").first().status == "shipped", \
+    "ORD-308 should keep its latest version (status 'shipped'); an older copy was kept"
+assert result.filter("order_id = 'ORD-301'").first().status == "completed", \
+    "ORD-301 should keep its latest version (status 'completed'); an older copy was kept"
 # NULL customer_id rows preserved (ORD-304, ORD-310)
 null_cust = result.filter("customer_id IS NULL").count()
 assert null_cust == 2, f"Expected 2 rows with NULL customer_id (ORD-304, ORD-310), got {null_cust}"
@@ -234,8 +235,8 @@ print("Exercise 3 passed!")
 # MAGIC and standardize string values. Silver is the clean, conformed layer where
 # MAGIC downstream consumers can trust every row.
 # MAGIC
-# MAGIC **Source** (`bronze_orders_ex4`): 12 rows with quality issues:
-# MAGIC - 2 rows with NULL order_id (rows 4, 9) - filter out
+# MAGIC **Source** (`bronze_orders_ex4`): 12 rows with quality issues. Columns: `order_id`, `customer_id`, `product_id`, `amount` (STRING), `status`, `order_date` (STRING), `_ingested_at`.
+# MAGIC - 2 rows with a NULL `order_id` (customer_ids `C-404` and `C-409`) - filter out
 # MAGIC - 1 row with NULL customer_id (ORD-407) - filter out
 # MAGIC - `amount` stored as STRING (needs CAST to DOUBLE)
 # MAGIC - `order_date` stored as STRING (needs CAST to DATE)
@@ -251,7 +252,6 @@ print("Exercise 3 passed!")
 # MAGIC 4. CAST order_date from STRING to DATE
 # MAGIC 5. Standardize status: TRIM whitespace, then UPPER (e.g., ' Completed ' -> 'COMPLETED')
 # MAGIC 6. Select: order_id, customer_id, product_id, amount (DOUBLE), status (standardized), order_date (DATE)
-# MAGIC 7. Write as Delta table at `{CATALOG}.{SCHEMA}.silver_orders_ex4`
 # MAGIC
 # MAGIC **Constraints**:
 # MAGIC - No NULL order_ids or customer_ids in output
@@ -289,7 +289,7 @@ assert "Date" in dt_type, f"order_date should be DATE, got {dt_type}"
 statuses = [row.status for row in result.select("status").distinct().collect()]
 for s in statuses:
     assert s == s.strip().upper(), f"Status '{s}' is not trimmed+uppercased"
-# Spot check: ORD-401 status should be 'COMPLETED' (was ' Completed ')
+# Spot check: ORD-401 status should be 'COMPLETED' (raw value ' Completed ')
 ord401 = result.filter("order_id = 'ORD-401'").collect()
 assert len(ord401) == 1, "ORD-401 should exist"
 assert ord401[0].status == "COMPLETED", f"ORD-401 status should be 'COMPLETED', got '{ord401[0].status}'"
@@ -310,6 +310,7 @@ print("Exercise 4 passed!")
 # MAGIC
 # MAGIC **Source** (`silver_orders_ex5`): 20 clean rows across 3 dates (2026-03-20, -21, -22)
 # MAGIC and 3 regions (US-East, US-West, EU-West). Not all date/region combos have data.
+# MAGIC Columns: `order_id`, `customer_id`, `product_id`, `amount`, `status`, `order_date`, `region`.
 # MAGIC
 # MAGIC **Target**: Write to `db_code.medallion_architecture.gold_daily_summary_ex5`. Expected 8 rows.
 # MAGIC
@@ -317,13 +318,12 @@ print("Exercise 4 passed!")
 # MAGIC 1. GROUP BY order_date and region
 # MAGIC 2. Calculate: order_count (COUNT), total_revenue (SUM of amount),
 # MAGIC    avg_order_amount (AVG of amount, rounded to 2 decimal places)
-# MAGIC 3. Write as Delta table at `{CATALOG}.{SCHEMA}.gold_daily_summary_ex5`
 # MAGIC
 # MAGIC **Constraints**:
 # MAGIC - One row per (order_date, region) combination
 # MAGIC - 2026-03-20/US-East should have: 3 orders, 280.00 revenue, 93.33 avg
 # MAGIC - 2026-03-22 has no US-West data (only 8 combos total, not 9)
-# MAGIC - avg_order_amount must be ROUND(..., 2) to avoid floating point issues
+# MAGIC - avg_order_amount must be ROUND(AVG(amount), 2), e.g. 93.33, not 93.3333
 
 # COMMAND ----------
 
@@ -350,8 +350,8 @@ row = us_east_20[0]
 assert row.order_count == 3, f"US-East 2026-03-20: expected 3 orders, got {row.order_count}"
 assert abs(row.total_revenue - 280.00) < 0.01, \
     f"US-East 2026-03-20: expected 280.00 revenue, got {row.total_revenue}"
-assert abs(row.avg_order_amount - 93.33) < 0.01, \
-    f"US-East 2026-03-20: expected 93.33 avg, got {row.avg_order_amount}"
+assert row.avg_order_amount == 93.33, \
+    f"US-East 2026-03-20: expected avg_order_amount 93.33 (ROUND to 2 decimals), got {row.avg_order_amount}"
 # No US-West on 2026-03-22
 us_west_22 = result.filter("region = 'US-West' AND order_date = '2026-03-22'").count()
 assert us_west_22 == 0, "Should have no row for US-West on 2026-03-22 (no source data)"
@@ -374,12 +374,14 @@ print("Exercise 5 passed!")
 # MAGIC Production medallion pipelines process only new data and upsert into silver
 # MAGIC instead of full reprocessing.
 # MAGIC
-# MAGIC **Source** (`silver_orders_ex6`): Existing silver table with 6 rows (ORD-601 through ORD-606).
-# MAGIC **Source** (`bronze_batch_ex6`): 8 new bronze rows containing:
+# MAGIC **Existing silver** (`silver_orders_ex6`): 6 rows, ORD-601 through ORD-606. Columns: `order_id`, `customer_id`, `amount` (DOUBLE), `status`, `updated_at` (TIMESTAMP), `processed_at` (TIMESTAMP).
+# MAGIC
+# MAGIC **New batch** (`bronze_batch_ex6`): 9 bronze rows. Columns: `order_id`, `customer_id`, `amount`, `status`, `updated_at`, `_ingested_at` (no `processed_at`). The batch contains:
 # MAGIC - 3 updates: ORD-601 (status pending->completed), ORD-603 (shipped->delivered),
 # MAGIC   ORD-605 (amount 210->215) with newer updated_at
 # MAGIC - 3 new orders: ORD-607, ORD-608, ORD-609
-# MAGIC - 2 duplicates within batch: ORD-607 appears 3 times with different _ingested_at
+# MAGIC - 2 extra copies of ORD-607: it appears 3 times, each with a different `_ingested_at`
+# MAGIC - 1 stale row: ORD-604 with `updated_at` 07:00, older than the silver row (08:15), so it must not overwrite it
 # MAGIC
 # MAGIC **Target**: Write to `db_code.medallion_architecture.silver_orders_ex6_merged`. Expected 9 rows.
 # MAGIC
@@ -387,9 +389,8 @@ print("Exercise 5 passed!")
 # MAGIC 1. Copy `silver_orders_ex6` to `silver_orders_ex6_merged` (your working table)
 # MAGIC 2. Deduplicate `bronze_batch_ex6` on order_id (keep latest _ingested_at)
 # MAGIC 3. MERGE the deduped batch into `silver_orders_ex6_merged`:
-# MAGIC    - WHEN MATCHED AND source updated_at > target updated_at THEN UPDATE all fields
-# MAGIC    - WHEN NOT MATCHED THEN INSERT all fields
-# MAGIC 4. Set processed_at to current_timestamp() for all inserted/updated rows
+# MAGIC    - WHEN MATCHED AND source `updated_at` > target `updated_at`: UPDATE `customer_id`, `amount`, `status`, `updated_at`, and set `processed_at` = `current_timestamp()`
+# MAGIC    - WHEN NOT MATCHED: INSERT `order_id`, `customer_id`, `amount`, `status`, `updated_at`, with `processed_at` = `current_timestamp()`
 # MAGIC
 # MAGIC **Constraints**:
 # MAGIC - Must use Delta MERGE INTO (not DELETE + INSERT)
@@ -433,9 +434,14 @@ assert ord607_count == 1, f"ORD-607 should appear exactly once, got {ord607_coun
 ord602 = result.filter("order_id = 'ORD-602'").collect()[0]
 assert str(ord602.updated_at) == "2026-03-25 08:05:00", \
     f"ORD-602 should be unchanged (08:05:00), got {ord602.updated_at}"
-# New events must exist
-for eid in ["ORD-608", "ORD-609"]:
-    assert result.filter(f"order_id = '{eid}'").count() == 1, f"{eid} should be inserted by MERGE"
+# ORD-604's batch row is older than the silver row, so silver keeps its values
+ord604 = result.filter("order_id = 'ORD-604'").first()
+assert ord604.status == "pending", "ORD-604's batch row is older than the silver row, so silver keeps status 'pending'"
+# Updated rows get a new processed_at
+assert ord601.processed_at > ord602.processed_at, "ORD-601 was updated, so its processed_at should be the MERGE time"
+# New orders must exist
+for oid in ["ORD-608", "ORD-609"]:
+    assert result.filter(f"order_id = '{oid}'").count() == 1, f"{oid} should be inserted by MERGE"
 
 print("Exercise 6 passed!")
 
@@ -444,24 +450,25 @@ print("Exercise 6 passed!")
 # MAGIC ## Exercise 7: Gold Incremental Refresh with MERGE
 # MAGIC **Difficulty**: Hard | **Time**: ~15 min
 # MAGIC
-# MAGIC MERGE new silver records into an existing gold aggregation table. Instead of
-# MAGIC recomputing gold from scratch, aggregate only the new silver batch and merge
-# MAGIC the results: update existing date+region combos with new totals, insert combos
+# MAGIC MERGE a restated silver slice into an existing gold aggregation table. Instead of
+# MAGIC recomputing all of gold, recompute only the date+region combos the slice covers
+# MAGIC and merge them: replace the totals of combos that already exist, insert combos
 # MAGIC that didn't exist before.
 # MAGIC
-# MAGIC **Source** (`gold_summary_ex7`): Existing gold table with 5 aggregate rows.
-# MAGIC **Source** (`silver_new_ex7`): 12 new silver rows that aggregate into 6 combos:
-# MAGIC - 3 match existing gold combos (UPDATE with new aggregates)
+# MAGIC **Existing gold** (`gold_summary_ex7`): 5 aggregate rows. Columns: `order_date`, `region`, `order_count` (INT), `total_revenue`, `avg_order_amount`.
+# MAGIC
+# MAGIC **New silver** (`silver_new_ex7`): 12 silver rows holding every order for the date+region combos they cover (the full restated slice, not only newly arrived orders). Columns: `order_id`, `customer_id`, `amount`, `status`, `order_date`, `region`. They aggregate into 6 combos:
+# MAGIC - 3 match existing gold combos (UPDATE)
 # MAGIC - 3 are new combos (INSERT)
 # MAGIC
 # MAGIC **Target**: Write to `db_code.medallion_architecture.gold_summary_ex7_merged`. Expected 8 rows.
 # MAGIC
 # MAGIC **Requirements**:
 # MAGIC 1. Copy `gold_summary_ex7` to `gold_summary_ex7_merged` (your working table)
-# MAGIC 2. Aggregate `silver_new_ex7` by order_date and region to get new batch totals:
+# MAGIC 2. Aggregate `silver_new_ex7` by order_date and region:
 # MAGIC    order_count, total_revenue, avg_order_amount (ROUND to 2 decimals)
 # MAGIC 3. MERGE the new aggregates into `gold_summary_ex7_merged`:
-# MAGIC    - WHEN MATCHED: UPDATE order_count, total_revenue, avg_order_amount with new batch values
+# MAGIC    - WHEN MATCHED: replace order_count, total_revenue, avg_order_amount with the recomputed values (do not add to the old ones)
 # MAGIC    - WHEN NOT MATCHED: INSERT the new aggregate row
 # MAGIC
 # MAGIC **Constraints**:
@@ -469,7 +476,7 @@ print("Exercise 6 passed!")
 # MAGIC - Match on both order_date AND region
 # MAGIC - After MERGE: 8 total rows (5 original + 3 new combos, 3 existing updated)
 # MAGIC - 2026-03-20/EU-West and 2026-03-21/US-West must be unchanged (no new silver for them)
-# MAGIC - 2026-03-21/US-East updated: order_count=3, total_revenue=265.00
+# MAGIC - 2026-03-21/US-East updated: order_count=3, total_revenue=265.00, avg_order_amount=88.33
 
 # COMMAND ----------
 
@@ -496,6 +503,8 @@ assert us_east_21[0].order_count == 3, \
     f"US-East 2026-03-21: expected 3 orders (updated), got {us_east_21[0].order_count}"
 assert abs(us_east_21[0].total_revenue - 265.00) < 0.01, \
     f"US-East 2026-03-21: expected 265.00 revenue (updated), got {us_east_21[0].total_revenue}"
+assert us_east_21[0].avg_order_amount == 88.33, \
+    f"US-East 2026-03-21: expected avg_order_amount 88.33 (ROUND to 2 decimals), got {us_east_21[0].avg_order_amount}"
 # Updated combo: 2026-03-20/US-West = 1 order, 200.00
 us_west_20 = result.filter("region = 'US-West' AND order_date = '2026-03-20'").collect()
 assert len(us_west_20) == 1, "Should have 1 row for US-West on 2026-03-20"
@@ -528,17 +537,19 @@ print("Exercise 7 passed!")
 # MAGIC medallion tiers. Production pipelines need automated quality gates to catch
 # MAGIC problems before they propagate downstream.
 # MAGIC
-# MAGIC **Source** (`qc_bronze_ex8`): 12 rows with issues:
+# MAGIC **Source** (`qc_bronze_ex8`): 12 rows with issues. Columns: `order_id`, `customer_id`, `amount`, `order_date`, `status`.
 # MAGIC - 3 rows with NULL order_id
 # MAGIC - 2 rows with order_date outside valid range (before 2026-01-01 or after 2027-12-31)
 # MAGIC - 2 rows with negative amount
 # MAGIC
-# MAGIC **Source** (`qc_silver_ex8`): 10 rows with issues:
-# MAGIC - 4 rows with orphan customer_ids (C-899, C-898, C-897, C-896 not in qc_customers_ex8)
+# MAGIC **Source** (`qc_silver_ex8`): 10 rows with issues. Columns: `order_id`, `customer_id`, `amount`, `order_date`, `region`.
+# MAGIC - 4 rows with orphan customer_ids (C-899, C-898, C-897, C-896 are not in `qc_customers_ex8`)
 # MAGIC
-# MAGIC **Source** (`qc_gold_ex8`): 8 rows with issues:
+# MAGIC **Source** (`qc_gold_ex8`): 8 rows with issues. Columns: `order_date`, `region`, `order_count`, `total_revenue`.
 # MAGIC - 2 rows with zero order_count
 # MAGIC - 1 row with negative total_revenue
+# MAGIC
+# MAGIC **Lookup** (`qc_customers_ex8`): 6 valid customers, `C-801` through `C-806`. Columns: `customer_id`, `name`, `region`.
 # MAGIC
 # MAGIC **Target**: Write to `db_code.medallion_architecture.quality_report_ex8`. Expected 6 rows.
 # MAGIC
@@ -547,7 +558,7 @@ print("Exercise 7 passed!")
 # MAGIC 2. Bronze check 2: count out-of-range dates (check_name = 'invalid_date_range',
 # MAGIC    valid: order_date >= '2026-01-01' AND order_date <= '2027-12-31')
 # MAGIC 3. Bronze check 3: count negative amounts (check_name = 'negative_amount')
-# MAGIC 4. Silver check: count orphan customer_ids via LEFT ANTI JOIN with qc_customers_ex8
+# MAGIC 4. Silver check: count orphan customer_ids with a LEFT ANTI JOIN against `qc_customers_ex8`
 # MAGIC    (check_name = 'orphan_customer_id')
 # MAGIC 5. Gold check 1: count zero order_counts (check_name = 'zero_order_count')
 # MAGIC 6. Gold check 2: count negative revenue (check_name = 'negative_revenue')
@@ -556,11 +567,10 @@ print("Exercise 7 passed!")
 # MAGIC    - check_name (STRING): as specified above
 # MAGIC    - total_rows (INT): total rows in that tier's table
 # MAGIC    - failed_rows (INT): rows that failed this check
-# MAGIC    - pass_rate (DOUBLE): (total_rows - failed_rows) / total_rows as decimal
+# MAGIC    - pass_rate (DOUBLE): (total_rows - failed_rows) / total_rows, a fraction between 0 and 1 (e.g. 0.75)
 # MAGIC
 # MAGIC **Constraints**:
 # MAGIC - Report has exactly 6 rows (3 bronze + 1 silver + 2 gold)
-# MAGIC - pass_rate between 0.0 and 1.0
 # MAGIC - Bronze null_order_id: 3 failed / 12 total (pass_rate = 0.75)
 # MAGIC - Bronze invalid_date_range: 2 failed / 12 total (pass_rate ~= 0.8333)
 # MAGIC - Bronze negative_amount: 2 failed / 12 total (pass_rate ~= 0.8333)

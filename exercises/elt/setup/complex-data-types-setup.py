@@ -156,7 +156,7 @@ INSERT INTO {CATALOG}.{SCHEMA}.products_map_ex4 VALUES
 
 # MAGIC %md
 # MAGIC ## Exercise 5: collect_list/collect_set aggregation
-# MAGIC Source: order line items to aggregate product_ids per order. Includes duplicate products and edge cases.
+# MAGIC Source: 15 order line items across 7 orders. ORD-002 lists P-100 twice and ORD-007 lists P-500 twice.
 
 # COMMAND ----------
 
@@ -192,7 +192,7 @@ INSERT INTO {CATALOG}.{SCHEMA}.order_items_ex5 VALUES
 
 # MAGIC %md
 # MAGIC ## Exercise 6: Higher-order functions (transform, filter)
-# MAGIC Source: table with array<int> column for applying higher-order functions.
+# MAGIC Source: 7 sensors with `temperatures` (ARRAY<INT>, Fahrenheit) and `labels` (ARRAY<STRING>). S-006 has empty arrays, S-007 has NULL arrays.
 
 # COMMAND ----------
 
@@ -235,7 +235,7 @@ CREATE OR REPLACE TABLE {CATALOG}.{SCHEMA}.api_responses_ex7 (
 )
 """)
 
-# Use PySpark to build ex7 data - SQL VALUES struggles with deeply nested struct/array types
+# Build the nested ex7 rows in PySpark: Python tuples and lists map directly onto the nested struct and array types
 from pyspark.sql import Row
 from pyspark.sql.types import (
     StructType, StructField, StringType, IntegerType, DoubleType, ArrayType
@@ -269,7 +269,7 @@ spark.createDataFrame(_ex7_data, _schema_ex7).write.mode("overwrite").saveAsTabl
 
 # MAGIC %md
 # MAGIC ## Exercise 8: Build complex types from flat data
-# MAGIC Source: flat order + line item data that users will restructure into structs and arrays.
+# MAGIC Source: 9 flat order and line item rows across 5 orders, which you restructure into structs and arrays. ORD-003 has a NULL `customer_email`.
 
 # COMMAND ----------
 

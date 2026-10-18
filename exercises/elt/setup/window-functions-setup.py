@@ -2,7 +2,7 @@
 # COMMAND ----------
 # MAGIC %md
 # MAGIC ### Setup: Window Functions
-# MAGIC Creates per-exercise source tables for window function exercises. Run automatically via `%run` from the exercise notebook.
+# MAGIC Creates the source tables for the window function exercises. The exercise notebook runs this for you with `%run`.
 
 # COMMAND ----------
 
@@ -14,7 +14,7 @@ spark.sql(f"CREATE SCHEMA IF NOT EXISTS {CATALOG}.{SCHEMA}")
 
 # COMMAND ----------
 
-# Exercise 1: Orders with deliberate duplicates for ROW_NUMBER dedup
+# Exercise 1: several orders per customer, for ROW_NUMBER dedup (keep the latest by updated_at)
 # 12 rows: 7 customers, CUST-001 has 3 orders, CUST-002 has 2 orders, CUST-003 has 2 orders
 # One row has NULL customer_id (edge case: should be excluded)
 spark.sql(f"""
@@ -93,7 +93,8 @@ spark.sql(f"""
 # COMMAND ----------
 
 # Exercise 4: Orders for running totals with explicit frame specification
-# 10 rows across 3 customers - CUST-001: 3, CUST-002: 4, CUST-003: 3
+# 11 rows across 3 customers - CUST-001: 3, CUST-002: 4, CUST-003: 4
+# ORD-409 and ORD-411 share order_date 2026-02-20; ordered by order_date, order_id their running totals are 375.00 and 425.00
 spark.sql(f"""
     CREATE OR REPLACE TABLE {CATALOG}.{SCHEMA}.window_ex4_orders AS
     SELECT * FROM VALUES
@@ -106,7 +107,8 @@ spark.sql(f"""
         ('ORD-407', 'CUST-002', CAST(90.00 AS DOUBLE), DATE '2026-04-15'),
         ('ORD-408', 'CUST-003', CAST(200.00 AS DOUBLE), DATE '2026-01-20'),
         ('ORD-409', 'CUST-003', CAST(175.00 AS DOUBLE), DATE '2026-02-20'),
-        ('ORD-410', 'CUST-003', CAST(250.00 AS DOUBLE), DATE '2026-03-20')
+        ('ORD-410', 'CUST-003', CAST(250.00 AS DOUBLE), DATE '2026-03-20'),
+        ('ORD-411', 'CUST-003', CAST(50.00 AS DOUBLE), DATE '2026-02-20')
     AS t(order_id, customer_id, amount, order_date)
 """)
 
@@ -131,7 +133,7 @@ spark.sql(f"""
 # COMMAND ----------
 
 # Exercise 6: Orders for FIRST_VALUE/LAST_VALUE per customer
-# 15 rows across 4 customers - enough depth to test FIRST_VALUE and LAST_VALUE
+# 15 rows across 4 customers, one order per customer per date
 # CUST-001: 5 orders, CUST-002: 4 orders, CUST-003: 4 orders, CUST-004: 2 orders
 spark.sql(f"""
     CREATE OR REPLACE TABLE {CATALOG}.{SCHEMA}.window_ex6_orders AS
@@ -183,8 +185,8 @@ spark.sql(f"""
 
 # Exercise 8: Events for sessionization (gap-and-island pattern)
 # 15 events across 2 users with clear session boundaries (>30 min gaps)
-# USER-001: 9 events forming 3 sessions (gap between event 4-5 is 45 min, gap between 7-8 is 60 min)
-# USER-002: 6 events forming 2 sessions (gap between event 4-5 is 35 min)
+# USER-001: 9 events forming 3 sessions (EVT-004 -> EVT-005 is 45 min, EVT-007 -> EVT-008 is 60 min)
+# USER-002: 6 events forming 2 sessions (EVT-013 -> EVT-014 is 35 min)
 # Includes NULL payload (edge case)
 spark.sql(f"""
     CREATE OR REPLACE TABLE {CATALOG}.{SCHEMA}.window_ex8_events AS
@@ -228,7 +230,7 @@ print(f"Window Functions setup complete. Exercise tables created in {CATALOG}.{S
 print(f"  - window_ex1_orders: 12 rows (ROW_NUMBER dedup exercise)")
 print(f"  - window_ex2_orders: 20 rows (RANK vs DENSE_RANK exercise)")
 print(f"  - window_ex3_orders: 12 rows (LAG exercise)")
-print(f"  - window_ex4_orders: 10 rows (running totals exercise)")
+print(f"  - window_ex4_orders: 11 rows (running totals exercise)")
 print(f"  - window_ex5_customer_spend: 8 rows (NTILE exercise)")
 print(f"  - window_ex6_orders: 15 rows (FIRST_VALUE/LAST_VALUE exercise)")
 print(f"  - window_ex7_orders: 12 rows (QUALIFY top-N exercise)")

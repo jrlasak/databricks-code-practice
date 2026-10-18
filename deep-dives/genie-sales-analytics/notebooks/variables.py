@@ -22,16 +22,18 @@ PERFORMANCE_INSIGHTS = f"{FQ}.performance_insights"
 
 # --- Time anchor (derived from TODAY so the lab never goes stale) ---
 # "This month" = the actual current calendar month. The data spans the trailing 12 months ending
-# with it, and the baked-in storyline is always planted in the current month. So whenever a learner
-# runs this lab, "this month" is now - and the Genie guides self-anchor on MAX(year_month), so they
+# with it, and the baked-in storyline is always planted in the current month. So whenever you run
+# this lab, "this month" is now - and the Genie guides self-anchor on MAX(year_month), so they
 # never need a hardcoded date either.
+# The current month is generated in full (every day, even ones after today) so "this month" is a
+# complete month the storyline can land in.
 import calendar as _calendar
 from datetime import date as _date
 
 _today = _date.today()
 CURRENT_YEAR = _today.year
 CURRENT_MONTH = _today.month
-CURRENT_YEAR_MONTH = _today.strftime("%Y-%m")   # the "today" anchor used throughout the demo
+CURRENT_YEAR_MONTH = _today.strftime("%Y-%m")   # the "today" anchor used throughout the lab
 
 
 def _add_months(year, month, delta):
@@ -62,11 +64,11 @@ CATEGORIES = [
     "Accessories",
 ]
 
-# --- Baked-in narrative anchors (the "hero" storylines, always planted in the current month) ---
+# --- Baked-in narrative anchors (the storyline, always planted in the current month) ---
 # H1 on-track: company is BEHIND target this month.
 # H2 why: the West region is dragging; Outdoor & Camping collapsed there.
 # H3 driver: Outdoor & Camping is the #1 detractor in the West.
-# H4/H5 what-if: discount the hero product to see margin impact.
+# H4/H5 what-if: discount the Summit 600 Down Jacket to see margin impact.
 HERO_REGION = "West"                       # the region that misses target
 HERO_DETRACTOR_CATEGORY = "Outdoor & Camping"
 HERO_DISCOUNT_PRODUCT_ID = "SKU-1042"      # "Summit 600 Down Jacket" - the discount what-if anchor

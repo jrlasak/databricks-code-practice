@@ -1,8 +1,9 @@
 # Databricks notebook source
 # MAGIC %md
 # MAGIC # 02 - Generate Data
-# MAGIC Generates deterministic synthetic data (seed=42) for Bramblepeak Outfitters and writes it into the
-# MAGIC 7 tables from notebook 01. The data has a **baked-in storyline** so every demo question lands:
+# MAGIC Generates deterministic synthetic data (seed=42) for Bramblepeak Outfitters and writes it into 6 of the
+# MAGIC 7 tables from notebook 01 (`performance_insights` is filled by notebook 04). The data has a
+# MAGIC **baked-in storyline** so every Genie question in the guides has a clear answer:
 # MAGIC
 # MAGIC - **The company misses its sales target this month.** (drives "are we on track this month?")
 # MAGIC - **The West region is the drag.** (drives "why are we behind?")
@@ -51,7 +52,7 @@ print(f"dim_date: {len(dim_date)} days across {len(ALL_MONTHS)} months ({ALL_MON
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## dim_product (60 SKUs, 2 hand-placed heroes)
+# MAGIC ## dim_product (60 SKUs, 2 hand-placed storyline products)
 
 # COMMAND ----------
 
@@ -93,7 +94,8 @@ for i in range(60):
     pop = float(np.random.gamma(2.0, 1.0)) + 0.3
     products.append({
         "product_id": f"SKU-{1001 + i}",
-        "product_name": f"{brand} {sub}",
+        # SKU-1041 to SKU-1060 repeat the brand and noun pairs of SKU-1001 to SKU-1020; the " II" suffix keeps every product_name unique
+        "product_name": f"{brand} {sub}" + (" II" if i >= 40 else ""),
         "category": cat,
         "subcategory": CAT_SUBS[cat][i % len(CAT_SUBS[cat])],
         "brand": brand,
@@ -102,7 +104,7 @@ for i in range(60):
         "_pop": pop,
     })
 
-# Hero overrides - keep their auto-assigned ids (index 8 -> SKU-1009, index 41 -> SKU-1042)
+# Storyline products - keep their auto-assigned ids (index 8 -> SKU-1009, index 41 -> SKU-1042)
 products[8].update({
     "product_id": HERO_SURGE_PRODUCT_ID, "product_name": "Aera Wireless Earbuds Pro",
     "category": "Electronics", "subcategory": "Audio", "brand": "Aera",
@@ -117,12 +119,12 @@ products[41].update({
 dim_product = pd.DataFrame(products)
 dim_product.insert(0, "product_key", range(1, len(dim_product) + 1))
 PROD_POP = dim_product["_pop"].values
-print(f"dim_product: {len(dim_product)} SKUs. Heroes: {HERO_SURGE_PRODUCT_ID} (surge), {HERO_DISCOUNT_PRODUCT_ID} (discount what-if).")
+print(f"dim_product: {len(dim_product)} SKUs. Storyline products: {HERO_SURGE_PRODUCT_ID} (surge), {HERO_DISCOUNT_PRODUCT_ID} (discount what-if).")
 
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## dim_customer (500)
+# MAGIC ## dim_customer (20,000)
 
 # COMMAND ----------
 
@@ -134,8 +136,13 @@ LAST = ["Smith", "Johnson", "Williams", "Brown", "Jones", "Garcia", "Miller", "D
         "Nguyen", "Kim", "Patel", "Chen", "Okafor", "Ali", "Reyes", "Murphy", "Bauer"]
 REGION_W = [0.30, 0.22, 0.26, 0.22]   # West, Midwest, Northeast, South
 
-n_cust = 500
+n_cust = 20000
 cust_region = np.random.choice(REGIONS, size=n_cust, p=REGION_W)
+# Signups run up to today and never later (`_today` is the anchor from variables). The first 60 customers
+# are placed in the current calendar year, so "signed up this year" is never empty, even in early January;
+# the rest spread over the ~1,100 days before today, so the later in the year you run this, the more of
+# them also joined this year.
+_days_this_year = (_today - date(CURRENT_YEAR, 1, 1)).days
 dim_customer = pd.DataFrame({
     "customer_key": range(1, n_cust + 1),
     "customer_id": [f"CUST-{100000 + i}" for i in range(n_cust)],
@@ -143,7 +150,11 @@ dim_customer = pd.DataFrame({
     "loyalty_tier": np.random.choice(LOYALTY_TIERS, size=n_cust, p=[0.55, 0.30, 0.15]),
     "region": cust_region,
     "country": "USA",
-    "signup_date": [date(2022, 1, 1) + pd.Timedelta(days=int(np.random.randint(0, 1100))) for _ in range(n_cust)],
+    "signup_date": [
+        (_today - pd.Timedelta(days=int(np.random.randint(0, 1100)))) if i >= 60
+        else date(CURRENT_YEAR, 1, 1) + pd.Timedelta(days=int(np.random.randint(0, _days_this_year + 1)))
+        for i in range(n_cust)
+    ],
 })
 # region -> list of customer_keys (for regional sampling in the fact)
 CUST_BY_REGION = {r: dim_customer.loc[dim_customer.region == r, "customer_key"].values for r in REGIONS}
@@ -184,7 +195,7 @@ print(f"dim_store: {len(dim_store)} stores ({dim_store.channel.value_counts().to
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## fact_sales (~120k order lines) with seasonality + planted storyline
+# MAGIC ## fact_sales (~115k order lines) with calendar seasonality + planted storyline
 
 # COMMAND ----------
 
@@ -199,12 +210,13 @@ for cat in CATEGORIES:
     w = sub["_pop"].values
     POP_BY_CAT[cat] = w / w.sum()
 
-# Gentle volume drift by POSITION in the window (not calendar month) so the storyline lands the same
-# way no matter which month "today" is. The last two positions are equal, so the current month and the
-# prior month sit at the same baseline - that keeps the month-over-month driver decomposition (notebook
-# 04) clean: the only big mover is the planted West collapse, not a seasonal swing.
-POS_FACTORS = [0.96, 0.99, 1.04, 1.07, 1.05, 1.00, 0.97, 1.02, 1.05, 1.03, 1.00, 1.00]
-SEASON = {ym: POS_FACTORS[i] for i, ym in enumerate(ALL_MONTHS)}
+# Volume follows the calendar: a spring-summer camping season and a holiday peak in November-December.
+# The prior month gets the current month's factor, so the two sit at the same baseline. That keeps the
+# month-over-month driver decomposition (notebook 04) clean: the only big mover is the planted West
+# collapse, not a seasonal swing.
+CAL_FACTORS = {1: 0.88, 2: 0.86, 3: 0.95, 4: 1.00, 5: 1.05, 6: 1.10, 7: 1.08, 8: 1.02, 9: 0.97, 10: 0.98, 11: 1.08, 12: 1.20}
+SEASON = {ym: CAL_FACTORS[int(ym[5:])] for ym in ALL_MONTHS}
+SEASON[ALL_MONTHS[-2]] = SEASON[ALL_MONTHS[-1]]   # prior month = current month baseline
 BASE_LINES = 9500   # per "normal" month
 prod_lookup = dim_product.set_index("product_key")[["list_price", "unit_cost"]].to_dict("index")
 
@@ -218,21 +230,23 @@ for ym in ALL_MONTHS:
     cat_arr = np.random.choice(CATEGORIES, size=n, p=[CAT_W[c] for c in CATEGORIES])
     day_arr = np.random.randint(1, days_in_month + 1, size=n)
     qty_arr = np.random.choice([1, 2, 3, 4], size=n, p=[0.55, 0.30, 0.10, 0.05])
-    # promo discount pct per line (mostly 0)
-    disc_arr = np.random.choice([0, 0, 0, 5, 10, 15, 20], size=n)
+    # promo discount pct per line: ~75% full price, the rest 5-20% off
+    disc_arr = np.random.choice([0, 5, 10, 15, 20], size=n, p=[0.75, 0.08, 0.08, 0.05, 0.04])
     y, mo = int(ym.split("-")[0]), int(ym.split("-")[1])
     first_key = int(f"{y}{mo:02d}01")
     for i in range(n):
-        region, channel, cat = region_arr[i], channel_arr[i], cat_arr[i]
+        cat = cat_arr[i]
         pk = int(np.random.choice(PK_BY_CAT[cat], p=POP_BY_CAT[cat]))
-        # customer: 70% same region as store, else any
-        if np.random.rand() < 0.70:
-            ck = int(np.random.choice(CUST_BY_REGION[region]))
-        else:
-            ck = int(np.random.choice(dim_customer["customer_key"].values))
-        store_keys = STORE_BY_RC[(region, channel)]
-        sk = int(np.random.choice(store_keys))
-        dkey = int(f"{y}{mo:02d}{day_arr[i]:02d}")
+        # ~35% of lines join the previous line's order (same day, store and customer): ~1.5 lines per order
+        if i == 0 or np.random.rand() >= 0.35:
+            region, channel, day = region_arr[i], channel_arr[i], day_arr[i]
+            # customer: 70% same region as store, else any
+            if np.random.rand() < 0.70:
+                ck = int(np.random.choice(CUST_BY_REGION[region]))
+            else:
+                ck = int(np.random.choice(dim_customer["customer_key"].values))
+            sk = int(np.random.choice(STORE_BY_RC[(region, channel)]))
+        dkey = int(f"{y}{mo:02d}{day:02d}")
         qty = int(qty_arr[i])
         lp = prod_lookup[pk]["list_price"]
         uc = prod_lookup[pk]["unit_cost"]
@@ -242,7 +256,7 @@ for ym in ALL_MONTHS:
         net = round(gross - discount_amount, 2)
         cost = round(qty * uc, 2)
         sale_seq += 1
-        rows.append((f"SL-{sale_seq:08d}", f"ORD-{dkey}-{ck:05d}", dkey, pk, ck, sk,
+        rows.append((f"SL-{sale_seq:08d}", f"ORD-{dkey}-{sk:02d}-{ck:05d}", dkey, pk, ck, sk,
                      qty, round(lp, 2), discount_amount, net, cost, round(net - cost, 2)))
 
 fact = pd.DataFrame(rows, columns=[
@@ -261,13 +275,15 @@ print(f"fact_sales (pre-storyline): {len(fact):,} lines")
 store_region = dim_store.set_index("store_key")["region"].to_dict()
 prod_cat = dim_product.set_index("product_key")["category"].to_dict()
 prod_id = dim_product.set_index("product_key")["product_id"].to_dict()
+store_channel = dim_store.set_index("store_key")["channel"].to_dict()
 fact["_region"] = fact["store_key"].map(store_region)
 fact["_cat"] = fact["product_key"].map(prod_cat)
 fact["_pid"] = fact["product_key"].map(prod_id)
+fact["_ch"] = fact["store_key"].map(store_channel)
 fact["_ym"] = (fact["date_key"] // 100).astype(str).str.replace(r"(\d{4})(\d{2})", r"\1-\2", regex=True)
 
-# Capture each region's current-month revenue BEFORE the collapse - this "expected" level is what we
-# set targets against, so healthy regions land on target and only the collapsed West misses.
+# Capture each region's current-month revenue BEFORE the collapse. Targets are set against this
+# "expected" level, so healthy regions land on target and only the collapsed West misses.
 R_PRE = fact[fact["_ym"] == CURRENT_YEAR_MONTH].groupby("_region")["net_sales"].sum().to_dict()
 
 cur = fact["_ym"] == CURRENT_YEAR_MONTH
@@ -280,45 +296,74 @@ mask_west_other = cur & (fact["_region"] == HERO_REGION) & (fact["_cat"] != HERO
 drop_west = fact[mask_west_other].sample(frac=0.22, random_state=RANDOM_SEED + 1).index
 fact = fact.drop(index=drop_collapse.union(drop_west))
 
-# 3) Bright spot: the surge earbuds (online) roughly double their current-month lines.
-mask_surge = (fact["_ym"] == CURRENT_YEAR_MONTH) & (fact["_pid"] == HERO_SURGE_PRODUCT_ID)
-surge_dupes = fact[mask_surge].sample(frac=1.0, random_state=RANDOM_SEED + 2).copy()
+# 3) Bright spot: the surge earbuds get new Online orders, so their Online lines this month are double
+#    last month's. Each new line gets its own customer, day and order, so order and customer counts surge too.
+is_surge_online = (fact["_pid"] == HERO_SURGE_PRODUCT_ID) & (fact["_ch"] == "Online")
+mask_surge = is_surge_online & (fact["_ym"] == CURRENT_YEAR_MONTH)
+n_prior_online = int((is_surge_online & (fact["_ym"] == ALL_MONTHS[-2])).sum())
+n_new = max(2 * n_prior_online - int(mask_surge.sum()), 0)
+surge_dupes = fact[mask_surge].sample(n=n_new, replace=True, random_state=RANDOM_SEED + 2).copy() if mask_surge.any() else fact.iloc[0:0].copy()
 if len(surge_dupes):
+    days_cur = int((dim_date.year_month == CURRENT_YEAR_MONTH).sum())
     surge_dupes["sale_id"] = [f"SL-9{i:07d}" for i in range(len(surge_dupes))]
+    surge_dupes["customer_key"] = np.random.choice(dim_customer["customer_key"].values, size=len(surge_dupes))
+    surge_dupes["date_key"] = (surge_dupes["date_key"] // 100) * 100 + np.random.randint(1, days_cur + 1, size=len(surge_dupes))
+    surge_dupes["order_id"] = [f"ORD-{d}-{s:02d}-{c:05d}" for d, s, c in
+                               zip(surge_dupes["date_key"], surge_dupes["store_key"], surge_dupes["customer_key"])]
     fact = pd.concat([fact, surge_dupes], ignore_index=True)
 
-fact = fact.drop(columns=["_region", "_cat", "_pid", "_ym"]).reset_index(drop=True)
+# 4) Customers buy only on or after their signup date. Any order dated earlier moves to a customer from
+#    the same home region who signed up before the data window starts.
+signup_key = dict(zip(dim_customer["customer_key"],
+                      pd.to_datetime(dim_customer["signup_date"]).dt.strftime("%Y%m%d").astype(int)))
+cust_home = dict(zip(dim_customer["customer_key"], dim_customer["region"]))
+_early = dim_customer[pd.to_datetime(dim_customer["signup_date"]) <= pd.Timestamp(START_DATE)]
+EARLY_BY_REGION = {r: _early.loc[_early.region == r, "customer_key"].values for r in REGIONS}
+too_early = fact["date_key"] < fact["customer_key"].map(signup_key)
+bad_orders = fact.loc[too_early, ["order_id", "customer_key"]].drop_duplicates("order_id")
+new_ck = {o: int(np.random.choice(EARLY_BY_REGION[cust_home[c]]))
+          for o, c in zip(bad_orders["order_id"], bad_orders["customer_key"])}
+fact.loc[too_early, "customer_key"] = fact.loc[too_early, "order_id"].map(new_ck)
+fact.loc[too_early, "order_id"] = [f"ORD-{d}-{s:02d}-{c:05d}" for d, s, c in
+                                   zip(fact.loc[too_early, "date_key"], fact.loc[too_early, "store_key"],
+                                       fact.loc[too_early, "customer_key"])]
+print(f"Signup rule: {int(too_early.sum()):,} lines ({100 * too_early.mean():.0f}%) fell before their randomly drawn "
+      f"customer's signup and went to a longer-standing member from the same region, so nobody buys before joining. "
+      f"Expect roughly 15%; store and region revenue are unchanged.")
+
+fact = fact.drop(columns=["_region", "_cat", "_pid", "_ch", "_ym"]).reset_index(drop=True)
 print(f"fact_sales (post-storyline): {len(fact):,} lines")
 
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## sales_targets - per-region target = the current month's pre-collapse revenue × 0.98
+# MAGIC ## sales_targets - per-region target = the region's expected revenue for that month × 0.98
 # MAGIC
 # MAGIC Setting the target just under what each region *would* have done this month makes the healthy
-# MAGIC regions land comfortably on target while the collapsed West misses clearly - and it works no
-# MAGIC matter which calendar month "today" is. The same flat target is written for every month so the
-# MAGIC dashboard trend has a clean target line.
+# MAGIC regions land comfortably on target while the collapsed West misses clearly, whichever calendar
+# MAGIC month "today" is. Every month's target follows the same seasonal curve as sales, so a month shows
+# MAGIC up off target only when its sales fall short of the season.
 
 # COMMAND ----------
 
-# region revenue per month from the finished fact (for verification + the trend line)
+# region revenue per month from the finished fact (used by the storyline check below)
 fr = fact.merge(dim_store[["store_key", "region"]], on="store_key")
 fr["_ym"] = (fr["date_key"] // 100).astype(str).str.replace(r"(\d{4})(\d{2})", r"\1-\2", regex=True)
 region_month_rev = fr.groupby(["region", "_ym"])["net_sales"].sum().reset_index()
 
 target_rows = []
 for region in REGIONS:
-    tgt = round(R_PRE[region] * 0.98 / 1000.0) * 1000.0   # just under the expected level, nearest $1k
     for ym in ALL_MONTHS:
-        target_rows.append({"region": region, "year_month": ym, "revenue_target": tgt})
+        # just under the region's expected level for that month (scaled by the seasonal curve), nearest $1k
+        tgt_m = round(R_PRE[region] * 0.98 * SEASON[ym] / SEASON[CURRENT_YEAR_MONTH] / 1000.0) * 1000.0
+        target_rows.append({"region": region, "year_month": ym, "revenue_target": tgt_m})
 sales_targets = pd.DataFrame(target_rows)
-print("sales_targets: per-region target = this month's pre-collapse revenue x 0.98 (flat across months).")
+print("sales_targets: per-region target = the region's expected revenue for that month x 0.98 (seasonal).")
 
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## Storyline check - confirm the demo lands before we write
+# MAGIC ## Storyline check - the West should be the only region off track
 
 # COMMAND ----------
 
@@ -332,8 +377,8 @@ for region in REGIONS:
 tot_act = region_month_rev[region_month_rev._ym == CURRENT_YEAR_MONTH]["net_sales"].sum()
 tot_tgt = sales_targets[sales_targets.year_month == CURRENT_YEAR_MONTH]["revenue_target"].sum()
 print(f"  {'COMPANY':10s} actual ${tot_act:>12,.0f}  target ${tot_tgt:>12,.0f}  ({100*tot_act/tot_tgt:5.1f}%)")
-print("Expected: West ~76% OFF TRACK (the only region off track); Midwest/Northeast/South on track "
-      "(~101-106%); COMPANY ~96% OFF TRACK because of the West.")
+print("Expected: West ~73% OFF TRACK (the only region off track); Midwest/Northeast/South on track "
+      "(~103-106%); COMPANY ~95% OFF TRACK because of the West.")
 
 # COMMAND ----------
 

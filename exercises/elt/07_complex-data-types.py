@@ -9,17 +9,7 @@
 # MAGIC
 # MAGIC **Solutions**: If stuck, see `solutions/complex-data-types-solutions.py` for hints and answers.
 # MAGIC
-# MAGIC **Tables used** (created by `setup/complex-data-types-setup.py`):
-# MAGIC - `db_code.complex_data_types.customers_struct_ex1` - customers with struct address column (11 rows)
-# MAGIC - `db_code.complex_data_types.orders_tags_ex2` - orders with array of tags (9 rows)
-# MAGIC - `db_code.complex_data_types.events_json_ex3` - events with JSON string payloads (13 rows)
-# MAGIC - `db_code.complex_data_types.products_map_ex4` - products with MAP attributes column (8 rows)
-# MAGIC - `db_code.complex_data_types.order_items_ex5` - line items for grouping/aggregation (15 rows)
-# MAGIC - `db_code.complex_data_types.sensor_readings_ex6` - sensors with array of temperatures (7 rows)
-# MAGIC - `db_code.complex_data_types.api_responses_ex7` - deeply nested structs with arrays of structs (6 rows)
-# MAGIC - `db_code.complex_data_types.flat_order_lines_ex8` - flat order+item rows to restructure (9 rows)
-# MAGIC
-# MAGIC **Prerequisites**: Run `00_Setup.py` once, then run the setup cell below.
+# MAGIC **Prerequisites**: none. The next two cells run `00_Setup` and this topic's setup for you.
 
 # COMMAND ----------
 
@@ -32,9 +22,9 @@
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC Setup created per-exercise source tables in `db_code.complex_data_types`. Each exercise reads
-# MAGIC from its own source table and writes to its own output table. Exercises are independent - you
-# MAGIC can skip to any exercise.
+# MAGIC Setup creates one source table per exercise in `db_code.complex_data_types`. Each exercise reads its own source table and writes its own output table, so you can skip to any exercise. Write every result as a Delta table in overwrite mode to the **Target** table, so any cell can be re-run. If you change the output columns between runs, add `.option("overwriteSchema", "true")` to the write.
+# MAGIC
+# MAGIC TODO cells are Python: the variables `CATALOG` (`db_code`) and `SCHEMA` (`complex_data_types`) are already set, and you run SQL with `spark.sql(...)`.
 # MAGIC
 # MAGIC | Exercise | Source Table | Output Table | Difficulty |
 # MAGIC |----------|-------------|--------------|------------|
@@ -66,7 +56,6 @@
 # MAGIC 1. Read from `db_code.complex_data_types.customers_struct_ex1`
 # MAGIC 2. Extract `address.city` and `address.state` as top-level columns named `city` and `state`
 # MAGIC 3. Select final columns: `customer_id`, `name`, `tier`, `city`, `state`
-# MAGIC 4. Write as a Delta table to `db_code.complex_data_types.flat_customers_ex1` (overwrite mode)
 # MAGIC
 # MAGIC **Constraints**:
 # MAGIC - Keep ALL rows including those with NULL struct fields or entirely NULL address
@@ -114,7 +103,6 @@ print("Exercise 1 passed!")
 # MAGIC **Difficulty**: Easy | **Time**: ~5 min
 # MAGIC
 # MAGIC Explode an array column into individual rows, keeping the parent columns intact.
-# MAGIC Handle empty arrays and NULL arrays properly.
 # MAGIC
 # MAGIC **Source** (`orders_tags_ex2`): 9 orders, each with an `ARRAY<STRING>` column `tags`.
 # MAGIC ORD-007 has an empty array (0 tags). ORD-009 has NULL tags.
@@ -127,7 +115,6 @@ print("Exercise 1 passed!")
 # MAGIC 3. Use `explode_outer` so rows with NULL or empty arrays produce a row with NULL tag
 # MAGIC 4. Name the exploded column `tag` (singular)
 # MAGIC 5. Select final columns: `order_id`, `customer_id`, `amount`, `tag`
-# MAGIC 6. Write as a Delta table to `db_code.complex_data_types.exploded_tags_ex2` (overwrite mode)
 # MAGIC
 # MAGIC **Constraints**:
 # MAGIC - ORD-005 has 4 tags and should produce 4 rows
@@ -184,8 +171,8 @@ print("Exercise 2 passed!")
 # MAGIC nested fields as top-level columns.
 # MAGIC
 # MAGIC **Source** (`events_json_ex3`): 13 events. The `payload` column is a STRING containing JSON
-# MAGIC like `{"page": "/home", "duration_sec": 45, "referrer": "google"}`. 2 rows have NULL payload,
-# MAGIC 1 row has malformed JSON (non-JSON string).
+# MAGIC like `{"page": "/home", "duration_sec": 45, "referrer": "google"}`. EVT-108 and EVT-112 have
+# MAGIC NULL payload; EVT-113 has malformed JSON (`not-valid-json`).
 # MAGIC
 # MAGIC **Target**: Write to `db_code.complex_data_types.parsed_events_ex3`. Expected 13 rows.
 # MAGIC
@@ -195,11 +182,10 @@ print("Exercise 2 passed!")
 # MAGIC 3. Use `from_json` to parse the `payload` string column into a struct column named `parsed`
 # MAGIC 4. Extract `parsed.page` as `page` and `parsed.duration_sec` as `duration_sec`
 # MAGIC 5. Select final columns: `event_id`, `user_id`, `event_type`, `event_ts`, `page`, `duration_sec`
-# MAGIC 6. Write as a Delta table to `db_code.complex_data_types.parsed_events_ex3` (overwrite mode)
 # MAGIC
 # MAGIC **Constraints**:
 # MAGIC - Rows with NULL payload should produce NULL `page` and NULL `duration_sec`
-# MAGIC - Malformed JSON (EVT-113) should also produce NULL fields (from_json returns NULL for bad input)
+# MAGIC - Malformed JSON (EVT-113) should also produce NULL fields (`from_json` returns a struct with every field NULL for input it cannot parse)
 # MAGIC - Do not filter out any rows
 
 # COMMAND ----------
@@ -244,11 +230,10 @@ print("Exercise 3 passed!")
 
 # MAGIC %md
 # MAGIC ---
-# MAGIC ## Exercise 4: Map operations - map_keys, map_values, element_at
+# MAGIC ## Exercise 4: Map operations - map_keys, element_at, size
 # MAGIC **Difficulty**: Medium | **Time**: ~10 min
 # MAGIC
-# MAGIC Work with a MAP column: extract all keys, all values, look up specific entries
-# MAGIC by key, and count the number of attributes per product.
+# MAGIC Work with a MAP column: extract all keys, look up one entry by key, and count the attributes per product.
 # MAGIC
 # MAGIC **Source** (`products_map_ex4`): 8 products with a `MAP<STRING, STRING>` column `attributes`.
 # MAGIC P-007 has an empty map. Each product has different attribute keys (color, weight_kg, warranty_years, etc.).
@@ -259,9 +244,8 @@ print("Exercise 3 passed!")
 # MAGIC 1. Read from `db_code.complex_data_types.products_map_ex4`
 # MAGIC 2. Use `map_keys` to extract all attribute names as an array column named `attribute_names`
 # MAGIC 3. Use `element_at` to extract the `color` value as a STRING column named `color` (NULL if key not present)
-# MAGIC 4. Use `size(map_keys(...))` to count attributes as an INT column named `num_attributes`
+# MAGIC 4. Count the entries in `attributes` as an INT column named `num_attributes` (`size()` works on a map as well as an array)
 # MAGIC 5. Select final columns: `product_id`, `name`, `attribute_names`, `color`, `num_attributes`
-# MAGIC 6. Write as a Delta table to `db_code.complex_data_types.map_results_ex4` (overwrite mode)
 # MAGIC
 # MAGIC **Constraints**:
 # MAGIC - P-007 (empty map) should have 0 `num_attributes` and NULL `color`
@@ -276,8 +260,6 @@ print("Exercise 3 passed!")
 
 # COMMAND ----------
 
-from pyspark.sql import functions as F
-
 result_ex4 = spark.table(f"{CATALOG}.{SCHEMA}.map_results_ex4")
 
 # Row count: all 8 products
@@ -291,6 +273,7 @@ assert set(result_ex4.columns) == expected_cols, f"Expected columns {expected_co
 p001 = result_ex4.filter("product_id = 'P-001'").first()
 assert p001.color == "silver", f"P-001 color should be silver, got {p001.color}"
 assert p001.num_attributes == 3, f"P-001 should have 3 attributes, got {p001.num_attributes}"
+assert sorted(p001.attribute_names) == ["color", "warranty_years", "weight_kg"], f"P-001 attribute_names should hold the map's keys, got {sorted(p001.attribute_names)}"
 
 # P-007 (empty map) should have 0 attributes and NULL color
 p007 = result_ex4.filter("product_id = 'P-007'").first()
@@ -331,7 +314,6 @@ print("Exercise 4 passed!")
 # MAGIC 4. Use `collect_set` on `product_id` to create column `unique_products` (removes duplicates)
 # MAGIC 5. Add column `total_quantity` as the sum of `quantity` for each order
 # MAGIC 6. Select final columns: `order_id`, `all_products`, `unique_products`, `total_quantity`
-# MAGIC 7. Write as a Delta table to `db_code.complex_data_types.order_products_ex5` (overwrite mode)
 # MAGIC
 # MAGIC **Constraints**:
 # MAGIC - `all_products` must include duplicates (ORD-002 should list P-100 twice)
@@ -345,8 +327,6 @@ print("Exercise 4 passed!")
 # Your code here
 
 # COMMAND ----------
-
-from pyspark.sql import functions as F
 
 result_ex5 = spark.table(f"{CATALOG}.{SCHEMA}.order_products_ex5")
 
@@ -386,9 +366,9 @@ print("Exercise 5 passed!")
 # MAGIC Use higher-order functions `transform()` and `filter()` to modify and select array elements
 # MAGIC WITHOUT exploding the arrays.
 # MAGIC
-# MAGIC **Source** (`sensor_readings_ex6`): 7 sensors with `temperatures` (ARRAY<INT>) and `labels`
-# MAGIC (ARRAY<STRING>). S-006 has empty arrays. S-007 has NULL arrays.
-# MAGIC Temperatures are in Fahrenheit.
+# MAGIC **Source** (`sensor_readings_ex6`): 7 sensors with `temperatures` (ARRAY<INT>, in Fahrenheit).
+# MAGIC S-006 has an empty array and S-007 a NULL array. The table also has a `labels` (ARRAY<STRING>)
+# MAGIC column, which this exercise does not use.
 # MAGIC
 # MAGIC **Target**: Write to `db_code.complex_data_types.transformed_arrays_ex6`. Expected 7 rows.
 # MAGIC
@@ -400,12 +380,11 @@ print("Exercise 5 passed!")
 # MAGIC    Name the column `high_temps`
 # MAGIC 4. Add column `num_high_temps` as the `size()` of `high_temps`
 # MAGIC 5. Select final columns: `sensor_id`, `reading_date`, `temps_celsius`, `high_temps`, `num_high_temps`
-# MAGIC 6. Write as a Delta table to `db_code.complex_data_types.transformed_arrays_ex6` (overwrite mode)
 # MAGIC
 # MAGIC **Constraints**:
 # MAGIC - S-006 (empty arrays) should produce empty arrays for `temps_celsius` and `high_temps`, 0 for `num_high_temps`
-# MAGIC - S-007 (NULL arrays) should produce NULL for all derived columns (temps_celsius, high_temps, num_high_temps)
-# MAGIC - Do not use `explode` - the point is to use higher-order functions
+# MAGIC - S-007 (NULL arrays) should produce NULL for all derived columns: `temps_celsius`, `high_temps` and `num_high_temps` (on serverless and Databricks Runtime 17.0+; with ANSI off, `size(NULL)` is -1)
+# MAGIC - Do not use `explode`: `transform()` and `filter()` work on each array in place, with no explode and regroup.
 
 # COMMAND ----------
 
@@ -414,8 +393,6 @@ print("Exercise 5 passed!")
 # Your code here
 
 # COMMAND ----------
-
-from pyspark.sql import functions as F
 
 result_ex6 = spark.table(f"{CATALOG}.{SCHEMA}.transformed_arrays_ex6")
 
@@ -462,7 +439,7 @@ print("Exercise 6 passed!")
 # MAGIC **Difficulty**: Hard | **Time**: ~20 min
 # MAGIC
 # MAGIC Flatten a deeply nested struct column containing arrays of structs. The source has
-# MAGIC 3 nesting levels: response > body.user + body.orders[] > orders[].items[].
+# MAGIC 3 nesting levels: `body` (a struct) holds `user` and the `orders` array, and each order holds an `items` array.
 # MAGIC Flatten to one row per item, handling NULLs at every level.
 # MAGIC
 # MAGIC **Source** (`api_responses_ex7`): 6 API responses. Column `body` is:
@@ -478,19 +455,17 @@ print("Exercise 6 passed!")
 # MAGIC **Requirements**:
 # MAGIC 1. Read from `db_code.complex_data_types.api_responses_ex7`
 # MAGIC 2. Extract `body.user.id` as `user_id`, `body.user.name` as `user_name`
-# MAGIC 3. Explode `body.orders` to get one row per order (use `explode_outer` to keep rows where orders is NULL)
-# MAGIC 4. Extract the exploded order's `order_id` and `total` as `order_total`
+# MAGIC 3. Explode `body.orders` to get one row per order (`explode_outer` keeps R-004 as a row with a NULL order; step 7 removes it)
+# MAGIC 4. From the exploded order, keep `order_id` and extract `total` as `order_total`
 # MAGIC 5. Explode the order's `items` array to get one row per item (use `explode_outer` to keep rows where items is NULL)
 # MAGIC 6. Extract item `sku` and `qty` from the exploded item struct
-# MAGIC 7. Filter out rows where BOTH `sku` AND `qty` are NULL (artifact of NULL items in array, and NULL orders row)
+# MAGIC 7. Drop rows where both `sku` and `qty` are NULL (R-005's NULL item and R-004's row with no orders)
 # MAGIC 8. Select final columns: `response_id`, `user_id`, `user_name`, `order_id`, `order_total`, `sku`, `qty`
-# MAGIC 9. Write as a Delta table to `db_code.complex_data_types.flat_items_ex7` (overwrite mode)
 # MAGIC
 # MAGIC **Constraints**:
 # MAGIC - R-004 (NULL orders) should produce zero rows in the output (dropped after filtering)
 # MAGIC - R-005's NULL item should be dropped (both sku and qty are NULL)
 # MAGIC - R-006 (NULL user) should still produce rows with NULL user_id and user_name
-# MAGIC - The output should have exactly 11 data rows
 
 # COMMAND ----------
 
@@ -499,8 +474,6 @@ print("Exercise 6 passed!")
 # Your code here
 
 # COMMAND ----------
-
-from pyspark.sql import functions as F
 
 result_ex7 = spark.table(f"{CATALOG}.{SCHEMA}.flat_items_ex7")
 
@@ -552,23 +525,20 @@ print("Exercise 7 passed!")
 # MAGIC Build struct columns and array-of-structs columns from flat grouped data. This is the
 # MAGIC reverse of flattening - restructure denormalized rows into nested complex types.
 # MAGIC
-# MAGIC **Source** (`flat_order_lines_ex8`): 9 flat rows across 5 orders. Each row has order info,
-# MAGIC customer info, and one line item. Customer columns repeat across rows for the same order.
-# MAGIC ORD-003 has NULL customer_email.
+# MAGIC **Source** (`flat_order_lines_ex8`): 9 flat rows across 5 orders, one line item per row.
+# MAGIC Columns: `order_id`, `customer_name`, `customer_email`, `customer_tier`, `product_name`,
+# MAGIC `quantity`, `unit_price`. The three customer columns repeat on every row of the same order.
+# MAGIC ORD-003 has NULL `customer_email`.
 # MAGIC
 # MAGIC **Target**: Write to `db_code.complex_data_types.structured_orders_ex8`. Expected 5 rows (one per order).
 # MAGIC
 # MAGIC **Requirements**:
 # MAGIC 1. Read from `db_code.complex_data_types.flat_order_lines_ex8`
 # MAGIC 2. Group by `order_id`
-# MAGIC 3. Build a struct column `customer` containing `name`, `email`, `tier` from the first row of each group
-# MAGIC    (use `first()` since customer columns are the same across rows in the same order).
-# MAGIC    Name the struct column `customer`
-# MAGIC 4. Build an array column `items` using `collect_list` of structs, where each struct has
-# MAGIC    `product_name`, `quantity`, `unit_price`. Name the column `items`
+# MAGIC 3. Build a struct column `customer` with fields `name`, `email`, `tier` from `customer_name`, `customer_email`, `customer_tier`, taken with `first()` (customer columns are the same on every row of an order)
+# MAGIC 4. Build an array column `items` with `collect_list` of structs, each with `product_name`, `quantity`, `unit_price`
 # MAGIC 5. Add column `item_count` as the count of line items per order
 # MAGIC 6. Select final columns: `order_id`, `customer`, `items`, `item_count`
-# MAGIC 7. Write as a Delta table to `db_code.complex_data_types.structured_orders_ex8` (overwrite mode)
 # MAGIC
 # MAGIC **Constraints**:
 # MAGIC - ORD-001 has 3 line items, so `items` array should have 3 elements
@@ -583,8 +553,6 @@ print("Exercise 7 passed!")
 # Your code here
 
 # COMMAND ----------
-
-from pyspark.sql import functions as F
 
 result_ex8 = spark.table(f"{CATALOG}.{SCHEMA}.structured_orders_ex8")
 

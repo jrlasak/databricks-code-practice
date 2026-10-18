@@ -23,14 +23,13 @@ CHECKPOINT_BASE = f"/Volumes/{CATALOG}/{SCHEMA}/checkpoints"
 # MAGIC    The "magic" is that one side is a streaming DataFrame and the other is a batch DataFrame.
 # MAGIC 2. Read the stream with `spark.readStream.table(...)` and the static side with `spark.read.table(...)`.
 # MAGIC    Each micro-batch re-reads the static side at its current Delta version (snapshot semantics).
-# MAGIC 3. Use `.writeStream.toTable(...).trigger(availableNow=True).awaitTermination()` so the stream
-# MAGIC    finishes deterministically on Free Edition.
+# MAGIC 3. Use `.writeStream.trigger(availableNow=True).toTable(...)` and call `.awaitTermination()` on the query it returns, so the stream finishes before the next cell runs.
 # MAGIC
 # MAGIC **Common mistakes**:
-# MAGIC - Reading the static side with `spark.readStream` - that turns it into a stream-stream join (different semantics, requires watermarks).
+# MAGIC - Reading the static side with `spark.readStream` - that turns it into a stream-stream join: both sides are kept in state, and without watermarks and a time bound that state grows forever.
 # MAGIC - Forgetting `.awaitTermination()` - the streaming write starts asynchronously, and the next cell runs before the data lands.
 # MAGIC - Using `trigger(once=True)` - deprecated; use `trigger(availableNow=True)`.
-# MAGIC - Putting the checkpoint outside a Volume - Free Edition cannot write checkpoints to DBFS root paths reliably.
+# MAGIC - Putting the checkpoint outside a Volume - serverless limits DBFS access; Databricks points you to Unity Catalog volumes instead.
 
 # COMMAND ----------
 
@@ -55,13 +54,11 @@ customers = spark.read.table(f"{CATALOG}.{SCHEMA}.customers_static")
 # MAGIC **Hints**:
 # MAGIC 1. After the join, chain a `.select(...)` to keep only the columns you want.
 # MAGIC 2. List the event columns explicitly: `event_id`, `event_type`, `customer_id`, `amount`, `event_ts`.
-# MAGIC 3. From the static side, project only `name`, `region`, `tier`. Omit `is_active`.
+# MAGIC 3. From the static side, project only `name`, `region`, `tier`. Omit `is_active`. (`drop("is_active")` gives the same columns; an explicit select also keeps future dimension columns out of the target.)
 # MAGIC
 # MAGIC **Common mistakes**:
 # MAGIC - Selecting from the static side BEFORE the join - this drops the `customer_id` you need to join on
 # MAGIC   unless you keep it explicitly.
-# MAGIC - Using `customers.drop("is_active")` instead of an explicit select - works, but explicit projection is clearer
-# MAGIC   and protects against future dimension columns being added.
 # MAGIC - Forgetting that `select` returns a new DataFrame - chain it directly into `.writeStream`.
 
 # COMMAND ----------
@@ -97,13 +94,12 @@ customers = spark.read.table(f"{CATALOG}.{SCHEMA}.customers_static")
 # MAGIC ## Exercise 3: Left Outer Join (Stream on the Left)
 # MAGIC
 # MAGIC **Hints**:
-# MAGIC 1. Pass `"left_outer"` (or `"left"`) as the third argument to `.join(...)`.
-# MAGIC 2. The stream goes on the LEFT (the side you don't want to lose rows from).
-# MAGIC 3. Unmatched events get NULL for every column projected from the static side.
+# MAGIC 1. You must keep every row of the stream, and the stream is the left DataFrame. Which join type keeps every left row?
+# MAGIC 2. A left outer join keeps every row of the left DataFrame and fills the right side's columns with NULL where nothing matches.
+# MAGIC 3. Pass `"left_outer"` (or `"left"`) as the third argument to `.join(...)`; unmatched events get NULL in every static column.
 # MAGIC
 # MAGIC **Common mistakes**:
-# MAGIC - Putting the stream on the right (`customers.join(events_stream, ...)`) - flips semantics and
-# MAGIC   sometimes hits the unsupported right-outer error.
+# MAGIC - Putting the stream on the right (`customers.join(events_stream, "customer_id", "left_outer")`) - a left outer join with the stream on the right is unsupported, and the query fails when it starts.
 # MAGIC - Using `"inner"` and being surprised that 8 rows disappear.
 # MAGIC - Joining on `customer_id` using `events.customer_id == customers.customer_id` and ending up with
 # MAGIC   two `customer_id` columns - prefer the single-column shorthand `.join(customers, "customer_id", ...)`.
@@ -129,16 +125,12 @@ customers = spark.read.table(f"{CATALOG}.{SCHEMA}.customers_static")
 # MAGIC ## Exercise 4: Filter the Static Side Before Joining
 # MAGIC
 # MAGIC **Hints**:
-# MAGIC 1. Apply `.filter("is_active = TRUE")` on the static DataFrame BEFORE passing it to `.join(...)`.
-# MAGIC 2. Spark's Catalyst optimizer pushes the predicate down so the join probes a smaller hash table
-# MAGIC    on every micro-batch. The DataFrame definition is what tells Spark "only active rows matter."
+# MAGIC 1. Build the filtered dimension as its own DataFrame first (`spark.read.table(...).filter(...)`), then join the stream to that DataFrame instead of `customers_static`.
+# MAGIC 2. With an inner join Catalyst would move a post-join `is_active` filter below the join on its own, so the plan is the same; filtering the dimension first is what keeps a left outer join correct.
 # MAGIC 3. Use inner join - inactive matches should disappear from the output entirely.
 # MAGIC
 # MAGIC **Common mistakes**:
-# MAGIC - Filtering AFTER the join (`joined.filter("is_active = TRUE")`) - the static side is still read in
-# MAGIC   full on every batch. The output looks the same but the work is wasted.
-# MAGIC - Using left outer here - the spec says drop inactive matches, not keep them with NULL.
-# MAGIC - Forgetting that `is_active` is BOOLEAN, not STRING - use `= TRUE`, not `= 'TRUE'`.
+# MAGIC - Using left outer here - Exercise 4 drops inactive customers' events; left outer would keep them with NULL dimension columns.
 
 # COMMAND ----------
 
@@ -161,21 +153,16 @@ active_customers = spark.read.table(f"{CATALOG}.{SCHEMA}.customers_static").filt
 # MAGIC ## Exercise 5: Broadcast the Static Dimension
 # MAGIC
 # MAGIC **Hints**:
-# MAGIC 1. On serverless you can't set `spark.conf` - find a DataFrame method that tells Spark which
-# MAGIC    side to broadcast.
+# MAGIC 1. Serverless does not let you set the broadcast threshold - find a DataFrame method that tells Spark which side to broadcast.
 # MAGIC 2. The method is `.hint(...)` on a DataFrame. Think about which side of the join is small
 # MAGIC    enough to ship to every executor.
-# MAGIC 3. `customers_df.hint("broadcast")` on the static DataFrame, then join as usual. To verify
-# MAGIC    the hint took effect, capture the executed plan as a string and save it to a table;
-# MAGIC    look for "BroadcastHashJoin".
+# MAGIC 3. `customers_df.hint("broadcast")` on the static DataFrame, then join as usual. Capture the physical plan as a string, save it to a table and look for "BroadcastHashJoin". A table this small would broadcast without the hint too; the hint guarantees it when Spark's size estimate is above the threshold.
 # MAGIC
 # MAGIC **Common mistakes**:
-# MAGIC - Hinting the stream side - Spark refuses to broadcast a streaming DataFrame.
-# MAGIC - Using `spark.conf.set("spark.sql.autoBroadcastJoinThreshold", ...)` - blocked on serverless.
+# MAGIC - Hinting the stream side - that asks Spark to broadcast each micro-batch of events instead of the small dimension.
+# MAGIC - Using `spark.conf.set("spark.sql.autoBroadcastJoinThreshold", ...)` - serverless does not support setting this property.
 # MAGIC - Calling `.explain()` and letting it print to the notebook - to capture it as a string, redirect
 # MAGIC   stdout with `io.StringIO` + `contextlib.redirect_stdout` (see solution below).
-# MAGIC - Reading the explain plan of the WRITESTREAM - the plan we want is on the joined batch DataFrame
-# MAGIC   that Catalyst materializes per micro-batch.
 
 # COMMAND ----------
 
@@ -186,9 +173,8 @@ events_stream = spark.readStream.table(f"{CATALOG}.{SCHEMA}.ex5_source")
 customers_broadcast = spark.read.table(f"{CATALOG}.{SCHEMA}.customers_static").hint("broadcast")
 
 # Capture the explain plan for the EQUIVALENT batch join (same join, same hint, but events read
-# as batch instead of stream). The physical operator chosen by Catalyst is the same and will
-# include BroadcastHashJoin when the hint takes effect. Capturing .explain() output on a
-# streaming DataFrame directly is unreliable - streaming queries materialize per-batch plans.
+# as batch instead of stream). It uses the same join operator as each micro-batch, and you can
+# capture its plan before the stream runs.
 events_batch = spark.read.table(f"{CATALOG}.{SCHEMA}.ex5_source")
 batch_joined_for_plan = events_batch.join(customers_broadcast, "customer_id", "inner")
 
@@ -224,16 +210,15 @@ spark.createDataFrame([(plan_str,)], "plan STRING").write.mode("overwrite").save
 # MAGIC 3. Order matters: run 1 (empty result) -> INSERT C-999 -> run 2 (2 enriched rows).
 # MAGIC
 # MAGIC **Common mistakes**:
-# MAGIC - Sharing the same checkpoint for both runs - the second run resumes the first's state and writes nothing new.
+# MAGIC - Sharing the same checkpoint for both runs - the checkpoint records the table id of `ex6_source_run1`, so run 2 fails with `DIFFERENT_DELTA_TABLE_READ_BY_STREAMING_SOURCE`.
 # MAGIC - INSERTing C-999 BEFORE run 1 - now run 1 emits rows too and the assertion fails.
-# MAGIC - Caching `customers_static` (`.cache()`) - the cached snapshot doesn't see the INSERT.
-# MAGIC - Forgetting `.awaitTermination()` after run 1 - the INSERT then executes before run 1's batch
-# MAGIC   commits, and run 1's row count may flake.
+# MAGIC - Calling `.cache()` on `customers_static` - serverless rejects the DataFrame cache APIs with an exception, and the dimension has to be re-read on every run anyway.
+# MAGIC - Forgetting `.awaitTermination()` after run 1 - the INSERT can land before run 1 reads the dimension, so run 1 writes 3 rows instead of 0.
 
 # COMMAND ----------
 
 # EXERCISE_KEY: stream_static_ex6
-# --- Run 1: C-999 does NOT exist yet -> inner join emits 0 rows ---
+# Run 1: C-999 does NOT exist yet -> inner join emits 0 rows
 events_stream_1 = spark.readStream.table(f"{CATALOG}.{SCHEMA}.ex6_source_run1")
 customers_1 = spark.read.table(f"{CATALOG}.{SCHEMA}.customers_static")
 
@@ -247,13 +232,13 @@ customers_1 = spark.read.table(f"{CATALOG}.{SCHEMA}.customers_static")
     .awaitTermination()
 )
 
-# --- Refresh the static dimension: insert C-999 ---
+# Refresh the static dimension: insert C-999
 spark.sql(f"""
     INSERT INTO {CATALOG}.{SCHEMA}.customers_static VALUES
         ('C-999', 'New Customer', 'us-east', 'gold', TRUE)
 """)
 
-# --- Run 2: C-999 now exists -> inner join emits 2 rows ---
+# Run 2: C-999 now exists -> inner join emits 2 rows
 events_stream_2 = spark.readStream.table(f"{CATALOG}.{SCHEMA}.ex6_source_run2")
 customers_2 = spark.read.table(f"{CATALOG}.{SCHEMA}.customers_static")
 
@@ -282,10 +267,8 @@ customers_2 = spark.read.table(f"{CATALOG}.{SCHEMA}.customers_static")
 # MAGIC **Common mistakes**:
 # MAGIC - Catching the exception when defining the join - the join expression builds fine; the failure is at start.
 # MAGIC - Saving the exception's `type` instead of its `str(...)` - assertion looks for the message text.
-# MAGIC - Swapping sides to put the stream on the right (`customers.join(events_stream, "customer_id", "left_outer")`)
-# MAGIC   - this is equivalent to a right outer with the stream on the left and raises the same error.
-# MAGIC   Keep the stream on the LEFT.
-# MAGIC - Trying full outer instead - same unsupported error.
+# MAGIC - Swapping sides to put the stream on the right (`customers.join(events_stream, "customer_id", "left_outer")`) - a left outer join with the stream on the right is unsupported too and fails with its own `AnalysisException`. Keep the stream on the LEFT.
+# MAGIC - Trying full outer instead - also unsupported, and the exercise asks for the right outer attempt.
 
 # COMMAND ----------
 
@@ -293,7 +276,7 @@ customers_2 = spark.read.table(f"{CATALOG}.{SCHEMA}.customers_static")
 events_stream = spark.readStream.table(f"{CATALOG}.{SCHEMA}.ex7_source")
 customers = spark.read.table(f"{CATALOG}.{SCHEMA}.customers_static")
 
-# --- Attempt right outer; catch the analysis exception ---
+# Attempt right outer; catch the analysis exception
 error_msg = None
 try:
     (events_stream
@@ -314,7 +297,7 @@ spark.createDataFrame([(error_msg,)], "error_msg STRING").write.mode("overwrite"
     f"{CATALOG}.{SCHEMA}.ex7_error_log"
 )
 
-# --- Correct alternative: left outer with stream on the left ---
+# Correct alternative: left outer with stream on the left
 (events_stream
     .join(customers, "customer_id", "left_outer")
     .writeStream

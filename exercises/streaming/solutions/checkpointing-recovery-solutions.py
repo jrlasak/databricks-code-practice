@@ -4,8 +4,7 @@
 # MAGIC # Checkpointing & Recovery - Solutions
 # MAGIC Reference solutions for `06_checkpointing-recovery.py`.
 # MAGIC
-# MAGIC Each solution cell is runnable on a fresh setup. Run `%run ./setup/checkpointing-recovery-setup`
-# MAGIC first to get the per-exercise sources, targets, and checkpoint volume.
+# MAGIC The next two cells run `00_Setup` and the topic setup, so every solution cell below starts from a fresh setup.
 # MAGIC
 # MAGIC Every solution uses Free-Edition-compatible patterns:
 # MAGIC - `trigger(availableNow=True)` (not `trigger(once=True)`)
@@ -27,16 +26,15 @@
 # MAGIC **Hints**:
 # MAGIC 1. The checkpoint is what makes the stream remember what it has already processed.
 # MAGIC    To verify it works, you just need to call the same write twice and inspect the target.
-# MAGIC 2. Build a small helper `run_stream()` that does `readStream.table(...).writeStream...start().awaitTermination()`.
+# MAGIC 2. Build a small helper `run_stream()` that does `spark.readStream.table(...).writeStream...toTable(...).awaitTermination()`.
 # MAGIC    Call it twice in the same cell.
 # MAGIC 3. Both `.option("checkpointLocation", ...)` calls must pass the SAME string.
 # MAGIC
 # MAGIC **Common mistakes**:
-# MAGIC - Forgetting `.awaitTermination()` - the cell finishes before the stream commits, and
-# MAGIC   the second `.start()` sees a checkpoint that isn't finalized.
+# MAGIC - Forgetting `.awaitTermination()`: the second run starts while the first is still active on the same checkpoint, Spark stops the first run, and the validation cell can read the target before 30 rows have committed.
 # MAGIC - Using `outputMode("complete")` for a non-aggregating stream - that mode is only valid
 # MAGIC   for aggregations.
-# MAGIC - Truncating the target between runs to "start fresh" - that defeats the test.
+# MAGIC - Truncating the target between runs to "start fresh": the second run adds 0 rows, so the target ends empty instead of at 30.
 
 # COMMAND ----------
 
@@ -75,30 +73,19 @@ print(f"After run 2: {spark.table(f'{CATALOG}.{SCHEMA}.ex1_target').count()} row
 # MAGIC **Hints**:
 # MAGIC 1. You need to run the stream BEFORE listing the directory, otherwise the path doesn't exist.
 # MAGIC 2. `dbutils.fs.ls(path)` returns a list of `FileInfo` objects with a `.name` attribute.
-# MAGIC    Print them all to see the four standard subdirectories.
-# MAGIC 3. The four names are short, lowercase, and end with a `/` in the listing. Strip the
-# MAGIC    trailing slash if present.
+# MAGIC    Print them all and match each name to a role.
+# MAGIC 3. Names in the listing are lowercase, and directories end with `/`. Strip the slash.
 # MAGIC
-# MAGIC **What `dbutils.fs.ls` returns after the stream commits**:
-# MAGIC ```
-# MAGIC FileInfo(path='.../ex2/commits/', name='commits/', ...)
-# MAGIC FileInfo(path='.../ex2/metadata',  name='metadata',  ...)
-# MAGIC FileInfo(path='.../ex2/offsets/',  name='offsets/',  ...)
-# MAGIC FileInfo(path='.../ex2/sources/',  name='sources/',  ...)
-# MAGIC FileInfo(path='.../ex2/state/',    name='state/',    ...)
-# MAGIC ```
-# MAGIC The four subdirectories the exercise asks about are `commits`, `offsets`, `sources`, `state`.
-# MAGIC (`metadata` is a file, not a directory, holding the query id and a few stable settings.)
+# MAGIC **What `dbutils.fs.ls` returns after the stream commits**: `commits/`, `offsets/` and the `metadata` file, plus `sources/` when the source keeps bookkeeping there. `state/` appears only for stateful queries, such as the windowed count in Exercise 7. The three names to record are `offsets` (per-batch source offsets), `commits` (per-batch commit markers) and `metadata` (the file holding the query ID).
 # MAGIC
 # MAGIC **Common mistakes**:
-# MAGIC - Listing the directory BEFORE running the stream → empty result.
-# MAGIC - Filling in capital-cased names or pluralized incorrectly. The names are case-sensitive
-# MAGIC   and exactly `commits`, `offsets`, `sources`, `state`.
+# MAGIC - Listing the directory BEFORE running the stream: `ex2/` does not exist yet, so `dbutils.fs.ls` raises a file-not-found error.
+# MAGIC - Capitalizing a name or changing its plural (`Offsets`, `commit`): the names are case-sensitive and exactly `offsets`, `commits`, `metadata`.
 
 # COMMAND ----------
 
 # EXERCISE_KEY: checkpoint_ex2
-# Run the stream, then list the checkpoint dir and record the four standard subdirs.
+# Run the stream, then list the checkpoint dir and record the three names by role.
 
 CKPT_EX2 = f"{CHECKPOINT_BASE}/ex2/"
 
@@ -115,23 +102,21 @@ CKPT_EX2 = f"{CHECKPOINT_BASE}/ex2/"
         .awaitTermination()
 )
 
-# 2. List and print what we see
+# 2. List and print what the checkpoint holds
 for f in dbutils.fs.ls(CKPT_EX2):
     print(f.name)
 
-# 3. Record the four canonical subdirectory names
-offsets_dir = "offsets"   # per-batch source offsets
-commits_dir = "commits"   # per-batch commit markers
-sources_dir = "sources"   # source-specific bookkeeping (file lists, etc.)
-state_dir = "state"       # state store snapshots (per-window counts, dedup hashes, etc.)
+# 3. Record the names that hold each role, as read from the listing
+planned_batches_dir = "offsets"   # offset log: written BEFORE each batch runs
+finished_batches_dir = "commits"  # commit log: written AFTER each batch finishes
+query_id_file = "metadata"        # top-level file holding the query's unique ID
 
 spark.sql(f"""
     CREATE OR REPLACE TABLE {CATALOG}.{SCHEMA}.ex2_findings AS
     SELECT
-        '{offsets_dir}' AS offsets_dir,
-        '{commits_dir}' AS commits_dir,
-        '{sources_dir}' AS sources_dir,
-        '{state_dir}'   AS state_dir
+        '{planned_batches_dir}'  AS planned_batches_dir,
+        '{finished_batches_dir}' AS finished_batches_dir,
+        '{query_id_file}'        AS query_id_file
 """)
 
 # COMMAND ----------
@@ -139,15 +124,12 @@ spark.sql(f"""
 # MAGIC ## Exercise 3: Deleted Checkpoint Causes Full Reprocessing
 # MAGIC
 # MAGIC **Hints**:
-# MAGIC 1. Write a tiny helper that starts the stream with a parameterized checkpoint path.
-# MAGIC    Call it once, then `dbutils.fs.rm(path, recurse=True)`, then call it again.
-# MAGIC 2. Delete the checkpoint with `dbutils.fs.rm(path, recurse=True)` - the `recurse=True`
-# MAGIC    flag is required because the path is a directory.
+# MAGIC 1. The stream's memory is the checkpoint directory. Run once, remove that memory, run again.
+# MAGIC 2. Delete it with `dbutils.fs.rm(path, recurse=True)`: `recurse=True` is required because the path is a directory.
 # MAGIC 3. Do NOT delete or truncate the target table. The whole point is to see the duplicates.
 # MAGIC
 # MAGIC **Common mistakes**:
-# MAGIC - Forgetting `recurse=True` → the call returns False and the directory is still there,
-# MAGIC   so the second run resumes normally and you only see 30 rows.
+# MAGIC - Forgetting `recurse=True`: the checkpoint is a non-empty directory, so `dbutils.fs.rm` raises an error and the cell stops before the second run.
 # MAGIC - Truncating `ex3_target` between runs - defeats the demonstration.
 # MAGIC - Calling `dbutils.fs.rm` BEFORE the first stream commits (no `.awaitTermination()` in
 # MAGIC   between) → the delete races the first run.
@@ -236,13 +218,11 @@ print(f"After ckpt B: {spark.table(f'{CATALOG}.{SCHEMA}.ex4_target').count()} ro
 # MAGIC **Hints**:
 # MAGIC 1. The pattern: run stream, INSERT into source, run stream again. The same checkpoint
 # MAGIC    path on both runs is what makes the second run incremental.
-# MAGIC 2. The provided SQL inserts every base-table row that's not already in the source.
-# MAGIC    That's 10 new rows because `ex5_source` started with the first 20.
+# MAGIC 2. The provided SQL inserts the base-table rows up to `EV-030` that are not already in the source: 10 rows (`EV-021` ... `EV-030`).
 # MAGIC 3. Spark's Delta streaming source automatically picks up new files on the next batch.
 # MAGIC
 # MAGIC **Common mistakes**:
-# MAGIC - Forgetting to await termination between the first run and the insert → the insert can
-# MAGIC   land before the first batch commits, and the second run treats them all as new.
+# MAGIC - Forgetting `.awaitTermination()` after the first run: the second start on the same checkpoint stops the first run, and the counts you print no longer show 20, then 30.
 # MAGIC - Inserting more rows than expected (duplicating the existing 20) - breaks the assertion
 # MAGIC   that every event_id appears once.
 # MAGIC - Truncating the target between runs.
@@ -293,75 +273,66 @@ print(f"After run 2: {spark.table(f'{CATALOG}.{SCHEMA}.ex5_target').count()} row
 # MAGIC
 # MAGIC **Hints**:
 # MAGIC 1. With `availableNow=True`, you can start two queries back-to-back without waiting.
-# MAGIC    Capture the `StreamingQuery` objects returned by `.start()` and call
-# MAGIC    `.awaitTermination()` on each one (or use `.processAllAvailable()` then `.stop()`).
-# MAGIC 2. Wrap the SECOND `.start()` in the shared-checkpoint case in `try / except Exception`.
-# MAGIC    The error typically surfaces as `ConcurrentModificationException` or a stream
-# MAGIC    failure during `.awaitTermination()`.
-# MAGIC 3. The distinct-checkpoint case is straightforward: same pattern, different checkpoint
-# MAGIC    path strings. Both will commit 30 rows each.
+# MAGIC    Capture the `StreamingQuery` objects returned by `.toTable(...)` and call
+# MAGIC    `.awaitTermination()` on each one.
+# MAGIC 2. Wrap the shared-checkpoint queries in `try / except Exception` and record whether anything raised. On one cluster nothing usually does: Spark stops the first run when the second starts on the same checkpoint (`spark.sql.streaming.stopActiveRunOnRestart`).
+# MAGIC 3. The distinct-checkpoint case: each query reads its own source (`ex6_source_a`, `ex6_source_b`) with its own checkpoint path, and both append into `ex6_target`. Count `ex6_target` after both finish: 15 + 15 = 30 rows.
 # MAGIC
 # MAGIC **Common mistakes**:
-# MAGIC - Calling `.awaitTermination()` on q1 BEFORE starting q2 in the shared case - they're no
-# MAGIC   longer concurrent and the collision may not surface.
 # MAGIC - Not catching the exception, so the cell aborts before the good case runs.
-# MAGIC - Truncating the target between cases - assertion expects the cumulative 60 rows.
+# MAGIC - Pointing both good-case queries at the same source: two checkpoints on one source each replay all of it, so every event_id lands in `ex6_target` twice (the Exercise 4 bug).
+# MAGIC - Truncating `ex6_target` between runs or before counting: `distinct_checkpoints_target_count` must be the final row count the validation cell reads.
 
 # COMMAND ----------
 
 # EXERCISE_KEY: checkpoint_ex6
-# Demonstrate that sharing a checkpoint between concurrent queries errors, while
-# distinct checkpoints succeed.
-
-from pyspark.sql.utils import StreamingQueryException
+# Start two queries on one shared checkpoint (Spark stops the first), then two on distinct
+# checkpoints, each reading its own 15-row source into ex6_target.
 
 CKPT_EX6_SHARED = f"{CHECKPOINT_BASE}/ex6_shared/"
 CKPT_EX6_A      = f"{CHECKPOINT_BASE}/ex6_a/"
 CKPT_EX6_B      = f"{CHECKPOINT_BASE}/ex6_b/"
 
-def start_query(ckpt):
+def start_query(source_table, target_table, ckpt):
     return (
         spark.readStream
-            .table(f"{CATALOG}.{SCHEMA}.ex6_source")
+            .table(f"{CATALOG}.{SCHEMA}.{source_table}")
             .writeStream
             .format("delta")
             .outputMode("append")
             .option("checkpointLocation", ckpt)
             .trigger(availableNow=True)
-            .toTable(f"{CATALOG}.{SCHEMA}.ex6_target")
+            .toTable(f"{CATALOG}.{SCHEMA}.{target_table}")
     )
 
-# --- Bad case: two concurrent queries sharing a checkpoint ---
+# Bad case: two queries sharing one checkpoint.
 # `start_query` uses `.toTable()` which already starts the query and returns a
 # StreamingQuery, so do NOT call `.start()` again on it.
 shared_errored = False
-q1 = start_query(CKPT_EX6_SHARED)
+q1 = start_query("ex6_source_a", "ex6_shared_target", CKPT_EX6_SHARED)
 try:
-    q2 = start_query(CKPT_EX6_SHARED)
-    # Awaiting both is what surfaces the collision in availableNow mode.
+    # On one cluster, starting q2 on the same checkpoint stops q1 instead of raising.
+    q2 = start_query("ex6_source_a", "ex6_shared_target", CKPT_EX6_SHARED)
     q2.awaitTermination()
 except Exception as e:
     shared_errored = True
-    print(f"Shared checkpoint raised (expected): {type(e).__name__}: {str(e)[:200]}")
+    print(f"Shared checkpoint raised: {type(e).__name__}: {str(e)[:200]}")
 
 try:
     q1.awaitTermination()
 except Exception as e:
-    # If one of the two crashed because of the shared lock, that also counts as the
-    # collision we want to observe.
+    # q1 was stopped by q2's start, which ends it without an exception; anything raised here still counts.
     shared_errored = True
-    print(f"q1 also raised (expected): {type(e).__name__}: {str(e)[:200]}")
+    print(f"q1 raised: {type(e).__name__}: {str(e)[:200]}")
 
-# --- Good case: distinct checkpoints, both succeed ---
-qa = start_query(CKPT_EX6_A)
-qb = start_query(CKPT_EX6_B)
+# Good case: distinct checkpoints and disjoint sources, both succeed
+qa = start_query("ex6_source_a", "ex6_target", CKPT_EX6_A)
+qb = start_query("ex6_source_b", "ex6_target", CKPT_EX6_B)
 qa.awaitTermination()
 qb.awaitTermination()
 
-# The distinct-checkpoint runs each append 30 rows. Compute how many came from those.
-# We can't easily subtract partial bad-case writes, so we use a separate observation table.
-# Re-derive the count from the source counts: 2 queries * 30 rows = 60.
-distinct_checkpoints_target_count = 60
+# Measure the rows the two distinct-checkpoint runs left in ex6_target
+distinct_checkpoints_target_count = spark.table(f"{CATALOG}.{SCHEMA}.ex6_target").count()
 
 spark.sql(f"""
     CREATE OR REPLACE TABLE {CATALOG}.{SCHEMA}.ex6_observation AS
@@ -372,7 +343,6 @@ spark.sql(f"""
 
 print(f"shared_checkpoint_errored = {shared_errored}")
 print(f"distinct_checkpoints_target_count = {distinct_checkpoints_target_count}")
-print(f"final ex6_target row count = {spark.table(f'{CATALOG}.{SCHEMA}.ex6_target').count()}")
 
 # COMMAND ----------
 # MAGIC %md
@@ -381,17 +351,15 @@ print(f"final ex6_target row count = {spark.table(f'{CATALOG}.{SCHEMA}.ex6_targe
 # MAGIC **Hints**:
 # MAGIC 1. The streaming aggregation pattern: `.withWatermark("event_ts", "0 seconds")` →
 # MAGIC    `.groupBy(window("event_ts", "5 minutes"))` → `.count()`. Write with
-# MAGIC    `outputMode("complete")` because the result has aggregates.
+# MAGIC    `outputMode("complete")` so every run rewrites all windows, including the one that is still open.
 # MAGIC 2. Flatten the `window` struct in the projection so the output columns match the target
 # MAGIC    schema: `select(col("window.start").alias("window_start"), col("window.end").alias("window_end"), col("count").alias("event_count"))`.
 # MAGIC 3. The state store lives inside the checkpoint directory. Same checkpoint path = state is
 # MAGIC    restored. You don't need to do anything special - just keep the path consistent.
+# MAGIC 4. The watermark does not change this result: `complete` mode keeps every window in state. A watermark only cleans state in `append` and `update` mode.
 # MAGIC
 # MAGIC **Common mistakes**:
-# MAGIC - Forgetting `.withWatermark` - state never finalizes and the second run may not
-# MAGIC   incorporate the appended rows the way you expect on `complete` output mode.
-# MAGIC - Writing in `outputMode("append")` for an aggregation - only valid if the watermark has
-# MAGIC   crossed every window, and even then it emits each window only once.
+# MAGIC - Writing in `outputMode("append")`: append emits a window only after the watermark passes its end. No row after 10:30 ever moves the watermark past the 10:25-10:30 window, so the window this exercise grows is never written.
 # MAGIC - Flattening the `window` column wrong (e.g., naming columns `start` / `end`) - Delta
 # MAGIC   target has `window_start` / `window_end`.
 

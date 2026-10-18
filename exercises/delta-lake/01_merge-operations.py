@@ -2,7 +2,7 @@
 # COMMAND ----------
 # MAGIC %md
 # MAGIC # MERGE Operations
-# MAGIC **Topic**: Delta Lake | **Exercises**: 9 | **Total Time**: ~90 min
+# MAGIC **Topic**: Delta Lake | **Exercises**: 9 | **Total Time**: ~95 min
 # MAGIC
 # MAGIC Practice Delta Lake MERGE INTO across multiple patterns: basic upserts, insert-only,
 # MAGIC update-only, dedup, conditional updates, deletes, multi-condition, SCD Type 2,
@@ -17,7 +17,7 @@
 # MAGIC **Schema** (`orders`):
 # MAGIC | Column | Type | Notes |
 # MAGIC |--------|------|-------|
-# MAGIC | order_id | STRING | Primary key |
+# MAGIC | order_id | STRING | Order key (repeats in the base table: ORD-042 and ORD-067 appear twice) |
 # MAGIC | customer_id | STRING | FK to customers (some nulls) |
 # MAGIC | product_id | STRING | FK to products |
 # MAGIC | amount | DOUBLE | Order total in USD (includes $0) |
@@ -35,16 +35,20 @@
 
 # COMMAND ----------
 # MAGIC %md
-# MAGIC **Setup complete.** Exercise tables are in `{CATALOG}.{SCHEMA}` (merge_operations schema).
-# MAGIC Base tables (orders, customers) are in `{CATALOG}.{BASE_SCHEMA}` (delta_lake schema).
-# MAGIC Each exercise has its own `_target` + `_source` pair. You MERGE source into target.
-# MAGIC - Ex 1-3 (easy): `merge_ex{1-3}_target` + `_source` - basic upsert, insert-only, update-only
-# MAGIC - Ex 4 (medium): `merge_ex4_target` + `_source` - source has **duplicate** order_ids (must dedup)
-# MAGIC - Ex 5 (medium): `merge_ex5_target` + `_source` - source has mixed timestamps (newer + older)
-# MAGIC - Ex 6 (medium): `merge_ex6_target` + `_source` - source has a cancelled order (for DELETE)
-# MAGIC - Ex 7 (hard): `merge_ex7_target` + `_source` - all four scenarios: delete + update + skip + insert
-# MAGIC - Ex 8 (hard): `merge_ex8_target` + `_source` - SCD Type 2 **customer dimension** (different schema)
-# MAGIC - Ex 9 (hard): `merge_ex9_target` + `_source` - source has extra `discount_pct` column
+# MAGIC **Setup complete.** Every exercise table is in `db_code.merge_operations`. Write your output tables there too, by full name (for example `db_code.merge_operations.merge_ex1_target`). In Python cells, the variables `CATALOG` and `SCHEMA` hold `db_code` and `merge_operations`. The base tables (`orders`, `customers`) are in `db_code.delta_lake`.
+# MAGIC
+# MAGIC Keep the `# EXERCISE_KEY: ...` line as the first line of each answer cell.
+# MAGIC
+# MAGIC Each exercise has its own pair of tables. Every orders target holds ORD-001 to ORD-005 copied from `db_code.delta_lake.orders`.
+# MAGIC - Exercise 1: `merge_ex1_target` (5 orders), `merge_ex1_source` (2 changed orders, 2 new)
+# MAGIC - Exercise 2: `merge_ex2_target` (5 orders), `merge_ex2_source` (2 changed orders, 2 new)
+# MAGIC - Exercise 3: `merge_ex3_target` (5 orders), `merge_ex3_source` (3 changed orders)
+# MAGIC - Exercise 4: `merge_ex4_target` (5 orders), `merge_ex4_source` (3 rows, ORD-001 twice)
+# MAGIC - Exercise 5: `merge_ex5_target` (5 orders), `merge_ex5_source` (1 newer order, 1 older order, 1 new)
+# MAGIC - Exercise 6: `merge_ex6_target` (5 orders), `merge_ex6_source` (1 cancelled order, 1 changed order, 1 new)
+# MAGIC - Exercise 7: `merge_ex7_target` (5 orders), `merge_ex7_source` (1 cancelled, 1 newer, 1 older, 2 new)
+# MAGIC - Exercise 8: `merge_ex8_target` (3 customers with SCD Type 2 columns), `merge_ex8_source` (3 customers)
+# MAGIC - Exercise 9: `merge_ex9_target` (5 orders), `merge_ex9_source` (2 orders with an extra `discount_pct` column)
 
 # COMMAND ----------
 # MAGIC %md
@@ -54,11 +58,11 @@
 # MAGIC MERGE `merge_ex1_source` into `merge_ex1_target` to upsert orders.
 # MAGIC Update existing orders with new values and insert orders that don't exist yet.
 # MAGIC
-# MAGIC **Source** (`merge_ex1_source`): 4 rows - ORD-001 (amount=109.50), ORD-002 (amount=175.00), ORD-101 (new), ORD-102 (new)
+# MAGIC **Source** (`merge_ex1_source`): 4 rows - ORD-001 and ORD-002 (status='shipped', updated_at 2026-03-01 10:00; amounts unchanged at 109.50 and 175.00), ORD-101 (new), ORD-102 (new)
 # MAGIC
-# MAGIC **Target** (`merge_ex1_target`): 5 rows - ORD-001 through ORD-005 (from base orders)
+# MAGIC **Target** (`merge_ex1_target`): 5 rows - ORD-001 through ORD-005 copied from `db_code.delta_lake.orders` (ORD-001 and ORD-002 have status='completed')
 # MAGIC
-# MAGIC **Expected Output**: `merge_ex1_target` should have 7 rows. ORD-001 amount = 109.50. ORD-101 and ORD-102 exist.
+# MAGIC **Expected Output**: `merge_ex1_target` has 7 rows. ORD-001 and ORD-002 have status='shipped'. ORD-101 and ORD-102 exist.
 # MAGIC
 # MAGIC **Requirements**:
 # MAGIC 1. MERGE source into target matching on `order_id`
@@ -81,8 +85,8 @@ result = spark.table(f"{CATALOG}.{SCHEMA}.merge_ex1_target")
 assert result.count() == 7, f"Expected 7 rows, got {result.count()}"
 assert result.filter("order_id = 'ORD-101'").count() == 1, "ORD-101 should be inserted"
 assert result.filter("order_id = 'ORD-102'").count() == 1, "ORD-102 should be inserted"
-assert result.filter("order_id = 'ORD-001'").select("amount").collect()[0][0] == 109.50, \
-    "ORD-001 amount should be updated to 109.50"
+assert result.filter("order_id = 'ORD-001'").select("status").collect()[0][0] == "shipped", \
+    "ORD-001 was not updated from the source"
 
 print("Exercise 1 passed!")
 
@@ -94,11 +98,11 @@ print("Exercise 1 passed!")
 # MAGIC MERGE `merge_ex2_source` into `merge_ex2_target`, but only insert new records.
 # MAGIC Existing orders should NOT be updated, even if the source has different values.
 # MAGIC
-# MAGIC **Source** (`merge_ex2_source`): same 4 rows as Exercise 1 (2 existing + 2 new)
+# MAGIC **Source** (`merge_ex2_source`): 4 rows - ORD-001 and ORD-002 (status='shipped'), ORD-101 (new), ORD-102 (new)
 # MAGIC
 # MAGIC **Target** (`merge_ex2_target`): 5 rows - ORD-001 through ORD-005
 # MAGIC
-# MAGIC **Expected Output**: 7 rows. ORD-001 amount unchanged. ORD-101 and ORD-102 inserted.
+# MAGIC **Expected Output**: 7 rows. ORD-001 keeps status='completed'. ORD-101 and ORD-102 inserted.
 # MAGIC
 # MAGIC **Requirements**:
 # MAGIC 1. MERGE source into target matching on `order_id`
@@ -218,11 +222,11 @@ print("Exercise 4 passed!")
 # MAGIC MERGE `merge_ex5_source` into `merge_ex5_target`, but only update when the
 # MAGIC source record is newer. Stale source records should be ignored. New records always inserted.
 # MAGIC
-# MAGIC **Source** (`merge_ex5_source`): 3 rows - ORD-001 (timestamp 2026-03-01, newer), ORD-002 (timestamp 2025-01-01, older), ORD-101 (new)
+# MAGIC **Source** (`merge_ex5_source`): 3 rows - ORD-001 (`updated_at` 2026-03-01, newer than the target, status='shipped'), ORD-002 (`updated_at` 2025-01-01, older than the target, status='returned'), ORD-101 (new)
 # MAGIC
 # MAGIC **Target** (`merge_ex5_target`): 5 rows - ORD-001 through ORD-005
 # MAGIC
-# MAGIC **Expected Output**: 6 rows. ORD-001 updated (amount=109.50). ORD-002 unchanged. ORD-101 inserted.
+# MAGIC **Expected Output**: 6 rows. ORD-001 updated (status='shipped'). ORD-002 unchanged (status='completed'). ORD-101 inserted.
 # MAGIC
 # MAGIC **Requirements**:
 # MAGIC 1. MERGE source into target on `order_id`
@@ -245,8 +249,8 @@ result = spark.table(f"{CATALOG}.{SCHEMA}.merge_ex5_target")
 
 assert result.count() == 6, f"Expected 6 rows, got {result.count()}"
 # ORD-001 should be updated (source is newer)
-assert result.filter("order_id = 'ORD-001'").select("amount").collect()[0][0] == 109.50, \
-    "ORD-001 should be updated to 109.50 (newer source)"
+assert result.filter("order_id = 'ORD-001'").select("status").collect()[0][0] == "shipped", \
+    "ORD-001 was not updated (its source row is newer)"
 # ORD-002 should NOT be updated (source is older)
 ord002_status = result.filter("order_id = 'ORD-002'").select("status").collect()[0][0]
 assert ord002_status != "returned", \
@@ -262,7 +266,7 @@ print("Exercise 5 passed!")
 # MAGIC **Difficulty**: Medium | **Time**: ~10 min
 # MAGIC
 # MAGIC MERGE `merge_ex6_source` into `merge_ex6_target`. Handle three cases:
-# MAGIC delete cancelled orders, update other matched orders, insert new orders.
+# MAGIC delete the target row when the source row has `status = 'cancelled'`, update the other matched orders, insert new orders.
 # MAGIC
 # MAGIC **Source** (`merge_ex6_source`): 3 rows - ORD-001 (status='cancelled'), ORD-002 (status='shipped'), ORD-101 (new)
 # MAGIC
@@ -272,7 +276,7 @@ print("Exercise 5 passed!")
 # MAGIC
 # MAGIC **Requirements**:
 # MAGIC 1. MERGE source into target on `order_id`
-# MAGIC 2. Delete cancelled orders from target
+# MAGIC 2. Source `status = 'cancelled'`: delete the target row
 # MAGIC 3. Update other matched orders
 # MAGIC 4. Insert new orders
 
@@ -305,23 +309,23 @@ print("Exercise 6 passed!")
 # MAGIC MERGE `merge_ex7_source` into `merge_ex7_target` handling all four scenarios
 # MAGIC in a single statement: delete, conditional update, skip, and insert.
 # MAGIC
-# MAGIC **Source** (`merge_ex7_source`): 5 rows - ORD-001 (cancelled), ORD-002 (newer, amount=175), ORD-003 (older, stale), ORD-101 (new), ORD-102 (new)
+# MAGIC **Source** (`merge_ex7_source`): 5 rows - ORD-001 (status='cancelled'), ORD-002 (newer, status='shipped'), ORD-003 (older, amount=50.00), ORD-101 (new), ORD-102 (new)
 # MAGIC
 # MAGIC **Target** (`merge_ex7_target`): 5 rows - ORD-001 through ORD-005
 # MAGIC
-# MAGIC **Expected Output**: 6 rows. ORD-001 deleted. ORD-002 updated (amount=175). ORD-003 unchanged. ORD-101, ORD-102 inserted.
+# MAGIC **Expected Output**: 6 rows. ORD-001 deleted. ORD-002 updated (status='shipped'). ORD-003 unchanged (amount=45.00). ORD-101, ORD-102 inserted.
 # MAGIC
 # MAGIC **Requirements**:
 # MAGIC 1. MERGE source into target on `order_id`
-# MAGIC 2. Cancelled orders: delete from target
-# MAGIC 3. Newer source records: update target
-# MAGIC 4. Older source records: skip (do nothing)
+# MAGIC 2. Source `status = 'cancelled'`: delete the target row, whatever the two `updated_at` values are
+# MAGIC 3. Otherwise, source `updated_at` later than the target `updated_at`: update every column of the target row from the source
+# MAGIC 4. Otherwise (source `updated_at` the same or earlier): leave the target row as it is
 # MAGIC 5. New orders: insert
 
 # COMMAND ----------
 
 # EXERCISE_KEY: merge_ex7
-# TODO: Write your solution here
+# TODO: Write your multi-condition MERGE
 
 # Your code here
 
@@ -333,8 +337,8 @@ result = spark.table(f"{CATALOG}.{SCHEMA}.merge_ex7_target")
 
 assert result.count() == 6, f"Expected 6 rows, got {result.count()}"
 assert result.filter("order_id = 'ORD-001'").count() == 0, "ORD-001 should be deleted (cancelled)"
-assert result.filter("order_id = 'ORD-002'").select("amount").collect()[0][0] == 175.00, \
-    "ORD-002 should be updated to amount 175.00"
+assert result.filter("order_id = 'ORD-002'").select("status").collect()[0][0] == "shipped", \
+    "ORD-002 was not updated (its source row is newer)"
 # ORD-003 should not be updated (source timestamp is older)
 # Source has amount=50.00 and status='pending' for ORD-003 - verify these values were NOT applied
 ord003 = result.filter("order_id = 'ORD-003'").collect()[0]
@@ -354,13 +358,15 @@ print("Exercise 7 passed!")
 # MAGIC When customer attributes change, expire the old record and insert a new current version.
 # MAGIC
 # MAGIC **Source** (`merge_ex8_source`): 3 rows
+# MAGIC
 # MAGIC | customer_id | name | email | region | tier |
 # MAGIC |-------------|------|-------|--------|------|
 # MAGIC | CUST-001 | Alice Smith | alice.new@example.com | US-East | platinum |
 # MAGIC | CUST-003 | Carol Lee | carol@example.com | US-West | silver |
 # MAGIC | CUST-010 | New Customer | new@example.com | EU-West | bronze |
 # MAGIC
-# MAGIC **Target** (`merge_ex8_target`): 3 current customer records
+# MAGIC **Target** (`merge_ex8_target`): 3 current rows (effective_start_date = signup date, effective_end_date = 9999-12-31): CUST-001 Alice Smith, alice@example.com, US-East, gold; CUST-002 Bob Johnson, bob@example.com, US-West, silver; CUST-003 Carol Lee, carol@example.com, US-West, gold
+# MAGIC
 # MAGIC | Column | Type | Notes |
 # MAGIC |--------|------|-------|
 # MAGIC | customer_id | STRING | Business key |
@@ -376,20 +382,19 @@ print("Exercise 7 passed!")
 # MAGIC
 # MAGIC **Requirements**:
 # MAGIC 1. Expire old records ONLY for customers whose attributes actually changed (is_current=false, effective_end_date=today)
-# MAGIC 2. Insert new current version for changed customers
-# MAGIC 3. Insert brand new customers with is_current=true
+# MAGIC 2. Insert a new current version for changed customers (is_current=true, effective_start_date=today, effective_end_date=9999-12-31)
+# MAGIC 3. Insert brand new customers (is_current=true, effective_start_date=today, effective_end_date=9999-12-31)
 # MAGIC 4. Leave customers not in source unchanged
-# MAGIC 5. The pipeline must be idempotent: running twice with the same source does nothing on the second run
+# MAGIC 5. Make it idempotent: run your answer cell a second time (without rerunning setup), then rerun the validate cell. It must still find 6 rows: 4 current and 2 expired.
 # MAGIC
 # MAGIC **Constraints**:
-# MAGIC - Canonical approach is a single MERGE with a "staging union" subquery (one source row emits one expire action and one insert action). It is atomic and idempotent.
-# MAGIC - A two-statement approach (MERGE to expire + INSERT new versions) is also valid but not atomic - a reader between the two statements sees a customer with zero current rows.
-# MAGIC - Use null-safe comparison (`<=>` or `IS DISTINCT FROM`) when detecting changes; plain `<>` silently misses NULL -> value transitions.
+# MAGIC - The attributes are `name`, `email`, `region` and `tier`. A change from NULL to a value, or from a value to NULL, counts as a change.
+# MAGIC - A source row whose attributes all match its current target row writes nothing.
 
 # COMMAND ----------
 
 # EXERCISE_KEY: merge_ex8
-# TODO: Write your solution here
+# TODO: Write your SCD Type 2 MERGE
 
 # Your code here
 
@@ -407,21 +412,18 @@ assert result.filter("is_current = false").count() == 2, \
 assert result.filter("customer_id = 'CUST-001' AND is_current = true") \
     .select("tier").collect()[0][0] == "platinum", \
     "CUST-001 current version should have tier='platinum'"
+assert result.filter("customer_id = 'CUST-003' AND is_current = true") \
+    .select("tier").collect()[0][0] == "silver", \
+    "CUST-003 current version does not carry the tier from the source"
+assert result.filter("is_current = false AND effective_end_date = current_date()").count() == 2, \
+    "The 2 expired records should have effective_end_date = today"
 assert result.filter("customer_id = 'CUST-010'").count() == 1, \
     "CUST-010 should be inserted as new customer"
 assert result.filter("customer_id = 'CUST-002' AND is_current = true").count() == 1, \
     "CUST-002 should be unchanged"
 
 print("Exercise 8 passed!")
-
-# --- Idempotency check (manual) ---
-# Re-run your TODO cell above ONCE MORE without re-running the setup notebook,
-# then re-run this validate cell. All assertions must still pass: 6 total rows,
-# 4 current, 2 expired. If they fail on the second run, your solution is
-# non-idempotent - it is expiring unchanged records and inserting spurious
-# "current" versions on every run. A correct SCD Type 2 only writes when a
-# source attribute actually changed.
-print("Idempotency: re-run your TODO cell then this cell. Assertions must still pass.")
+print("Idempotency: run your answer cell once more, then this cell. The same assertions must pass.")
 
 # COMMAND ----------
 # MAGIC %md
@@ -440,7 +442,7 @@ print("Idempotency: re-run your TODO cell then this cell. Assertions must still 
 # MAGIC ORD-001 discount_pct=10.0. ORD-101 discount_pct=5.0. Other rows discount_pct=null.
 # MAGIC
 # MAGIC **Requirements**:
-# MAGIC 1. Enable automatic schema evolution
+# MAGIC 1. Enable schema evolution in the MERGE statement itself (serverless compute, including Free Edition, does not let you set `spark.databricks.delta.schema.autoMerge.enabled`)
 # MAGIC 2. MERGE source into target on `order_id`
 # MAGIC 3. Update matched, insert not matched
 # MAGIC 4. Target schema should gain the `discount_pct` column
@@ -448,7 +450,7 @@ print("Idempotency: re-run your TODO cell then this cell. Assertions must still 
 # COMMAND ----------
 
 # EXERCISE_KEY: merge_ex9
-# TODO: Write your solution here
+# TODO: Write your MERGE with schema evolution
 
 # Your code here
 

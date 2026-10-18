@@ -2,7 +2,7 @@
 # MAGIC %md
 # MAGIC # Setup: PySpark DataFrame Transformations
 # MAGIC Creates per-exercise source tables from base tables in `db_code.elt`.
-# MAGIC Each exercise gets independent tables so exercises are fully atomic.
+# MAGIC Each exercise gets its own tables, so you can do the exercises in any order.
 
 # COMMAND ----------
 
@@ -16,7 +16,7 @@ spark.sql(f"CREATE SCHEMA IF NOT EXISTS {CATALOG}.{SCHEMA}")
 
 # MAGIC %md
 # MAGIC ## Exercise 1: Basic select/filter/withColumn
-# MAGIC Source: orders with all statuses. User filters to completed, adds tax column.
+# MAGIC Source: orders with all statuses. You filter to completed and add a tax column.
 
 # COMMAND ----------
 
@@ -30,7 +30,7 @@ FROM {CATALOG}.{BASE_SCHEMA}.orders
 
 # MAGIC %md
 # MAGIC ## Exercise 2: Column renaming and type casting
-# MAGIC Source: customers with camelCase-style columns and string dates for casting practice.
+# MAGIC Source: customers with camelCase-style columns and string dates.
 
 # COMMAND ----------
 
@@ -50,7 +50,7 @@ FROM {CATALOG}.{BASE_SCHEMA}.customers
 
 # MAGIC %md
 # MAGIC ## Exercise 3: Complex when/otherwise chains
-# MAGIC Source: orders with varying amounts and statuses for tier categorization.
+# MAGIC Source: orders with varying amounts and statuses, plus ORD-901 and ORD-902 with a NULL amount.
 
 # COMMAND ----------
 
@@ -58,13 +58,18 @@ spark.sql(f"""
 CREATE OR REPLACE TABLE {CATALOG}.{SCHEMA}.orders_ex3 AS
 SELECT order_id, customer_id, amount, status, order_date
 FROM {CATALOG}.{BASE_SCHEMA}.orders
+UNION ALL
+SELECT * FROM VALUES
+  ('ORD-901', 'CUST-001', CAST(NULL AS DOUBLE), 'pending', DATE '2025-06-25'),
+  ('ORD-902', 'CUST-002', CAST(NULL AS DOUBLE), 'cancelled', DATE '2025-06-26')
+  AS t(order_id, customer_id, amount, status, order_date)
 """)
 
 # COMMAND ----------
 
 # MAGIC %md
 # MAGIC ## Exercise 4: Pivot - order counts by status per customer
-# MAGIC Source: orders with multiple statuses per customer for pivoting. NULL customer_ids excluded.
+# MAGIC Source: orders with multiple statuses per customer. NULL customer_ids excluded.
 
 # COMMAND ----------
 
@@ -115,7 +120,7 @@ LEFT JOIN (
 
 # MAGIC %md
 # MAGIC ## Exercise 6: Python UDF for custom logic with null handling
-# MAGIC Source: events table with JSON payloads to parse and classify.
+# MAGIC Source: the events table plus EVT-901..EVT-904 (payloads with "price", with "duration", with both, and one empty string).
 
 # COMMAND ----------
 
@@ -123,14 +128,20 @@ spark.sql(f"""
 CREATE OR REPLACE TABLE {CATALOG}.{SCHEMA}.events_ex6 AS
 SELECT event_id, user_id, event_type, event_ts, payload
 FROM {CATALOG}.{BASE_SCHEMA}.events
+UNION ALL
+SELECT * FROM VALUES
+  ('EVT-901', 'CUST-001', 'purchase',  TIMESTAMP '2025-06-20 10:00:00', '{{"item_id": "P-100", "price": 29.99}}'),
+  ('EVT-902', 'CUST-002', 'page_view', TIMESTAMP '2025-06-20 11:00:00', '{{"page": "/home", "duration": 45}}'),
+  ('EVT-903', 'CUST-003', 'purchase',  TIMESTAMP '2025-06-20 12:00:00', '{{"price": 15.00, "duration": 30}}'),
+  ('EVT-904', 'CUST-004', 'click',     TIMESTAMP '2025-06-20 13:00:00', '')
+  AS t(event_id, user_id, event_type, event_ts, payload)
 """)
 
 # COMMAND ----------
 
 # MAGIC %md
 # MAGIC ## Exercise 7: Replace UDF with native Spark functions
-# MAGIC Source: events table. The UDF from Exercise 6 is provided as a baseline.
-# MAGIC User rewrites it using only native functions.
+# MAGIC Source: the same events as Exercise 6. Exercise 7 shows the Exercise 6 UDF; you rewrite it with native functions only.
 
 # COMMAND ----------
 
@@ -138,14 +149,21 @@ spark.sql(f"""
 CREATE OR REPLACE TABLE {CATALOG}.{SCHEMA}.events_ex7 AS
 SELECT event_id, user_id, event_type, event_ts, payload
 FROM {CATALOG}.{BASE_SCHEMA}.events
+UNION ALL
+SELECT * FROM VALUES
+  ('EVT-901', 'CUST-001', 'purchase',  TIMESTAMP '2025-06-20 10:00:00', '{{"item_id": "P-100", "price": 29.99}}'),
+  ('EVT-902', 'CUST-002', 'page_view', TIMESTAMP '2025-06-20 11:00:00', '{{"page": "/home", "duration": 45}}'),
+  ('EVT-903', 'CUST-003', 'purchase',  TIMESTAMP '2025-06-20 12:00:00', '{{"price": 15.00, "duration": 30}}'),
+  ('EVT-904', 'CUST-004', 'click',     TIMESTAMP '2025-06-20 13:00:00', '')
+  AS t(event_id, user_id, event_type, event_ts, payload)
 """)
 
 # COMMAND ----------
 
 # MAGIC %md
 # MAGIC ## Exercise 8: Chained transform pipeline with replaceWhere
-# MAGIC Source: orders joined with customers + order_items for multi-step pipeline.
-# MAGIC Pre-populate target table with cancelled orders for replaceWhere exercise.
+# MAGIC Source: orders joined with customer name and region, plus the order_items rows.
+# MAGIC Pre-populates `enriched_orders_ex8` with the cancelled orders, which your `replaceWhere` write must keep.
 
 # COMMAND ----------
 
@@ -171,7 +189,7 @@ SELECT order_id, product_id, quantity, unit_price
 FROM {CATALOG}.{BASE_SCHEMA}.order_items
 """)
 
-# Pre-populate target table with cancelled orders for replaceWhere exercise
+# Cancelled orders already in the target; a replaceWhere on status = 'completed' leaves them untouched
 spark.sql(f"""
 CREATE OR REPLACE TABLE {CATALOG}.{SCHEMA}.enriched_orders_ex8 AS
 SELECT
@@ -188,6 +206,11 @@ SELECT
 FROM {CATALOG}.{BASE_SCHEMA}.orders
 WHERE status = 'cancelled'
 """)
+
+# Start every run with no output tables, so each check reads only your own write
+for _t in ["completed_orders_ex1", "customers_clean_ex2", "tiered_orders_ex3", "customer_status_pivot_ex4",
+           "customer_metrics_long_ex5", "classified_events_ex6", "classified_events_native_ex7"]:
+    spark.sql(f"DROP TABLE IF EXISTS {CATALOG}.{SCHEMA}.{_t}")
 
 # COMMAND ----------
 

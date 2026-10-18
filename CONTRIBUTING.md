@@ -6,7 +6,7 @@ Thanks for being here. This repo is a practice ground, so contributing works a l
 
 **Your solved exercises stay in your fork.** That is the whole point of forking - it's your workspace, your progress, your notes.
 
-The two PRs this repo has received were both someone's completed `01_merge-operations.py`. Understandable instinct, but merging them would delete the exercise for everyone else. If you finish a notebook, keep it. Push it to your fork, star the repo if it helped, and move on to the next one.
+The most common PR this repo gets is a completed `01_merge-operations.py`. Understandable instinct, but merging one would delete the exercise for everyone else. If you finish a notebook, keep it. Push it to your fork, star the repo if it helped, and move on to the next one.
 
 ## What is genuinely useful
 
@@ -14,7 +14,7 @@ The two PRs this repo has received were both someone's completed `01_merge-opera
 
 This is the highest-value thing you can do. Exercises are validated by assertions, and an assertion can be wrong - the setup data may not contain the case the problem describes, or the reference solution may not match the stated requirement.
 
-That has already happened once: in `spark-sql-joins`, Exercise 5 asked for same-customer/same-day order pairs, but no customer in the base table had two distinct order IDs on the same date, so both the exercise and the solution returned zero rows and still "passed."
+Example: an exercise asks for same-customer/same-day order pairs, but no customer in the base table has two distinct order IDs on the same date, so both the exercise and the solution return zero rows and still "pass."
 
 If an exercise can't be solved as written, [open an issue](../../issues/new/choose). Include:
 
@@ -24,7 +24,7 @@ If an exercise can't be solved as written, [open an issue](../../issues/new/choo
 
 ### 2. Report a factual error
 
-Databricks moves fast. If a notebook describes behavior that no longer matches the product - a deprecated option, a changed default, a renamed feature - say so and link the current docs. Include the Databricks Runtime version you're on.
+Databricks moves fast. If a notebook describes behavior that no longer matches the product - a deprecated option, a changed default, a renamed feature - say so and link the current docs. Say where you ran it: Free Edition serverless, or a cluster and its Databricks Runtime version.
 
 ### 3. Suggest an exercise or topic
 
@@ -38,7 +38,7 @@ Fixes are welcome - a broken assertion, a wrong expected count, a typo, a dead l
 
 - **One fix per PR.** Don't bundle a typo fix with a new exercise.
 - **Never commit a solved TODO cell.** Check your diff. If it contains working code where a `# TODO` used to be, that's a solution leak into the exercise.
-- **Keep the exercise solvable.** If you change setup data, re-run the notebook and its `solutions/` counterpart end to end and confirm every assertion still passes with a non-zero result.
+- **Keep the exercise solvable.** If you change setup data, paste each reference solution from the matching `solutions/` notebook into its TODO cell, run the exercise notebook end to end, and confirm every assertion passes with a non-zero result. Then put each TODO cell back exactly as it is on `main`, starting with its `# EXERCISE_KEY` line, before you commit.
 - **Notebooks are `.py` source files**, not `.ipynb`. Edit them as Python with the Databricks cell markers intact.
 - **Match the surrounding style.** No em dashes, no emoji in exercise text, assertion messages state expected vs. actual.
 

@@ -19,16 +19,13 @@ CHECKPOINT_BASE = f"/Volumes/{CATALOG}/{SCHEMA}/checkpoints"
 # MAGIC ## Exercise 1: Read a Delta Table as a Stream, Write to Another Delta Table
 # MAGIC
 # MAGIC **Hints**:
-# MAGIC 1. `spark.readStream.table("...")` treats an existing Delta table as a streaming source -
-# MAGIC    every new commit produces new streamed rows
-# MAGIC 2. The write side needs `.format("delta")`, a `checkpointLocation`, and `.toTable(...)`
-# MAGIC    (or `.format("delta").outputMode("append").start()` against a path)
-# MAGIC 3. `trigger(availableNow=True)` plus `.awaitTermination()` is the canonical "run once and
-# MAGIC    stop" pattern for batch-style streaming on Databricks
+# MAGIC 1. `spark.readStream.table("...")` treats an existing Delta table as a streaming source - the first run reads the rows already there, and every later commit produces new streamed rows
+# MAGIC 2. The write side needs `.format("delta")`, a `checkpointLocation`, and `.toTable(...)` with the full target table name
+# MAGIC 3. `trigger(availableNow=True)` plus `.awaitTermination()` is the "run once and stop" pattern in an interactive notebook; in a Lakeflow Jobs task, leave out `awaitTermination()` (the Jobs service waits for the stream)
 # MAGIC
 # MAGIC **Common mistakes**:
 # MAGIC - Using `spark.read` instead of `spark.readStream` (no offsets, won't track progress)
-# MAGIC - Using `trigger(once=True)` (deprecated since DBR 11.3; `availableNow=True` is correct)
+# MAGIC - Using `trigger(once=True)` (deprecated; `availableNow=True` is its replacement)
 # MAGIC - Forgetting `.awaitTermination()` (cell returns before stream finishes, assertions fail)
 # MAGIC - Putting the checkpoint somewhere outside a Volume (works in some environments, fails on
 # MAGIC   Free Edition where DBFS is restricted)
@@ -55,8 +52,7 @@ CHECKPOINT_BASE = f"/Volumes/{CATALOG}/{SCHEMA}/checkpoints"
 # MAGIC 1. Streaming DataFrames support `.filter(...)` and `.where(...)` exactly like batch DataFrames
 # MAGIC 2. Compose the filter directly on the result of `spark.readStream.table(...)` before
 # MAGIC    starting the writeStream
-# MAGIC 3. Filtering on the streaming DF is what we want - it gets pushed into the streaming plan
-# MAGIC    instead of running as a separate post-process
+# MAGIC 3. Filter the streaming DataFrame itself: the filter becomes part of the streaming plan, so non-purchase rows never reach the target
 # MAGIC
 # MAGIC **Common mistakes**:
 # MAGIC - Running the filter as a post-write SQL query against the target (defeats the purpose -
@@ -85,16 +81,15 @@ CHECKPOINT_BASE = f"/Volumes/{CATALOG}/{SCHEMA}/checkpoints"
 # MAGIC ## Exercise 3: Add a Derived Column to a Streaming DataFrame
 # MAGIC
 # MAGIC **Hints**:
-# MAGIC 1. Use `.withColumn("amount_with_tax", F.col("amount") * 1.10)` on the streaming DF
+# MAGIC 1. Streaming DataFrames support `withColumn` exactly like batch DataFrames; the new column becomes part of the streaming plan
 # MAGIC 2. Import `pyspark.sql.functions as F` once at the top of the cell
-# MAGIC 3. Streaming `withColumn` runs on each micro-batch; the projection becomes part of the
-# MAGIC    streaming plan
+# MAGIC 3. `.withColumn("amount_with_tax", F.col("amount") * 1.10)` on the streaming DataFrame, before `.writeStream`
 # MAGIC
 # MAGIC **Common mistakes**:
 # MAGIC - Referring to the column by bare Python name (e.g., `amount * 1.10` with no import) -
 # MAGIC    use `F.col("amount") * 1.10` or a SQL expression in `selectExpr`/`expr`.
 # MAGIC - Using `selectExpr` and dropping other columns - assertions check that `amount` is still present
-# MAGIC - Naming the column something other than `amount_with_tax` (validator is strict)
+# MAGIC - Naming the column something other than `amount_with_tax` (the validation cell looks for that exact name)
 
 # COMMAND ----------
 
@@ -115,23 +110,18 @@ from pyspark.sql import functions as F
 
 # COMMAND ----------
 # MAGIC %md
-# MAGIC ## Exercise 4: Append-Only Ingestion - Pick the Right Output Mode
+# MAGIC ## Exercise 4: Pick the Right Output Mode for an Ingestion Stream
 # MAGIC
 # MAGIC **Hints**:
-# MAGIC 1. Output mode rules: `append` works for any non-aggregating query and for aggregations
-# MAGIC    with a watermark that emits closed windows; `complete` requires an aggregation and
-# MAGIC    emits the FULL result table every batch; `update` requires an aggregation and emits
-# MAGIC    only changed rows
-# MAGIC 2. This query has no aggregation - only `complete` and `update` would fail; only `append`
-# MAGIC    is legal
+# MAGIC 1. Output mode rules: `append` works for any non-aggregating query and for aggregations with a watermark that emits closed windows; `complete` requires an aggregation and emits the FULL result table every batch; `update` emits only the rows that changed
+# MAGIC 2. This query has no aggregation, so `complete` fails; `update` is legal Spark but the Delta sink rejects it; only `append` runs
 # MAGIC 3. Always state output mode explicitly in production code so readers see your intent
 # MAGIC
 # MAGIC **Common mistakes**:
 # MAGIC - Picking `complete` because "it sounds safer" - it's illegal without an aggregation and
 # MAGIC    Spark throws `AnalysisException` immediately
-# MAGIC - Picking `update` thinking it means "update the target table" - it actually means
-# MAGIC    "emit only updated aggregate rows", and requires an aggregation
-# MAGIC - Relying on the default mode without stating it - reviewer cannot tell whether you knew
+# MAGIC - Picking `update` thinking it means "update the target table" - it means "emit only the rows that changed", and the Delta sink does not support it, so the query fails to start
+# MAGIC - Relying on the default mode without stating it - a code reviewer cannot tell whether you chose `append` on purpose
 
 # COMMAND ----------
 
@@ -154,23 +144,19 @@ correct_mode = "append"
 # MAGIC ## Exercise 5: Trigger Modes - Understanding the Cost/Latency Tradeoff
 # MAGIC
 # MAGIC **Hints**:
-# MAGIC 1. `trigger(availableNow=True)` is single-shot - one batch, then the query terminates and
-# MAGIC    `awaitTermination()` returns. This is the only trigger supported on Free Edition serverless.
+# MAGIC 1. `trigger(availableNow=True)` processes everything available (in one or more micro-batches), then stops and `awaitTermination()` returns. On Free Edition serverless only `availableNow` and the deprecated `once` trigger run.
 # MAGIC 2. The cost/latency tradeoff is conceptual: `processingTime` keeps compute warm for lower
 # MAGIC    latency; `availableNow` spins compute down between runs for lower cost.
-# MAGIC 3. In production on classic compute you could use `.trigger(processingTime='30 seconds')`,
-# MAGIC    but never in a Free Edition notebook - serverless rejects `Trigger.ProcessingTime` outright.
+# MAGIC 3. In production on classic compute you could use `.trigger(processingTime='30 seconds')`.
 # MAGIC
 # MAGIC **Common mistakes**:
-# MAGIC - Using `.trigger(processingTime=...)` on Free Edition serverless - the API is rejected,
-# MAGIC    even with a `processAllAvailable() + stop()` mitigation.
-# MAGIC - Confusing the two winners: lower LATENCY comes from continuous trigger; lower COST
-# MAGIC    comes from `availableNow` because compute spins down between scheduled runs.
+# MAGIC - Using `.trigger(processingTime=...)` on Free Edition serverless - serverless rejects the trigger.
+# MAGIC - Confusing the two winners: lower LATENCY comes from a `processingTime` trigger (the query stays up); lower COST comes from `availableNow` because compute spins down between scheduled runs.
 
 # COMMAND ----------
 
 # EXERCISE_KEY: ss_basics_ex5
-# availableNow - runs once and terminates by itself (only trigger Free Edition supports)
+# availableNow - processes everything available, then stops by itself
 (spark.readStream
     .table(f"{CATALOG}.{SCHEMA}.ex5_source")
     .writeStream
@@ -182,7 +168,7 @@ correct_mode = "append"
     .awaitTermination()
 )
 
-latency_winner = "processingTime"  # continuous compute -> lower per-batch latency
+latency_winner = "processingTime"  # query stays up -> new rows land within one interval
 cost_winner = "availableNow"        # compute spins down between runs -> lower cost
 
 # COMMAND ----------
@@ -193,17 +179,14 @@ cost_winner = "availableNow"        # compute spins down between runs -> lower c
 # MAGIC 1. `groupBy("event_type").count()` returns a DataFrame with columns `event_type` and
 # MAGIC    `count`. Rename `count` to `cnt` with `.withColumnRenamed("count", "cnt")` or use
 # MAGIC    `.agg(F.count("*").alias("cnt"))` for clarity
-# MAGIC 2. Output mode MUST be `complete` for a non-windowed streaming aggregation - the engine
-# MAGIC    overwrites the full result table on every micro-batch
+# MAGIC 2. Output mode MUST be `complete` here: the Delta sink supports only `append` and `complete`, and `append` on an aggregation needs an event-time window or column with a watermark in the grouping, which `groupBy("event_type")` does not have. Complete mode overwrites the full result table on every micro-batch
 # MAGIC 3. `availableNow` plus `awaitTermination()` still applies - the cell must block until the
 # MAGIC    batch is done so assertions read the final result table
 # MAGIC
 # MAGIC **Common mistakes**:
-# MAGIC - Trying `append` mode - throws
-# MAGIC    `Append output mode not supported when there are streaming aggregations on streaming DataFrames/DataSets without watermark`
+# MAGIC - Trying `append` mode - the query fails to start with an `AnalysisException` saying append output mode is not supported for streaming aggregations without a watermark
 # MAGIC - Using `count()` and letting the column name stay `count` - assertions look for `cnt`
-# MAGIC - Forgetting that `complete` mode rewrites the target every batch - this is desirable
-# MAGIC    here (small key space), but for large key spaces you'd add a watermark and use `update`
+# MAGIC - Forgetting that `complete` mode rewrites the target every batch - fine here (small key space); for large key spaces write the aggregate with `foreachBatch` and a MERGE (the Delta sink has no `update` mode)
 
 # COMMAND ----------
 
@@ -229,19 +212,14 @@ from pyspark.sql import functions as F
 # MAGIC
 # MAGIC **Hints**:
 # MAGIC 1. `.queryName("ss_basics_ex7")` must be called on the writeStream BEFORE `.toTable(...)`
-# MAGIC 2. Capture the StreamingQuery: `query = (spark.readStream.... .toTable(...))` then call
-# MAGIC    `query.awaitTermination()`. After it returns, `query.lastProgress` is a dict-like
-# MAGIC    object with keys `name`, `numInputRows`, `processedRowsPerSecond`, etc.
-# MAGIC 3. To persist, build a 1-row DataFrame with `spark.createDataFrame([(...)], schema)` and
+# MAGIC 2. To persist, build a 1-row DataFrame with `spark.createDataFrame([(...)], schema)` and
 # MAGIC    `.write.format("delta").mode("overwrite").saveAsTable(...)` - this is a batch write of
 # MAGIC    a captured metric, not a streaming write
 # MAGIC
 # MAGIC **Common mistakes**:
-# MAGIC - Reading `lastProgress` BEFORE the stream terminates - it returns `None` because no
-# MAGIC    batch has completed yet
+# MAGIC - Reading `lastProgress` before the stream terminates - it is `None` until the first batch finishes, and after that it may describe an earlier batch, not the final one
 # MAGIC - Using `recentProgress` (a list) and forgetting it's a list, not a dict
-# MAGIC - Calling `.queryName(...)` after `.toTable(...)` - by then the query is already started
-# MAGIC    and the name is set to the auto-generated UUID
+# MAGIC - Calling `.queryName(...)` after `.toTable(...)` - `.toTable(...)` returns a running `StreamingQuery`, which has no `queryName` method, so the call raises `AttributeError` and the query stays unnamed (`name` is `None`)
 
 # COMMAND ----------
 
@@ -275,24 +253,20 @@ metrics_df.write.format("delta").mode("overwrite").saveAsTable(
 
 # COMMAND ----------
 # MAGIC %md
-# MAGIC ## Exercise 8: Deduplicate a Stream with dropDuplicates
+# MAGIC ## Exercise 8: Deduplicate a Stream by event_id
 # MAGIC
 # MAGIC **Hints**:
-# MAGIC 1. `dropDuplicates(["event_id"])` keeps the first occurrence of each `event_id` seen in
-# MAGIC    the stream and stores keys in state so future batches drop subsequent duplicates
-# MAGIC 2. For exactly-once semantics in production you'd pair this with `withWatermark(...)` so
-# MAGIC    state doesn't grow forever; on a one-shot `availableNow` run with a bounded source the
-# MAGIC    plain dropDuplicates is sufficient
-# MAGIC 3. Apply dropDuplicates on the streaming DataFrame BEFORE the writeStream - it has to be
-# MAGIC    part of the streaming plan
+# MAGIC 1. Deduplicating a stream is a stateful operation: Spark remembers every key it has seen, so a repeat is dropped even when it arrives in a later micro-batch
+# MAGIC 2. Apply the dedup on the streaming DataFrame BEFORE `.writeStream`, so it is part of the streaming plan
+# MAGIC 3. `dropDuplicates(["event_id"])` keeps one row per `event_id`. Spark does not promise which copy survives within a micro-batch, which does not matter here because the copies are identical
+# MAGIC 4. In production, bound the dedup state: `withWatermark("event_ts", "10 minutes").dropDuplicatesWithinWatermark(["event_id"])`, or keep the same `withWatermark(...)` and put `event_ts` in the `dropDuplicates` key. Without a watermark, `dropDuplicates` keeps every key forever, even with `event_ts` in the key.
 # MAGIC
 # MAGIC **Common mistakes**:
 # MAGIC - Running a post-write `SELECT DISTINCT * FROM target` - works for a single run but not
 # MAGIC    incremental: subsequent batches would re-introduce duplicates
 # MAGIC - Calling `dropDuplicates()` with no arguments - dedups on ALL columns, which fails the
 # MAGIC    moment one duplicate has slightly different non-key columns
-# MAGIC - Forgetting that dropDuplicates is stateful - on a long-running stream without a
-# MAGIC    watermark the state grows unboundedly. For this exercise's bounded source it's fine
+# MAGIC - Forgetting that dropDuplicates is stateful - on a long-running stream, `dropDuplicates(["event_id"])` keeps every key in state forever (bound it as in Hint 4). For this exercise's bounded source it's fine
 
 # COMMAND ----------
 

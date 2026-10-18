@@ -2,7 +2,7 @@
 # MAGIC %md
 # MAGIC # Solutions: Complex Data Types
 # MAGIC Hints, reference solutions, and common mistakes for each exercise.
-# MAGIC Try solving the exercises first before looking here.
+# MAGIC Try each exercise before you read its solution.
 
 # COMMAND ----------
 
@@ -17,16 +17,14 @@ BASE_SCHEMA = "elt"
 # MAGIC ## Exercise 1: Access struct fields with dot notation
 # MAGIC **Difficulty**: Easy | **Time**: ~5 min
 # MAGIC
-# MAGIC **Hints** (try before peeking):
+# MAGIC **Hints**:
 # MAGIC 1. Struct fields are accessed with dot notation: `col("address.city")` or `df.address.city`
 # MAGIC 2. You can use `.select()` with `col("address.city").alias("city")` to rename
 # MAGIC 3. Use `.write.mode("overwrite").saveAsTable()` for the final write
 # MAGIC
 # MAGIC **Common mistakes**:
-# MAGIC - Using `address["city"]` (Python dict syntax) instead of `address.city` (dot notation)
-# MAGIC - Filtering out rows with NULL struct fields when the spec says to keep them
-# MAGIC - Forgetting `.alias()` when extracting struct fields - without it, the column name is `address.city` (with dot)
-# MAGIC - Assuming a NULL struct means the row should be excluded - `NULL.city` returns NULL, not an error
+# MAGIC - Filtering out rows with NULL struct fields: C-009, C-010 and C-011 must stay
+# MAGIC - Forgetting `.alias()` when you reach the field as `df.address.city`: that column comes out named `address.city`, so name it `city` explicitly
 
 # COMMAND ----------
 
@@ -52,16 +50,15 @@ result.write.mode("overwrite").saveAsTable(f"{CATALOG}.{SCHEMA}.flat_customers_e
 # MAGIC ## Exercise 2: Explode array column into rows
 # MAGIC **Difficulty**: Easy | **Time**: ~5 min
 # MAGIC
-# MAGIC **Hints** (try before peeking):
-# MAGIC 1. `explode_outer` converts each array element into its own row AND preserves NULL arrays
+# MAGIC **Hints**:
+# MAGIC 1. `explode_outer` turns each array element into its own row, and when the array is NULL or empty it keeps the row with a NULL element
 # MAGIC 2. Use `.alias("tag")` to name the exploded column
 # MAGIC 3. The parent columns (order_id, customer_id, amount) are automatically duplicated for each exploded row
 # MAGIC
 # MAGIC **Common mistakes**:
-# MAGIC - Using `explode` instead of `explode_outer` - `explode` silently drops rows where the array is NULL
+# MAGIC - Using `explode` instead of `explode_outer` - `explode` silently drops rows whose array is NULL or empty (ORD-007 and ORD-009 would vanish)
 # MAGIC - Forgetting to alias the exploded column, which defaults to "col"
 # MAGIC - Using `F.flatten` instead of `F.explode` - flatten merges nested arrays, explode converts array elements to rows
-# MAGIC - Expecting empty arrays to produce a NULL row - `explode_outer` on empty array produces 0 rows (only NULL arrays produce a NULL row)
 
 # COMMAND ----------
 
@@ -86,17 +83,17 @@ result.write.mode("overwrite").saveAsTable(f"{CATALOG}.{SCHEMA}.exploded_tags_ex
 # MAGIC ## Exercise 3: from_json - parse JSON string column into struct
 # MAGIC **Difficulty**: Medium | **Time**: ~10 min
 # MAGIC
-# MAGIC **Hints** (try before peeking):
+# MAGIC **Hints**:
 # MAGIC 1. Define the schema as a DDL string: `"page STRING, duration_sec INT, referrer STRING"`
 # MAGIC 2. Use `F.from_json(F.col("payload"), schema)` to parse the string into a struct
 # MAGIC 3. After parsing, access fields with dot notation: `col("parsed.page")`
+# MAGIC 4. NULL payloads (EVT-108, EVT-112) need no special handling: `from_json` returns NULL, so `parsed.page` is NULL too.
+# MAGIC 5. Malformed JSON (EVT-113) needs none either: `from_json` returns a struct with every field NULL, so `page` and `duration_sec` come out NULL.
 # MAGIC
 # MAGIC **Common mistakes**:
-# MAGIC - Using `schema_of_json` on a NULL row, which returns NULL schema and causes all rows to parse as NULL
+# MAGIC - Passing the `payload` column to `schema_of_json`: it only accepts a literal JSON string, not a column, and from a sample it infers `duration_sec` as BIGINT, not INT. Write the DDL schema yourself.
 # MAGIC - Defining schema with wrong types (e.g., STRING for duration_sec instead of INT)
 # MAGIC - Using `get_json_object` instead of `from_json` - `get_json_object` returns strings, `from_json` returns typed structs
-# MAGIC - Not handling NULL payloads: `from_json(NULL)` returns NULL struct, and accessing `.page` on NULL struct returns NULL (correct behavior, no special handling needed)
-# MAGIC - Worrying about malformed JSON: `from_json` on invalid JSON returns NULL struct (same as NULL input)
 
 # COMMAND ----------
 
@@ -126,20 +123,20 @@ result.write.mode("overwrite").saveAsTable(f"{CATALOG}.{SCHEMA}.parsed_events_ex
 
 # MAGIC %md
 # MAGIC ---
-# MAGIC ## Exercise 4: Map operations - map_keys, map_values, element_at
+# MAGIC ## Exercise 4: Map operations - map_keys, element_at, size
 # MAGIC **Difficulty**: Medium | **Time**: ~10 min
 # MAGIC
-# MAGIC **Hints** (try before peeking):
-# MAGIC 1. `F.map_keys("attributes")` returns an ARRAY of all keys in the map
-# MAGIC 2. `F.element_at("attributes", "color")` looks up a key and returns the value (NULL if missing)
-# MAGIC 3. `F.size(F.map_keys("attributes"))` counts the number of key-value pairs
+# MAGIC **Hints**:
+# MAGIC 1. A MAP column has its own functions: one returns its keys as an array, one looks up a single key.
+# MAGIC 2. `F.map_keys()` returns the keys; `F.element_at(map, key)` returns the value, or NULL when the key is missing.
+# MAGIC 3. `F.size()` counts the entries of an array or a map, which gives `num_attributes`.
+# MAGIC 4. `F.col("attributes")["color"]` does the same lookup and also returns NULL for a missing key
+# MAGIC 5. `F.col("attributes.color")` also works on a map with STRING keys, but it reads like a struct field; `element_at` makes the map lookup explicit
 # MAGIC
 # MAGIC **Common mistakes**:
-# MAGIC - Using `attributes["color"]` (Python bracket syntax) instead of `element_at`
 # MAGIC - Confusing `map_keys` (returns array of keys) with `map_values` (returns array of values)
 # MAGIC - Assuming `element_at` throws on missing keys - it returns NULL
 # MAGIC - Forgetting that `size()` on an empty map returns 0, not NULL
-# MAGIC - Using `F.col("attributes.color")` - dot notation does not work on maps, only on structs
 
 # COMMAND ----------
 
@@ -153,7 +150,7 @@ result = df.select(
     "name",
     F.map_keys("attributes").alias("attribute_names"),
     F.element_at("attributes", "color").alias("color"),
-    F.size(F.map_keys("attributes")).alias("num_attributes")
+    F.size("attributes").alias("num_attributes")
 )
 
 result.write.mode("overwrite").saveAsTable(f"{CATALOG}.{SCHEMA}.map_results_ex4")
@@ -165,14 +162,14 @@ result.write.mode("overwrite").saveAsTable(f"{CATALOG}.{SCHEMA}.map_results_ex4"
 # MAGIC ## Exercise 5: collect_list/collect_set - aggregate into arrays
 # MAGIC **Difficulty**: Medium | **Time**: ~10 min
 # MAGIC
-# MAGIC **Hints** (try before peeking):
-# MAGIC 1. `F.collect_list("product_id")` keeps duplicates; `F.collect_set("product_id")` removes them
-# MAGIC 2. Both are aggregate functions, so use them inside `.agg()` after `.groupBy("order_id")`
-# MAGIC 3. `F.sum("quantity")` computes total quantity per group
+# MAGIC **Hints**:
+# MAGIC 1. One `.groupBy("order_id")` with three aggregates inside a single `.agg()`.
+# MAGIC 2. `F.collect_list` keeps every value including repeats; `F.collect_set` keeps each distinct value once.
+# MAGIC 3. `F.sum("quantity")` gives `total_quantity`.
+# MAGIC 4. `F.array_distinct(F.collect_list(...))` gives the same set; `collect_set` is the shorter way.
 # MAGIC
 # MAGIC **Common mistakes**:
 # MAGIC - Confusing `collect_list` and `collect_set` - list keeps duplicates, set removes them
-# MAGIC - Using `F.array_distinct(F.collect_list(...))` instead of `collect_set` - works but unnecessarily complex
 # MAGIC - Forgetting that `collect_list` order is non-deterministic within a group (don't assert exact order)
 # MAGIC - Using `count` instead of `sum("quantity")` for total quantity - `count` counts rows, `sum` totals the quantity values
 
@@ -202,15 +199,15 @@ result.write.mode("overwrite").saveAsTable(f"{CATALOG}.{SCHEMA}.order_products_e
 # MAGIC ## Exercise 6: Higher-order functions - transform() and filter() on arrays
 # MAGIC **Difficulty**: Medium | **Time**: ~10 min
 # MAGIC
-# MAGIC **Hints** (try before peeking):
+# MAGIC **Hints**:
 # MAGIC 1. `F.transform("temperatures", lambda x: ...)` applies a function to each element without exploding
 # MAGIC 2. `F.filter("temperatures", lambda x: x > 80)` keeps only elements matching the predicate
 # MAGIC 3. Cast the Celsius result to INT: `((x - 32) * 5 / 9).cast("int")`
 # MAGIC
 # MAGIC **Common mistakes**:
-# MAGIC - Using `explode` + `groupBy` + `collect_list` instead of `transform` - works but misses the point of higher-order functions
+# MAGIC - Using `explode` + `groupBy` + `collect_list` instead of `transform`: the constraints rule out `explode`, and the regroup costs a shuffle that `transform` never needs
 # MAGIC - Forgetting to cast the Celsius result to INT (the formula produces a float)
-# MAGIC - Expecting `size()` on NULL array to return 0 - it returns -1 in Spark
+# MAGIC - Expecting `size()` on a NULL array to return 0: with ANSI mode on (the default on serverless and Databricks Runtime 17.0+) it returns NULL, which the validate cell checks for S-007; with ANSI off it returns -1
 # MAGIC - Using SQL syntax `transform(col, x -> ...)` in PySpark - use Python lambda syntax `F.transform(col, lambda x: ...)`
 # MAGIC - Applying `filter` to the Celsius-converted array instead of the original Fahrenheit array
 
@@ -239,17 +236,16 @@ result.write.mode("overwrite").saveAsTable(f"{CATALOG}.{SCHEMA}.transformed_arra
 # MAGIC ## Exercise 7: Flatten deeply nested JSON - multi-level structs with arrays of structs
 # MAGIC **Difficulty**: Hard | **Time**: ~20 min
 # MAGIC
-# MAGIC **Hints** (try before peeking):
+# MAGIC **Hints**:
 # MAGIC 1. Start by extracting `body.user.id` and `body.user.name` as flat columns
-# MAGIC 2. Use `explode_outer` (not `explode`) for `body.orders` - this preserves rows where orders is NULL
-# MAGIC 3. After the first explode, access the exploded struct's fields: `col("order.order_id")`, `col("order.items")`
+# MAGIC 2. `explode_outer` on `body.orders` keeps R-004 as a row with a NULL order until step 7 drops it; plain `explode` drops it straight away, with the same final 11 rows
+# MAGIC 3. Alias the exploded order (for example `.alias("order")`), then read its fields with `F.col("order.order_id")` and `F.col("order.items")`
 # MAGIC
 # MAGIC **Common mistakes**:
-# MAGIC - Using `explode` instead of `explode_outer` - `explode` drops rows with NULL arrays (R-004 would vanish silently)
 # MAGIC - Forgetting to filter out rows where both `sku` AND `qty` are NULL after the second explode
 # MAGIC - Not aliasing the exploded columns, causing name collisions (two columns both named "col")
 # MAGIC - Trying to explode both levels in one step - you must explode `orders` first, then explode `items` from the result
-# MAGIC - Using `F.col("body.orders.items")` before exploding orders - you cannot reach into an array's struct fields without exploding first
+# MAGIC - Using `F.col("body.orders.items")` before exploding orders: it returns an ARRAY<ARRAY<STRUCT>>, one inner array per order, so explode `orders` first
 
 # COMMAND ----------
 
@@ -306,17 +302,15 @@ result.write.mode("overwrite").saveAsTable(f"{CATALOG}.{SCHEMA}.flat_items_ex7")
 # MAGIC ## Exercise 8: Build complex types from flat data - struct and array columns
 # MAGIC **Difficulty**: Hard | **Time**: ~15 min
 # MAGIC
-# MAGIC **Hints** (try before peeking):
+# MAGIC **Hints**:
 # MAGIC 1. Use `F.struct()` to create a struct column: `F.struct("col1", "col2").alias("my_struct")`
 # MAGIC 2. Use `F.first()` inside `.agg()` to get the customer info (same for all rows in a group)
 # MAGIC 3. Use `F.collect_list(F.struct("product_name", "quantity", "unit_price"))` to build an array of structs
+# MAGIC 4. `F.named_struct(F.lit("name"), F.first("customer_name"), ...)` builds the same struct with the field names inline
+# MAGIC 5. `first()` keeps ORD-003's NULL email, so `customer.email` is NULL with no extra code.
 # MAGIC
 # MAGIC **Common mistakes**:
-# MAGIC - Using `named_struct` (SQL function) in PySpark - use `F.struct()` instead
-# MAGIC - Forgetting that `F.struct()` in PySpark takes column names as strings or Column objects
-# MAGIC - Using `F.first("customer_name")` separately for each field then wrapping in `F.struct()` -
-# MAGIC   this works but you can also `F.first(F.struct("customer_name", "customer_email", "customer_tier"))`
-# MAGIC - Not handling the NULL email in ORD-003 - `first()` preserves NULL values, which is correct
+# MAGIC - Wrapping the raw columns in one struct, `F.first(F.struct("customer_name", "customer_email", "customer_tier"))`, without renaming: the fields keep the names `customer_name`, `customer_email`, `customer_tier`, so `customer.name` does not exist. Alias each field to `name`, `email`, `tier`.
 # MAGIC - Using `collect_set` instead of `collect_list` for items - `collect_set` would deduplicate identical items
 
 # COMMAND ----------

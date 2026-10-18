@@ -5,7 +5,7 @@
 # MAGIC **Topic**: ELT | **Exercises**: 8
 # MAGIC
 # MAGIC Reference solutions, hints, and common mistakes for each exercise.
-# MAGIC Try solving the exercises first before looking here.
+# MAGIC Try each exercise before you read its solution.
 
 # COMMAND ----------
 
@@ -15,10 +15,10 @@ BASE_SCHEMA = "elt"
 
 # COMMAND ----------
 # MAGIC %md
-# MAGIC ## Exercise 1: Raw Append to Bronze Preserving All Fields
+# MAGIC ## Exercise 1: Raw Load to Bronze Preserving All Fields
 # MAGIC
 # MAGIC **Hints**:
-# MAGIC 1. Bronze is the raw layer - no filtering, no deduplication, no transformation
+# MAGIC 1. Bronze keeps every source row as it arrived - no filtering, no deduplication, no cleaning
 # MAGIC 2. Use CREATE OR REPLACE TABLE ... AS SELECT to write a Delta table
 # MAGIC 3. Select ALL columns from the source table - every field lands in bronze as-is
 # MAGIC
@@ -53,7 +53,7 @@ spark.sql(f"""
 # MAGIC 3. Alias the new columns as `_ingested_at` and `_source_file`
 # MAGIC
 # MAGIC **Common mistakes**:
-# MAGIC - Using Python's `datetime.now()` instead of Spark's `current_timestamp()` (generates one value vs per-row)
+# MAGIC - Using `current_date()` instead of `current_timestamp()` (`current_date()` returns a DATE, so the TIMESTAMP check fails)
 # MAGIC - Forgetting to alias the new columns with underscore prefix
 # MAGIC - Filtering rows (bronze preserves all data including nulls and zeroes)
 
@@ -80,13 +80,14 @@ spark.sql(f"""
 # MAGIC ## Exercise 3: Bronze-to-Silver Dedup Using ROW_NUMBER
 # MAGIC
 # MAGIC **Hints**:
-# MAGIC 1. Use ROW_NUMBER() OVER (PARTITION BY order_id ORDER BY _ingested_at DESC) to rank duplicates
-# MAGIC 2. Filter WHERE rn = 1 to keep only the latest version per order_id
-# MAGIC 3. Do NOT filter NULL customer_ids - this exercise is dedup only, not cleaning
+# MAGIC 1. Rank the copies of each `order_id` with a window function, newest first.
+# MAGIC 2. ROW_NUMBER() OVER (PARTITION BY order_id ORDER BY _ingested_at DESC) gives the latest copy rank 1.
+# MAGIC 3. Keep rank 1 with an outer WHERE rn = 1 (or QUALIFY rn = 1), then select the six output columns.
+# MAGIC 4. Keep NULL `customer_id` rows: dedup and cleaning are separate silver steps
 # MAGIC
 # MAGIC **Common mistakes**:
 # MAGIC - Ordering by _ingested_at ASC instead of DESC (keeps oldest, not latest)
-# MAGIC - Filtering out NULL customer_ids (exercise only asks for dedup)
+# MAGIC - Filtering out NULL customer_ids (ORD-304 and ORD-310 must stay)
 # MAGIC - Using DISTINCT instead of ROW_NUMBER (DISTINCT does not let you pick WHICH duplicate)
 # MAGIC - Using GROUP BY with MIN/MAX (loses non-aggregated columns)
 
@@ -115,16 +116,15 @@ spark.sql(f"""
 # MAGIC ## Exercise 4: Silver Data Cleaning - Nulls, Types, Standardization
 # MAGIC
 # MAGIC **Hints**:
-# MAGIC 1. Filter with WHERE order_id IS NOT NULL AND customer_id IS NOT NULL
-# MAGIC 2. CAST(amount AS DOUBLE) converts the STRING column to numeric type
-# MAGIC 3. UPPER(TRIM(status)) standardizes status: first remove whitespace, then uppercase
+# MAGIC 1. Do it in one SELECT: a WHERE for the two key columns, and expressions for the three columns that change.
+# MAGIC 2. Use IS NOT NULL on order_id and customer_id; CAST(amount AS DOUBLE) and CAST(order_date AS DATE).
+# MAGIC 3. UPPER(TRIM(status)) removes the whitespace, then uppercases.
 # MAGIC
 # MAGIC **Common mistakes**:
 # MAGIC - Applying TRIM but forgetting UPPER (or vice versa) - both are needed
 # MAGIC - Filtering nulls with != instead of IS NOT NULL (SQL null semantics)
 # MAGIC - Forgetting to cast order_date from STRING to DATE
-# MAGIC - Using LOWER instead of UPPER (spec requires uppercase)
-# MAGIC - Casting amount after filtering (order doesn't matter here, but be explicit)
+# MAGIC - Using LOWER instead of UPPER (the validation cell checks uppercase)
 
 # COMMAND ----------
 
@@ -149,12 +149,11 @@ spark.sql(f"""
 # MAGIC
 # MAGIC **Hints**:
 # MAGIC 1. GROUP BY order_date, region gives one row per date+region combination
-# MAGIC 2. Use ROUND(AVG(amount), 2) to avoid floating point precision issues
+# MAGIC 2. Use ROUND(AVG(amount), 2) so the average has 2 decimals (93.33)
 # MAGIC 3. COUNT(*) for order_count, SUM(amount) for total_revenue
 # MAGIC
 # MAGIC **Common mistakes**:
-# MAGIC - Forgetting ROUND on avg_order_amount (floating point values fail assertions)
-# MAGIC - Using COUNT(DISTINCT order_id) instead of COUNT(*) (some order_ids could theoretically repeat)
+# MAGIC - Forgetting ROUND on avg_order_amount (93.3333... fails the 93.33 check)
 # MAGIC - Grouping by only one dimension (missing either order_date or region)
 # MAGIC - Not including all three output columns (order_count, total_revenue, avg_order_amount)
 
@@ -229,13 +228,13 @@ spark.sql(f"""
 # MAGIC
 # MAGIC **Hints**:
 # MAGIC 1. First copy existing gold to a working table
-# MAGIC 2. Aggregate silver_new_ex7 by (order_date, region) to get batch-level totals
+# MAGIC 2. Aggregate silver_new_ex7 by (order_date, region) to recompute the full totals of each combo it covers
 # MAGIC 3. MERGE matching on BOTH order_date AND region (composite key)
 # MAGIC
 # MAGIC **Common mistakes**:
 # MAGIC - Matching on only order_date or only region (need both for the composite key)
-# MAGIC - Trying to ADD to existing gold values instead of replacing (spec says update with new batch values)
-# MAGIC - Forgetting ROUND on avg_order_amount (floating point mismatch)
+# MAGIC - Adding the slice to the existing gold values (`SET total_revenue = total_revenue + source.total_revenue`): the slice already holds every order of that combo, so adding double counts, and every re-run of the MERGE adds again
+# MAGIC - Forgetting ROUND on avg_order_amount (88.3333... fails the 88.33 check)
 # MAGIC - MERGEing directly into gold_summary_ex7 instead of a copy
 # MAGIC - Not aggregating silver before MERGE (merging raw silver rows into gold aggregates)
 
@@ -279,14 +278,12 @@ spark.sql(f"""
 # MAGIC **Hints**:
 # MAGIC 1. Run six separate checks and UNION ALL the results into one table
 # MAGIC 2. For orphan check: LEFT ANTI JOIN qc_silver_ex8 with qc_customers_ex8 on customer_id
-# MAGIC 3. Cast to DOUBLE before dividing to avoid integer division (e.g., 10 / 12 = 0 in integer math)
+# MAGIC 3. In Spark SQL `/` returns a DOUBLE even for two integer counts (9 / 12 = 0.75); the CAST to DOUBLE in the solution below is optional
+# MAGIC 4. LEFT JOIN plus `WHERE c.customer_id IS NULL` gives the same count; LEFT ANTI JOIN says it in one clause
 # MAGIC
 # MAGIC **Common mistakes**:
-# MAGIC - Integer division: (12 - 3) / 12 = 0 in SQL integer math. Cast numerator to DOUBLE first.
 # MAGIC - Forgetting to UNION ALL all six checks into one table
 # MAGIC - Mixing up total_rows between tiers (bronze=12, silver=10, gold=8)
-# MAGIC - Using BETWEEN for date range (correct here, but be careful with date vs timestamp)
-# MAGIC - Using LEFT JOIN + IS NULL instead of LEFT ANTI JOIN for orphans (both work, but anti is cleaner)
 
 # COMMAND ----------
 

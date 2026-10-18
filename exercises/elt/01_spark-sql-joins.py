@@ -7,20 +7,20 @@
 # MAGIC Practice core SQL join patterns and aggregation techniques on Delta tables:
 # MAGIC inner joins, left joins with null handling, anti-joins, semi-joins, self-joins,
 # MAGIC multi-table join chains, GROUP BY with HAVING, ROLLUP, and CUBE. Every exercise
-# MAGIC reads from Delta tables in Unity Catalog and writes results to Delta output tables.
+# MAGIC reads the base tables in `db_code.elt` and writes its result as a Delta table to the **Target** it names.
 # MAGIC
 # MAGIC **Solutions**: If stuck, see `solutions/spark-sql-joins-solutions.py` for hints and answers.
 # MAGIC
 # MAGIC **Tables used** (from `00_Setup.py`):
-# MAGIC - `db_code.elt.orders` - order records (~105 rows)
-# MAGIC - `db_code.elt.customers` - customer dimension (~50 rows)
-# MAGIC - `db_code.elt.products` - product catalog (~30 rows)
-# MAGIC - `db_code.elt.order_items` - line items per order (~200 rows)
+# MAGIC - `db_code.elt.orders` - order records (106 rows)
+# MAGIC - `db_code.elt.customers` - customer dimension (50 rows)
+# MAGIC - `db_code.elt.products` - product catalog (30 rows)
+# MAGIC - `db_code.elt.order_items` - line items per order (205 rows)
 # MAGIC
 # MAGIC **Schema** (`orders`):
 # MAGIC | Column | Type | Notes |
 # MAGIC |--------|------|-------|
-# MAGIC | order_id | STRING | Primary key |
+# MAGIC | order_id | STRING | Order key (ORD-042 and ORD-067 appear twice, with different `updated_at`) |
 # MAGIC | customer_id | STRING | FK to customers (some nulls) |
 # MAGIC | product_id | STRING | FK to products |
 # MAGIC | amount | DOUBLE | Order total in USD (includes $0) |
@@ -35,7 +35,7 @@
 # MAGIC | name | STRING | Customer name (some duplicates) |
 # MAGIC | email | STRING | Email (some nulls) |
 # MAGIC | region | STRING | US-East, US-West, EU-West, EU-East, APAC |
-# MAGIC | tier | STRING | bronze, silver, gold, platinum |
+# MAGIC | tier | STRING | bronze, silver, gold, platinum, inactive |
 # MAGIC | signup_date | DATE | Registration date |
 # MAGIC
 # MAGIC **Schema** (`products`):
@@ -65,18 +65,19 @@
 
 # COMMAND ----------
 # MAGIC %md
-# MAGIC **Setup complete.** Exercise tables are in `db_code.spark_sql_joins` schema.
-# MAGIC Base tables (orders, customers, products, order_items) are in `db_code.elt` schema.
-# MAGIC Each exercise reads from base tables and writes to its own output Delta table:
-# MAGIC - Ex 1 (easy): Inner join orders + customers, write to `joins_ex1_output`
-# MAGIC - Ex 2 (easy): Left join with COALESCE null handling, write to `joins_ex2_output`
-# MAGIC - Ex 3 (medium): Anti-join to find orphan order_items, write to `joins_ex3_output`
-# MAGIC - Ex 4 (medium): Semi-join to find customers with orders, write to `joins_ex4_output`
-# MAGIC - Ex 5 (medium): Self-join for same-day orders by same customer, write to `joins_ex5_output`
-# MAGIC - Ex 6 (medium): Multi-table join chain across 4 tables, write to `joins_ex6_output`
-# MAGIC - Ex 7 (medium): GROUP BY with HAVING for high-value customers, write to `joins_ex7_output`
-# MAGIC - Ex 8 (hard): ROLLUP for hierarchical subtotals, write to `joins_ex8_rollup`
-# MAGIC - Ex 9 (hard): CUBE for all-combination subtotals, write to `joins_ex9_cube`
+# MAGIC Your output tables go in `db_code.spark_sql_joins`; the base tables are in `db_code.elt`.
+# MAGIC
+# MAGIC The setup notebook sets the Python variables `CATALOG` = `db_code`, `SCHEMA` = `spark_sql_joins` and `BASE_SCHEMA` = `elt`. The TODO cells are Python: run SQL with `spark.sql(f"...")`.
+# MAGIC
+# MAGIC - Ex 1 (easy): inner join orders + customers
+# MAGIC - Ex 2 (easy): left join with COALESCE null handling
+# MAGIC - Ex 3 (medium): anti-join to find orphan order_items
+# MAGIC - Ex 4 (medium): semi-join to find customers with a cancelled order
+# MAGIC - Ex 5 (medium): self-join for same-day orders by the same customer
+# MAGIC - Ex 6 (medium): join chain across 4 tables with QUALIFY
+# MAGIC - Ex 7 (medium): GROUP BY with HAVING for high-value customers
+# MAGIC - Ex 8 (hard): ROLLUP for hierarchical subtotals
+# MAGIC - Ex 9 (hard): CUBE for all-combination subtotals
 
 # COMMAND ----------
 # MAGIC %md
@@ -84,16 +85,15 @@
 # MAGIC **Difficulty**: Easy | **Time**: ~5 min
 # MAGIC
 # MAGIC Join orders with customers to get enriched order records. Only include orders that
-# MAGIC have a matching customer. Write the result as a Delta table.
+# MAGIC have a matching customer.
 # MAGIC
-# MAGIC **Source**: `db_code.elt.orders` (~105 rows, some with NULL customer_id) and `db_code.elt.customers` (~50 rows)
+# MAGIC **Source**: `db_code.elt.orders` (106 rows, some with NULL customer_id) and `db_code.elt.customers` (50 rows)
 # MAGIC
-# MAGIC **Target**: Write to `db_code.spark_sql_joins.joins_ex1_output`
+# MAGIC **Target**: Write to `db_code.spark_sql_joins.joins_ex1_output`. Expect 103 rows (the 3 orders with NULL `customer_id` drop out).
 # MAGIC
 # MAGIC **Requirements**:
 # MAGIC 1. Inner join `orders` with `customers` on `customer_id`
 # MAGIC 2. Select: `order_id`, `customer_id`, `amount`, `status`, `order_date`, customer `name`, customer `region`, customer `tier`
-# MAGIC 3. Write the result as a Delta table at `{CATALOG}.{SCHEMA}.joins_ex1_output`
 # MAGIC
 # MAGIC **Constraints**:
 # MAGIC - Orders with NULL `customer_id` should be excluded (inner join handles this)
@@ -132,16 +132,14 @@ print("Exercise 1 passed!")
 # MAGIC
 # MAGIC Left join orders with customers so ALL orders are preserved, even those without a
 # MAGIC matching customer. Replace NULL customer names with 'Unknown'.
-# MAGIC Write the result as a Delta table.
 # MAGIC
-# MAGIC **Source**: `db_code.elt.orders` (~105 rows) and `db_code.elt.customers` (~50 rows)
+# MAGIC **Source**: `db_code.elt.orders` (106 rows) and `db_code.elt.customers` (50 rows)
 # MAGIC
 # MAGIC **Target**: Write to `db_code.spark_sql_joins.joins_ex2_output`. Should have the same row count as orders.
 # MAGIC
 # MAGIC **Requirements**:
 # MAGIC 1. Left join `orders` with `customers` on `customer_id`
 # MAGIC 2. Select: `order_id`, `customer_id`, `amount`, `status`, `order_date`, customer `name` (COALESCE to 'Unknown' if NULL), customer `region`
-# MAGIC 3. Write the result as a Delta table at `{CATALOG}.{SCHEMA}.joins_ex2_output`
 # MAGIC
 # MAGIC **Constraints**:
 # MAGIC - ALL orders must appear in the output (including those with NULL customer_id)
@@ -182,14 +180,13 @@ print("Exercise 2 passed!")
 # MAGIC `orders` table (orphan records). This is a common data quality check in production
 # MAGIC pipelines. Write the orphans as a Delta table for downstream investigation.
 # MAGIC
-# MAGIC **Source**: `db_code.elt.order_items` (~200 rows, has orphan order_ids) and `db_code.elt.orders` (~105 rows)
+# MAGIC **Source**: `db_code.elt.order_items` (205 rows, has orphan order_ids) and `db_code.elt.orders` (106 rows)
 # MAGIC
-# MAGIC **Target**: Write to `db_code.spark_sql_joins.joins_ex3_output`. Contains only orphan line items.
+# MAGIC **Target**: Write to `db_code.spark_sql_joins.joins_ex3_output`. Contains only orphan line items. Expect 10 rows: two line items each for `ORD-201` through `ORD-205`.
 # MAGIC
 # MAGIC **Requirements**:
 # MAGIC 1. Find all rows in `order_items` where `order_id` does NOT exist in `orders`
 # MAGIC 2. Select all columns from `order_items` for orphan records
-# MAGIC 3. Write the result as a Delta table at `{CATALOG}.{SCHEMA}.joins_ex3_output`
 # MAGIC
 # MAGIC **Constraints**:
 # MAGIC - Use LEFT ANTI JOIN (Databricks/Spark SQL extension, not available in standard SQL)
@@ -227,21 +224,20 @@ print("Exercise 3 passed!")
 
 # COMMAND ----------
 # MAGIC %md
-# MAGIC ## Exercise 4: Semi-Join to Find Customers Who Have Orders
+# MAGIC ## Exercise 4: Semi-Join to Find Customers with a Cancelled Order
 # MAGIC **Difficulty**: Medium | **Time**: ~10 min
 # MAGIC
-# MAGIC Find all customers who have placed at least one order. Unlike INNER JOIN,
+# MAGIC Find all customers who have at least one cancelled order. Unlike INNER JOIN,
 # MAGIC a semi-join returns only columns from the left table and never duplicates rows,
-# MAGIC even when a customer has multiple orders.
+# MAGIC even when a customer has several matching orders (CUST-004 has two cancelled orders).
 # MAGIC
-# MAGIC **Source**: `db_code.elt.customers` (~50 rows) and `db_code.elt.orders` (~105 rows)
+# MAGIC **Source**: `db_code.elt.customers` (50 rows) and `db_code.elt.orders` (106 rows)
 # MAGIC
-# MAGIC **Target**: Write to `db_code.spark_sql_joins.joins_ex4_output`. One row per customer who has orders.
+# MAGIC **Target**: Write to `db_code.spark_sql_joins.joins_ex4_output`. Expect 9 rows, one per customer with a cancelled order (CUST-004, CUST-008, CUST-013, CUST-017, CUST-021, CUST-023, CUST-031, CUST-036, CUST-046).
 # MAGIC
 # MAGIC **Requirements**:
-# MAGIC 1. Find customers who have at least one matching row in `orders` on `customer_id`
+# MAGIC 1. Find customers who have at least one order with `status = 'cancelled'` in `orders` (match on `customer_id`)
 # MAGIC 2. Select all columns from `customers` only
-# MAGIC 3. Write the result as a Delta table at `{CATALOG}.{SCHEMA}.joins_ex4_output`
 # MAGIC
 # MAGIC **Constraints**:
 # MAGIC - Use LEFT SEMI JOIN (Databricks/Spark SQL extension)
@@ -251,7 +247,7 @@ print("Exercise 3 passed!")
 # COMMAND ----------
 
 # EXERCISE_KEY: spark_sql_joins_ex4
-# TODO: Semi-join customers against orders, write to Delta
+# TODO: Semi-join customers against their cancelled orders, write to Delta
 
 # Your code here
 
@@ -261,7 +257,7 @@ print("Exercise 3 passed!")
 # Validate Exercise 4
 result = spark.table(f"{CATALOG}.{SCHEMA}.joins_ex4_output")
 
-# Row count: customers who have at least one order
+# Row count: customers who have at least one cancelled order
 assert result.count() == JOINS_EX4_EXPECTED_COUNT, \
     f"Expected {JOINS_EX4_EXPECTED_COUNT} rows, got {result.count()}"
 # Must have customer columns only
@@ -286,19 +282,18 @@ print("Exercise 4 passed!")
 # MAGIC Self-join the orders table to find pairs of orders where the same customer
 # MAGIC placed multiple orders on the same day. Each pair should appear once (not twice).
 # MAGIC
-# MAGIC **Source**: `db_code.elt.orders` (~105 rows). Same-day repeat orders live in
+# MAGIC **Source**: `db_code.elt.orders` (106 rows). Same-day repeat orders belong to
 # MAGIC CUST-003 (2025-07-04), CUST-047 (2025-09-08) and CUST-050 (2025-09-12, three orders).
 # MAGIC Note that the duplicate rows for ORD-042 and ORD-067 do NOT form pairs - both rows
 # MAGIC share a single `order_id`, so `o1.order_id < o2.order_id` is never true for them.
 # MAGIC
-# MAGIC **Target**: Write to `db_code.spark_sql_joins.joins_ex5_output`. One row per order pair.
+# MAGIC **Target**: Write to `db_code.spark_sql_joins.joins_ex5_output`. One row per order pair. Expect 5 pairs: one each for CUST-003 and CUST-047, three for CUST-050.
 # MAGIC
 # MAGIC **Requirements**:
 # MAGIC 1. Self-join `orders` to itself on `customer_id` AND `order_date`
 # MAGIC 2. Avoid pairing an order with itself and avoid duplicate pairs by requiring `o1.order_id < o2.order_id`
 # MAGIC 3. Exclude rows where `customer_id` IS NULL
 # MAGIC 4. Select: `o1.customer_id`, `o1.order_date`, `o1.order_id` AS `order_id_1`, `o2.order_id` AS `order_id_2`, `o1.amount` AS `amount_1`, `o2.amount` AS `amount_2`
-# MAGIC 5. Write the result as a Delta table at `{CATALOG}.{SCHEMA}.joins_ex5_output`
 # MAGIC
 # MAGIC **Constraints**:
 # MAGIC - Each pair appears exactly once (order_id_1 < order_id_2)
@@ -344,11 +339,11 @@ print("Exercise 5 passed!")
 # MAGIC
 # MAGIC Build a denormalized order detail table by joining 4 tables: orders, customers,
 # MAGIC order_items, and products. Use QUALIFY (Databricks SQL extension) to keep only the
-# MAGIC highest-quantity line item per order. Write the result as a Delta table.
+# MAGIC highest-quantity line item per order.
 # MAGIC
 # MAGIC **Source**: `db_code.elt.orders`, `db_code.elt.customers`, `db_code.elt.order_items`, `db_code.elt.products`
 # MAGIC
-# MAGIC **Target**: Write to `db_code.spark_sql_joins.joins_ex6_output`. One row per order (top line item only).
+# MAGIC **Target**: Write to `db_code.spark_sql_joins.joins_ex6_output`. One row per order (top line item only). Expect 92 rows; `ORD-001` keeps its quantity-4 line item (`Delta Lake Essentials Guide`).
 # MAGIC
 # MAGIC **Requirements**:
 # MAGIC 1. Join `orders` with `customers` on `customer_id` (inner join)
@@ -357,9 +352,7 @@ print("Exercise 5 passed!")
 # MAGIC 4. Select: `order_id`, customer `name` AS `customer_name`, customer `region`,
 # MAGIC    `order_items.quantity`, `order_items.unit_price`, product `name` AS `product_name`,
 # MAGIC    product `category`, orders `status`
-# MAGIC 5. Use QUALIFY with ROW_NUMBER() to keep only the line item with the highest
-# MAGIC    quantity per order_id (partition by order_id, order by quantity DESC)
-# MAGIC 6. Write the result as a Delta table at `{CATALOG}.{SCHEMA}.joins_ex6_output`
+# MAGIC 5. Use QUALIFY with ROW_NUMBER() to keep only the line item with the highest quantity per order_id (partition by order_id, order by quantity DESC, then updated_at DESC so the latest version of a duplicated order wins)
 # MAGIC
 # MAGIC **Constraints**:
 # MAGIC - Use QUALIFY (Databricks SQL window filter, not standard SQL)
@@ -390,10 +383,10 @@ assert "product_name" in result.columns, "Missing 'product_name' (aliased from p
 assert "region" in result.columns, "Missing 'region' from customers"
 assert "category" in result.columns, "Missing 'category' from products"
 assert "quantity" in result.columns, "Missing 'quantity' from order_items"
-# Verify QUALIFY worked: for orders with multiple items, we should have the max quantity
-sample = result.filter("order_id = 'ORD-001'")
-if sample.count() > 0:
-    assert sample.count() == 1, "ORD-001 should appear exactly once after QUALIFY"
+# QUALIFY must keep the highest-quantity line item per order
+row = result.filter("order_id = 'ORD-001'").first()
+assert row is not None, "ORD-001 is missing from the output"
+assert row.quantity == 4, f"ORD-001 should keep its highest-quantity line item, got quantity {row.quantity}"
 
 print("Exercise 6 passed!")
 
@@ -405,17 +398,16 @@ print("Exercise 6 passed!")
 # MAGIC Aggregate orders per customer and filter to only high-value customers using HAVING.
 # MAGIC This is a core reporting pattern: aggregate first, filter the groups second.
 # MAGIC
-# MAGIC **Source**: `db_code.elt.orders` (~105 rows) and `db_code.elt.customers` (~50 rows)
+# MAGIC **Source**: `db_code.elt.orders` (106 rows) and `db_code.elt.customers` (50 rows)
 # MAGIC
-# MAGIC **Target**: Write to `db_code.spark_sql_joins.joins_ex7_output`. One row per qualifying customer.
+# MAGIC **Target**: Write to `db_code.spark_sql_joins.joins_ex7_output`. One row per qualifying customer. Expect 14 customers; `CUST-044` has `order_count` 2 and `total_spent` 1050.0. Count every order row as it is (do not deduplicate ORD-042 or ORD-067), so `CUST-034` has `order_count` 3.
 # MAGIC
 # MAGIC **Requirements**:
-# MAGIC 1. Group `orders` by `customer_id`
-# MAGIC 2. Calculate: COUNT(*) AS `order_count`, SUM(amount) AS `total_spent`, AVG(amount) AS `avg_order_value`
-# MAGIC 3. Use HAVING to keep only customers with `total_spent > 500`
-# MAGIC 4. Exclude rows where `customer_id` IS NULL
-# MAGIC 5. Join with `customers` to add `name` and `region`
-# MAGIC 6. Write the result as a Delta table at `{CATALOG}.{SCHEMA}.joins_ex7_output`
+# MAGIC 1. Exclude rows where `customer_id` IS NULL
+# MAGIC 2. Group `orders` by `customer_id`
+# MAGIC 3. Calculate: COUNT(*) AS `order_count`, SUM(amount) AS `total_spent`, AVG(amount) AS `avg_order_value`
+# MAGIC 4. Use HAVING to keep only customers with `total_spent > 500`
+# MAGIC 5. Inner join the result with `customers` on `customer_id` and select `customer_id`, `name`, `region`, `order_count`, `total_spent`, `avg_order_value`
 # MAGIC
 # MAGIC **Constraints**:
 # MAGIC - Use HAVING (not WHERE) to filter on the aggregated total
@@ -469,7 +461,7 @@ print("Exercise 7 passed!")
 # MAGIC
 # MAGIC **Source**: `db_code.elt.orders` and `db_code.elt.customers` (joined on customer_id)
 # MAGIC
-# MAGIC **Target**: Write to `db_code.spark_sql_joins.joins_ex8_rollup`
+# MAGIC **Target**: Write to `db_code.spark_sql_joins.joins_ex8_rollup`. The grand total row has `order_count` 42.
 # MAGIC
 # MAGIC **Requirements**:
 # MAGIC 1. Inner join `orders` with `customers` on `customer_id`
@@ -480,13 +472,11 @@ print("Exercise 7 passed!")
 # MAGIC    - Grand total (region = NULL, tier = NULL)
 # MAGIC 4. Select: `region`, `tier`, COUNT(*) AS `order_count`, SUM(amount) AS `total_revenue`,
 # MAGIC    AVG(amount) AS `avg_order_value`
-# MAGIC 5. Write as Delta table at `{CATALOG}.{SCHEMA}.joins_ex8_rollup`
 # MAGIC
 # MAGIC **Constraints**:
 # MAGIC - ROLLUP produces hierarchical subtotals (left-to-right only)
 # MAGIC - Must have exactly 1 grand total row where both region and tier are NULL
 # MAGIC - Must have per-region subtotals where tier is NULL but region is NOT NULL
-# MAGIC - Use HAVING to exclude groups with zero revenue (if any)
 
 # COMMAND ----------
 
@@ -519,9 +509,10 @@ assert region_subtotals.count() > 0, \
 tier_only = rollup.filter("region IS NULL AND tier IS NOT NULL")
 assert tier_only.count() == 0, \
     "ROLLUP should NOT have per-tier subtotals (that is what CUBE adds)"
-# Grand total order_count should equal sum of detail rows
+# Grand total counts completed orders only
 grand_count = grand_total.select("order_count").collect()[0][0]
-assert grand_count > 0, "Grand total order_count should be positive"
+assert grand_count == JOINS_EX8_EXPECTED_GRAND_COUNT, \
+    f"Grand total order_count should be {JOINS_EX8_EXPECTED_GRAND_COUNT} (completed orders only), got {grand_count}"
 
 print("Exercise 8 passed!")
 
@@ -537,7 +528,7 @@ print("Exercise 8 passed!")
 # MAGIC
 # MAGIC **Source**: `db_code.elt.orders` and `db_code.elt.customers` (joined on customer_id)
 # MAGIC
-# MAGIC **Target**: Write to `db_code.spark_sql_joins.joins_ex9_cube`
+# MAGIC **Target**: Write to `db_code.spark_sql_joins.joins_ex9_cube`. The grand total row has `order_count` 103: every order row with a matching customer, both versions of ORD-042 and ORD-067 included (do not deduplicate).
 # MAGIC
 # MAGIC **Requirements**:
 # MAGIC 1. Inner join `orders` with `customers` on `customer_id`
@@ -545,7 +536,6 @@ print("Exercise 8 passed!")
 # MAGIC    - Per region+status, per region only, per status only, and grand total
 # MAGIC 3. Select: `region`, `status`, COUNT(*) AS `order_count`, SUM(amount) AS `total_revenue`,
 # MAGIC    AVG(amount) AS `avg_order_value`
-# MAGIC 4. Write as Delta table at `{CATALOG}.{SCHEMA}.joins_ex9_cube`
 # MAGIC
 # MAGIC **Constraints**:
 # MAGIC - CUBE produces ALL dimension combinations (more rows than ROLLUP would)
@@ -587,8 +577,9 @@ assert region_only.count() > 0, \
 # CUBE: has detail rows (both NOT NULL)
 detail_rows = cube.filter("region IS NOT NULL AND status IS NOT NULL")
 assert detail_rows.count() > 0, "CUBE should have detail rows (both dimensions specified)"
-# Grand total order_count should be positive
+# Grand total covers every order with a matching customer (no status filter)
 grand_count = grand_total.select("order_count").collect()[0][0]
-assert grand_count > 0, "Grand total order_count should be positive"
+assert grand_count == JOINS_EX1_EXPECTED_COUNT, \
+    f"Grand total order_count should be {JOINS_EX1_EXPECTED_COUNT} (all statuses), got {grand_count}"
 
 print("Exercise 9 passed!")

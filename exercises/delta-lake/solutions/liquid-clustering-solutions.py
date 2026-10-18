@@ -4,20 +4,20 @@
 # MAGIC # Liquid Clustering - Solutions
 # MAGIC **Topic**: Delta Lake | **Exercises**: 6 | **Checkpoints**: 1
 # MAGIC
-# MAGIC Reference solutions, hints, and common mistakes for each exercise.
-# MAGIC Try solving the exercises first before looking here.
+# MAGIC Reference solutions, hints and common mistakes for each exercise in `05_liquid-clustering.py`.
+# MAGIC Try each exercise before you read its section here.
 
 # COMMAND ----------
 # MAGIC %md
 # MAGIC ## Exercise 1: Create a Liquid Clustered Table
 # MAGIC
 # MAGIC **Hints**:
-# MAGIC 1. Add `CLUSTER BY (column)` between the table name and AS SELECT
-# MAGIC 2. The syntax is: `CREATE TABLE name CLUSTER BY (col) AS SELECT ...`
-# MAGIC 3. Liquid clustering replaces both PARTITION BY and ZORDER
+# MAGIC 1. Liquid clustering replaces both partitioning (`PARTITIONED BY`) and `ZORDER`
+# MAGIC 2. Add `CLUSTER BY (column)` between the table name and `AS SELECT`
+# MAGIC 3. The syntax is: `CREATE TABLE name CLUSTER BY (col) AS SELECT ...`
 # MAGIC
 # MAGIC **Common mistakes**:
-# MAGIC - Using `PARTITION BY` instead of `CLUSTER BY` (different feature)
+# MAGIC - Using `PARTITIONED BY` instead of `CLUSTER BY` (partitioning is a different layout, and a table cannot have both)
 # MAGIC - Putting CLUSTER BY after AS SELECT (must come before)
 
 # COMMAND ----------
@@ -40,12 +40,12 @@ spark.sql(f"""
 # MAGIC
 # MAGIC **Hints**:
 # MAGIC 1. Same OPTIMIZE syntax as regular compaction
-# MAGIC 2. No ZORDER BY clause needed - liquid clustering is automatic
+# MAGIC 2. No ZORDER BY clause: OPTIMIZE reads the clustering keys from the table definition
 # MAGIC 3. OPTIMIZE both compacts files AND applies clustering layout
 # MAGIC
 # MAGIC **Common mistakes**:
-# MAGIC - Adding ZORDER BY on a liquid clustered table (not needed, may conflict)
-# MAGIC - Expecting clustering without running OPTIMIZE (clustering happens during OPTIMIZE)
+# MAGIC - Adding `ZORDER BY` to OPTIMIZE on a liquid clustered table (fails: `ZORDER BY` can't be used on tables that use liquid clustering)
+# MAGIC - Expecting small writes to be clustered without running OPTIMIZE (only writes above a size threshold cluster on write)
 
 # COMMAND ----------
 
@@ -62,7 +62,6 @@ spark.sql(f"OPTIMIZE {CATALOG}.{SCHEMA}.lc_ex2_orders")
 # MAGIC 3. Also check `numFiles` to see the result of optimization
 # MAGIC
 # MAGIC **Common mistakes**:
-# MAGIC - Looking for clustering in SHOW TBLPROPERTIES (it's in DESCRIBE DETAIL)
 # MAGIC - Confusing `partitionColumns` with `clusteringColumns` (different arrays)
 
 # COMMAND ----------
@@ -82,31 +81,36 @@ spark.sql(f"""
 # MAGIC ## Exercise 4: Migrate from ZORDER to Liquid Clustering
 # MAGIC
 # MAGIC **Hints**:
-# MAGIC 1. `ALTER TABLE ... CLUSTER BY (column)` adds liquid clustering
-# MAGIC 2. Works on any unpartitioned Delta table (partitioned tables need migration)
-# MAGIC 3. After ALTER, the next OPTIMIZE will use liquid clustering instead of ZORDER
+# MAGIC 1. You can add liquid clustering in place to an unpartitioned Delta table like this one. A partitioned table needs `ALTER TABLE ... REPLACE PARTITIONED BY WITH CLUSTER BY` (Databricks Runtime 18.1+) or a copy into a new table (Exercise 7)
+# MAGIC 2. `ALTER TABLE ... CLUSTER BY (column)` adds liquid clustering
+# MAGIC 3. The ALTER does not cluster rows already written: run `OPTIMIZE ... FULL` once, then later OPTIMIZE runs keep new data clustered
 # MAGIC
 # MAGIC **Common mistakes**:
-# MAGIC - Trying this on a partitioned table (fails - must be unpartitioned)
-# MAGIC - Forgetting to run OPTIMIZE after (ALTER sets the config, OPTIMIZE applies it)
+# MAGIC - Running plain `ALTER TABLE ... CLUSTER BY` on a partitioned table (fails; see Exercise 7)
+# MAGIC - Following the ALTER with plain `OPTIMIZE` (clustering is not applied to previously written data; run `OPTIMIZE ... FULL` once)
 
 # COMMAND ----------
 
 # EXERCISE_KEY: lc_ex4
+# Enable liquid clustering (metadata only)
 spark.sql(f"ALTER TABLE {CATALOG}.{SCHEMA}.lc_ex4_orders CLUSTER BY (status)")
+
+# In production, follow the ALTER with one OPTIMIZE FULL: it clusters the rows already in the table
+spark.sql(f"OPTIMIZE {CATALOG}.{SCHEMA}.lc_ex4_orders FULL")
 
 # COMMAND ----------
 # MAGIC %md
-# MAGIC ## Exercise 5: Change Cluster Keys (Metadata-Only)
+# MAGIC ## Exercise 5: Change Clustering Keys (Metadata-Only)
 # MAGIC
 # MAGIC **Hints**:
 # MAGIC 1. Run `DESCRIBE DETAIL` to see `numFiles` before any changes
 # MAGIC 2. `ALTER TABLE ... CLUSTER BY` is instant - it only changes metadata
-# MAGIC 3. Run `DESCRIBE DETAIL` again after ALTER - `numFiles` is identical (proof!)
+# MAGIC 3. Run `DESCRIBE DETAIL` again after ALTER: `numFiles` is identical
+# MAGIC 4. After a key change, `OPTIMIZE ... FULL` re-clusters every existing row; plain `OPTIMIZE` is incremental and leaves data already clustered by the old key as it is
 # MAGIC
 # MAGIC **Common mistakes**:
 # MAGIC - Expecting files to change after ALTER (they don't until OPTIMIZE)
-# MAGIC - Forgetting to OPTIMIZE after changing keys (data stays in old layout)
+# MAGIC - Relying on plain `OPTIMIZE` after changing keys (it is incremental: data already clustered by `status` keeps that layout; `OPTIMIZE ... FULL` rewrites every row by `order_date`)
 
 # COMMAND ----------
 
@@ -117,13 +121,13 @@ files_before_alter = spark.sql(f"DESCRIBE DETAIL {CATALOG}.{SCHEMA}.lc_ex5_order
 # Step 2: Change clustering key (metadata-only)
 spark.sql(f"ALTER TABLE {CATALOG}.{SCHEMA}.lc_ex5_orders CLUSTER BY (order_date)")
 
-# Step 3: Check files after ALTER - should be identical!
+# Step 3: Check files after ALTER (unchanged)
 files_after_alter = spark.sql(f"DESCRIBE DETAIL {CATALOG}.{SCHEMA}.lc_ex5_orders").select("numFiles").collect()[0][0]
 
-# Step 4: OPTIMIZE to actually re-cluster
-spark.sql(f"OPTIMIZE {CATALOG}.{SCHEMA}.lc_ex5_orders")
+# Step 4: OPTIMIZE FULL re-clusters existing rows with the new key
+spark.sql(f"OPTIMIZE {CATALOG}.{SCHEMA}.lc_ex5_orders FULL")
 
-# Step 5: Check files after OPTIMIZE - now compacted
+# Step 5: Check files after OPTIMIZE FULL - now compacted
 files_after_optimize = spark.sql(f"DESCRIBE DETAIL {CATALOG}.{SCHEMA}.lc_ex5_orders").select("numFiles").collect()[0][0]
 
 spark.sql(f"""
@@ -135,16 +139,16 @@ spark.sql(f"""
 
 # COMMAND ----------
 # MAGIC %md
-# MAGIC ## Exercise 6: Multi-Column Cluster Keys
+# MAGIC ## Exercise 6: Multi-Column Clustering Keys
 # MAGIC
 # MAGIC **Hints**:
 # MAGIC 1. List multiple columns in CLUSTER BY: `CLUSTER BY (col1, col2)`
 # MAGIC 2. Up to 4 clustering columns are supported
-# MAGIC 3. Order matters less than with ZORDER - liquid clustering handles it
+# MAGIC 3. Key order does not matter: `CLUSTER BY (status, customer_id)` and `CLUSTER BY (customer_id, status)` both pass
 # MAGIC
 # MAGIC **Common mistakes**:
 # MAGIC - Using more than 4 columns (limit is 4)
-# MAGIC - Using high-cardinality columns like order_id (low benefit, similar to primary key)
+# MAGIC - Clustering on a column nobody filters by (keys should be the columns your queries filter on most; high cardinality is fine)
 
 # COMMAND ----------
 
@@ -161,13 +165,13 @@ spark.sql(f"""
 # MAGIC ## Exercise 7: Migrate Partitioned Table to Liquid Clustering
 # MAGIC
 # MAGIC **Hints**:
-# MAGIC 1. Step 1: CREATE TABLE ... CLUSTER BY (status) AS SELECT * FROM partitioned_table
-# MAGIC 2. Step 2: OPTIMIZE the new table
-# MAGIC 3. You can't ALTER a partitioned table to add CLUSTER BY - must recreate
+# MAGIC 1. Plain `ALTER TABLE ... CLUSTER BY` fails on a partitioned table. Databricks Runtime 18.1+ can convert it in place with `ALTER TABLE ... REPLACE PARTITIONED BY WITH CLUSTER BY`; here you build a new table instead
+# MAGIC 2. `CREATE TABLE ... CLUSTER BY (status) AS SELECT * FROM db_code.liquid_clustering.lc_ex7_partitioned` creates and fills it in one statement
+# MAGIC 3. Run `OPTIMIZE` on `lc_ex7_clustered` afterwards
 # MAGIC
 # MAGIC **Common mistakes**:
-# MAGIC - Trying ALTER TABLE CLUSTER BY on a partitioned table (fails)
-# MAGIC - Forgetting to OPTIMIZE after creation (clustering isn't applied until OPTIMIZE)
+# MAGIC - Running plain `ALTER TABLE ... CLUSTER BY` on `lc_ex7_partitioned` (fails on a partitioned table)
+# MAGIC - Forgetting to OPTIMIZE after creation (a 5-row copy is far below the cluster-on-write threshold, so nothing is clustered until OPTIMIZE)
 # MAGIC - Losing data by not copying all rows (always verify row counts)
 
 # COMMAND ----------

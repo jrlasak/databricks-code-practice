@@ -2,26 +2,23 @@
 # COMMAND ----------
 # MAGIC %md
 # MAGIC # 00_Setup: Shared Data Generator
-# MAGIC **Run this notebook once** before solving any exercise. It creates the `db_code` catalog,
-# MAGIC zone schemas, per-topic schemas, and all base tables that exercise notebooks reference.
+# MAGIC Every exercise notebook runs this notebook for you in its second cell (`%run ./00_Setup`), so you never run it by hand. It creates the `db_code` catalog, its schemas, the base tables in `db_code.elt` and the volumes the ingestion notebooks use.
 # MAGIC
 # MAGIC **What it creates**:
 # MAGIC - Catalog: `db_code`
 # MAGIC - Zone schemas: `delta_lake`, `elt`, `streaming`, `production`, `governance`, `performance`, `fundamentals`
 # MAGIC - Per-topic schemas: `spark_sql_joins`, `window_functions`, `pyspark_transformations`, `auto_loader`, `batch_ingestion`, `medallion_architecture`, `complex_data_types`
-# MAGIC - Base tables (in `elt`): `orders` (~105 rows), `customers` (~50 rows), `products` (~30 rows),
-# MAGIC   `events` (~150 rows), `order_items` (~200 rows)
+# MAGIC - Base tables (in `elt`): `orders` (106 rows), `customers` (50 rows), `products` (30 rows), `events` (152 rows), `order_items` (205 rows)
 # MAGIC - Volumes: `auto_loader.source_files`, `auto_loader.checkpoints`, `batch_ingestion.source_files`
 # MAGIC
-# MAGIC **Idempotent**: Safe to run multiple times. Checks if base tables already exist with
-# MAGIC correct row counts before recreating. Schema creation is always idempotent via IF NOT EXISTS.
+# MAGIC **Safe to rerun**: when the five base tables already hold exactly the expected rows (106 orders, 50 customers, 30 products, 152 events, 205 order items) and the spot-checked values match, the notebook skips rebuilding them. Schemas and volumes are created with `IF NOT EXISTS`.
 # MAGIC
 # MAGIC **Deterministic**: All data is fixed. No randomness. Same data for everyone,
 # MAGIC enabling exact-value assertions in exercises.
 
 # COMMAND ----------
 
-# -- Catalog and Schemas --
+# Catalog and schemas
 
 CATALOG = "db_code"
 
@@ -54,22 +51,16 @@ for schema in [
 
 # COMMAND ----------
 
-# -- Idempotency Check --
-# If base tables already exist with correct row counts, skip recreation.
-# This avoids redundant writes on repeated runs and respects schema quotas.
-#
-# Row counts alone are not enough: a table created before the same-day repeat orders
-# (ORD-101..ORD-104) were added still passes the count check but breaks the self-join
-# exercise. So we also check for the data shape those rows provide and rebuild if missing.
+# Rerun check
+# If the base tables already hold exactly the expected data, skip the rebuild.
+# Every exercise notebook runs this notebook, so this keeps reruns fast.
+# Anything missing or different (a row count or a spot-checked value) rebuilds every base table.
 
+_EXPECTED_COUNTS = {"orders": 106, "customers": 50, "products": 30, "events": 152, "order_items": 205}
 _SETUP_SKIP = False
 try:
-    _orders_ct = spark.table(f"{CATALOG}.elt.orders").count()
-    _customers_ct = spark.table(f"{CATALOG}.elt.customers").count()
-    _products_ct = spark.table(f"{CATALOG}.elt.products").count()
-    _events_ct = spark.table(f"{CATALOG}.elt.events").count()
-    _items_ct = spark.table(f"{CATALOG}.elt.order_items").count()
-    # Customers with 2+ DISTINCT order_ids on the same order_date (self-join pairs)
+    _counts = {t: spark.table(f"{CATALOG}.elt.{t}").count() for t in _EXPECTED_COUNTS}
+    # Customers with 2+ distinct order_ids on one order_date: the self-join exercise needs all 3
     _same_day_ct = spark.sql(f"""
         SELECT COUNT(*) AS cnt FROM (
             SELECT customer_id, order_date
@@ -78,22 +69,26 @@ try:
             GROUP BY customer_id, order_date
             HAVING COUNT(DISTINCT order_id) > 1
         )
-    """).collect()[0].cnt
-    if _same_day_ct == 0:
-        print("Base orders table predates the same-day repeat orders - recreating base tables.")
-    if _same_day_ct > 0 and _orders_ct >= 100 and _customers_ct >= 50 and _products_ct >= 30 and _events_ct >= 150 and _items_ct >= 200:
+    """).first()["cnt"]
+    _null_cust_ct = spark.sql(f"SELECT COUNT(*) AS c FROM {CATALOG}.elt.orders WHERE customer_id IS NULL").first()["c"]
+    _ord067_amount = spark.sql(f"SELECT max(amount) AS a FROM {CATALOG}.elt.orders WHERE order_id = 'ORD-067'").first()["a"]
+    _ord091_year = spark.sql(f"SELECT max(year(order_date)) AS y FROM {CATALOG}.elt.orders WHERE order_id = 'ORD-091'").first()["y"]
+    _orphan_items_ct = spark.sql(f"SELECT COUNT(*) AS c FROM {CATALOG}.elt.order_items WHERE order_id >= 'ORD-201'").first()["c"]
+    if (_counts == _EXPECTED_COUNTS and _same_day_ct == 3 and _null_cust_ct == 3
+            and _ord067_amount == 340.0 and _ord091_year == 2099 and _orphan_items_ct == 10):
         _SETUP_SKIP = True
         print("=" * 60)
-        print(f"  Base tables already exist with correct row counts. Skipping creation.")
-        print(f"  orders={_orders_ct}, customers={_customers_ct}, products={_products_ct}, events={_events_ct}, order_items={_items_ct}")
+        print("  Base tables already exist with the expected data. Skipping creation.")
+        print(f"  {_counts}")
         print("=" * 60)
 except Exception:
     _SETUP_SKIP = False
 
 # COMMAND ----------
 
-# -- Orders Table --
-# ~105 rows. Primary table referenced by most exercises.
+# Orders table
+# 106 rows: ORD-001..ORD-104, plus a second row for ORD-042 and ORD-067.
+# Read by the Spark SQL joins notebook (all 9 exercises) and the PySpark transformations setup (Ex 1, 3, 4, 5, 8).
 #
 # Edge cases built in:
 #   - Duplicates: ORD-042 and ORD-067 appear twice with different updated_at
@@ -101,13 +96,10 @@ except Exception:
 #     CUST-050 on 2025-09-12 (3 orders). Required by the self-join exercise.
 #   - Null customer_id: ORD-015, ORD-038, ORD-071
 #   - $0 amounts: ORD-022, ORD-058
-#   - Future dates: ORD-091 through ORD-095 have order_date in 2027
+#   - Future dates: ORD-091 through ORD-095 have order_date in 2099
 #   - Mixed statuses: pending, completed, shipped, cancelled
 #   - amount < 100: ORD-003, ORD-005, ORD-009, ORD-013, ORD-022, ORD-038, ORD-058 (and others)
 #   - amount >= 100: ORD-001, ORD-002, ORD-004, ORD-006, ORD-007, ORD-008 (and others)
-#
-# ORD-001 through ORD-005 are the most referenced subset across exercises.
-# ORD-001 through ORD-020 must exist for OPTIMIZE/liquid-clustering setup (LIMIT 20 queries).
 
 if not _SETUP_SKIP:
     spark.sql(f"""
@@ -125,7 +117,7 @@ if not _SETUP_SKIP:
     spark.sql(f"""
     INSERT OVERWRITE {CATALOG}.elt.orders
     SELECT * FROM VALUES
-    -- ORD-001 through ORD-005: core subset used by most setup notebooks
+    -- ORD-001 through ORD-005
     ('ORD-001', 'CUST-001', 'PROD-001', 109.50, 'completed', DATE '2025-06-15', TIMESTAMP '2025-06-15 09:30:00'),
     ('ORD-002', 'CUST-002', 'PROD-003', 175.00, 'completed', DATE '2025-06-16', TIMESTAMP '2025-06-16 14:15:00'),
     ('ORD-003', 'CUST-003', 'PROD-002', 45.00,  'pending',   DATE '2025-06-17', TIMESTAMP '2025-06-17 11:00:00'),
@@ -238,24 +230,22 @@ if not _SETUP_SKIP:
     ('ORD-090', 'CUST-036', 'PROD-008', 199.00, 'completed', DATE '2025-10-20', TIMESTAMP '2025-10-20 08:00:00'),
 
     -- ORD-091 through ORD-095: future dates (edge case)
-    ('ORD-091', 'CUST-037', 'PROD-001', 109.50, 'pending',   DATE '2027-01-15', TIMESTAMP '2027-01-15 09:00:00'),
-    ('ORD-092', 'CUST-038', 'PROD-003', 175.00, 'pending',   DATE '2027-02-20', TIMESTAMP '2027-02-20 10:30:00'),
-    ('ORD-093', 'CUST-039', 'PROD-005', 320.00, 'pending',   DATE '2027-03-10', TIMESTAMP '2027-03-10 14:00:00'),
-    ('ORD-094', 'CUST-040', 'PROD-002', 45.00,  'pending',   DATE '2027-04-05', TIMESTAMP '2027-04-05 11:00:00'),
-    ('ORD-095', 'CUST-041', 'PROD-004', 210.00, 'pending',   DATE '2027-05-01', TIMESTAMP '2027-05-01 16:00:00'),
+    ('ORD-091', 'CUST-037', 'PROD-001', 109.50, 'pending',   DATE '2099-01-15', TIMESTAMP '2099-01-15 09:00:00'),
+    ('ORD-092', 'CUST-038', 'PROD-003', 175.00, 'pending',   DATE '2099-02-20', TIMESTAMP '2099-02-20 10:30:00'),
+    ('ORD-093', 'CUST-039', 'PROD-005', 320.00, 'pending',   DATE '2099-03-10', TIMESTAMP '2099-03-10 14:00:00'),
+    ('ORD-094', 'CUST-040', 'PROD-002', 45.00,  'pending',   DATE '2099-04-05', TIMESTAMP '2099-04-05 11:00:00'),
+    ('ORD-095', 'CUST-041', 'PROD-004', 210.00, 'pending',   DATE '2099-05-01', TIMESTAMP '2099-05-01 16:00:00'),
 
-    -- ORD-096 through ORD-100: recent orders
+    -- ORD-096 through ORD-100: January 2026 orders
     ('ORD-096', 'CUST-042', 'PROD-010', 112.00, 'completed', DATE '2026-01-05', TIMESTAMP '2026-01-05 09:30:00'),
     ('ORD-097', 'CUST-043', 'PROD-007', 67.50,  'shipped',   DATE '2026-01-10', TIMESTAMP '2026-01-10 14:00:00'),
     ('ORD-098', 'CUST-044', 'PROD-009', 525.00, 'completed', DATE '2026-01-15', TIMESTAMP '2026-01-15 10:00:00'),
     ('ORD-099', 'CUST-045', 'PROD-006', 35.00,  'pending',   DATE '2026-01-20', TIMESTAMP '2026-01-20 15:30:00'),
     ('ORD-100', 'CUST-046', 'PROD-008', 199.00, 'completed', DATE '2026-01-25', TIMESTAMP '2026-01-25 08:45:00'),
 
-    -- ORD-101 through ORD-104: same-day repeat orders (distinct order_ids, same customer + order_date).
-    -- These are what makes the self-join exercise return rows. Do NOT confuse them with the
-    -- duplicate-order_id edge case (ORD-042, ORD-067), where both rows share ONE order_id and so
-    -- never satisfy o1.order_id < o2.order_id.
-    -- Pairs produced: CUST-003 x1, CUST-047 x1, CUST-050 x3 (3 same-day orders = 3 pairs) = 5 total.
+    -- ORD-101 through ORD-104: same-day repeat orders (distinct order_ids, same customer and order_date).
+    -- They give 01_spark-sql-joins Exercise 5 its 5 pairs: CUST-003 x1, CUST-047 x1, CUST-050 x3.
+    -- ORD-042 and ORD-067 differ: each repeats ONE order_id, so they never satisfy o1.order_id < o2.order_id.
     ('ORD-101', 'CUST-003', 'PROD-006', 35.00,  'completed', DATE '2025-07-04', TIMESTAMP '2025-07-04 18:10:00'),
     ('ORD-102', 'CUST-047', 'PROD-007', 67.50,  'shipped',   DATE '2025-09-08', TIMESTAMP '2025-09-08 14:20:00'),
     ('ORD-103', 'CUST-050', 'PROD-002', 130.00, 'completed', DATE '2025-09-12', TIMESTAMP '2025-09-12 16:05:00'),
@@ -266,8 +256,8 @@ if not _SETUP_SKIP:
 
 # COMMAND ----------
 
-# -- Customers Table --
-# ~50 rows. Used by MERGE SCD Type 2 exercises and governance exercises.
+# Customers table
+# 50 rows. Read by the Spark SQL joins notebook and the PySpark transformations setup (Ex 2, 5, 8).
 #
 # Edge cases built in:
 #   - Null emails: CUST-015, CUST-033, CUST-047
@@ -345,8 +335,8 @@ if not _SETUP_SKIP:
 
 # COMMAND ----------
 
-# -- Products Table --
-# ~30 rows. Used by schema enforcement exercises (product_id, name, category, price).
+# Products table
+# 30 rows. Read by the Spark SQL joins notebook (Ex 6, the four-table join).
 #
 # Edge cases built in:
 #   - $0 price: PROD-022
@@ -402,8 +392,9 @@ if not _SETUP_SKIP:
 
 # COMMAND ----------
 
-# -- Events Table --
-# ~150 rows. Used by streaming, ELT, and performance exercises.
+# Events table
+# 152 rows: EVT-001..EVT-150, plus a second row for EVT-050 and EVT-100.
+# Read by the PySpark transformations setup (Ex 6 and 7, payload parsing).
 #
 # Edge cases built in:
 #   - Late arrivals: EVT-031 through EVT-035 have event_ts 30+ days before their neighbors
@@ -422,7 +413,7 @@ if not _SETUP_SKIP:
     ) USING DELTA
     """)
 
-    # Build events programmatically for 150 rows (deterministic, no randomness)
+    # Build EVT-001..EVT-150 in a loop (deterministic, no randomness); EVT-050 and EVT-100 get a second row.
     _event_types = ['page_view', 'click', 'purchase', 'signup', 'logout', 'error', 'search']
     _payloads = [
         '{"page": "/home"}',
@@ -447,7 +438,7 @@ if not _SETUP_SKIP:
         day_offset = (i - 1) // 8
         hour_offset = ((i - 1) % 8) * 3
         if i in _late_arrival_ids:
-            # Late arrivals: timestamp 45 days before expected
+            # Late arrivals: same day and hour, one month earlier (31 days before their neighbors)
             ts = f"2025-{5 + (day_offset // 30):02d}-{((day_offset % 30) + 1):02d} {hour_offset:02d}:00:00"
         else:
             month = 6 + (day_offset // 30)
@@ -479,12 +470,12 @@ if not _SETUP_SKIP:
 
 # COMMAND ----------
 
-# -- Order Items Table --
-# ~200 rows. Used by ELT join exercises and aggregation problems.
+# Order items table
+# 205 rows. Read by the Spark SQL joins notebook (Ex 3 and 6) and the PySpark transformations setup (Ex 8).
 #
 # Edge cases built in:
 #   - Orphan order_ids (no matching order): ORD-201 through ORD-205
-#   - quantity=0: rows 50, 100, 150
+#   - quantity=0: the second item of ORD-025, ORD-050 and ORD-075
 #   - Multiple items per order (most have 2, some have 3)
 
 if not _SETUP_SKIP:
@@ -544,7 +535,7 @@ if not _SETUP_SKIP:
 
 # COMMAND ----------
 
-# -- Volumes for Ingestion Exercises --
+# Volumes for ingestion exercises
 # Creates volumes for Auto Loader and batch ingestion exercises.
 # The per-exercise source files are created by each topic's setup notebook, not here.
 
@@ -557,7 +548,7 @@ spark.sql(f"CREATE VOLUME IF NOT EXISTS {CATALOG}.batch_ingestion.source_files")
 
 # COMMAND ----------
 
-# -- Confirmation --
+# Confirmation
 if not _SETUP_SKIP:
     _orders_count = spark.table(f"{CATALOG}.elt.orders").count()
     _customers_count = spark.table(f"{CATALOG}.elt.customers").count()

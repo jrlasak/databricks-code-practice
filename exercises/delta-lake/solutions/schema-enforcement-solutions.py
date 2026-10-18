@@ -12,13 +12,12 @@
 # MAGIC ## Exercise 1: Write with Matching Schema
 # MAGIC
 # MAGIC **Hints**:
-# MAGIC 1. INSERT INTO ... SELECT * works when schemas match exactly
-# MAGIC 2. Delta Lake validates every column name and type against the target
-# MAGIC 3. If any column doesn't match, the write fails before any data is written
+# MAGIC 1. Delta checks every write against the target schema: the column count must match, and each type must match or cast safely
+# MAGIC 2. Here both tables have the same 7 columns in the same order
+# MAGIC 3. `INSERT INTO <target> SELECT * FROM <source>` works when schemas match exactly
 # MAGIC
 # MAGIC **Common mistakes**:
-# MAGIC - Using df.write.saveAsTable() which would overwrite instead of append
-# MAGIC - Not realizing Delta checks schema on every write, not just the first one
+# MAGIC - Calling `df.write.saveAsTable()` without `mode("append")` (the default mode is `error`, so it fails because the table already exists)
 
 # COMMAND ----------
 
@@ -37,13 +36,13 @@ spark.sql(f"""
 # MAGIC ## Exercise 2: Handle Schema Mismatch on Write
 # MAGIC
 # MAGIC **Hints**:
-# MAGIC 1. You can't INSERT * because the source has more columns than the target
+# MAGIC 1. `INSERT INTO ... SELECT *` fails because the source has one more column than the target
 # MAGIC 2. List the target's columns explicitly in your SELECT
 # MAGIC 3. The extra column in the source is simply ignored when you don't select it
 # MAGIC
 # MAGIC **Common mistakes**:
 # MAGIC - Using SELECT * (fails because source has extra column)
-# MAGIC - Trying to use mergeSchema here (that adds the column, this exercise drops it)
+# MAGIC - Using mergeSchema here (it adds `discount_pct` to the target; the requirement is to leave it out)
 # MAGIC - Forgetting a column in the explicit list (column count must match exactly)
 
 # COMMAND ----------
@@ -67,7 +66,7 @@ spark.sql(f"""
 # MAGIC **Common mistakes**:
 # MAGIC - Using mode("overwrite") instead of mode("append") (overwrites all data)
 # MAGIC - Misspelling the option name (it's "mergeSchema", camelCase)
-# MAGIC - Trying to use this with SQL INSERT (mergeSchema is a DataFrame writer option)
+# MAGIC - Passing `mergeSchema` to a SQL INSERT (it is a DataFrame writer option; SQL uses a `WITH SCHEMA EVOLUTION` clause instead)
 
 # COMMAND ----------
 
@@ -76,9 +75,6 @@ spark.table(f"{CATALOG}.{SCHEMA}.schema_ex3_source") \
     .write.mode("append") \
     .option("mergeSchema", "true") \
     .saveAsTable(f"{CATALOG}.{SCHEMA}.schema_ex3_target")
-
-# Alternative: use SQL with schema evolution (for MERGE only, not INSERT)
-# spark.sql(f"MERGE WITH SCHEMA EVOLUTION INTO {CATALOG}.{SCHEMA}.schema_ex3_target t USING ...")
 
 # COMMAND ----------
 # MAGIC %md
@@ -89,10 +85,11 @@ spark.table(f"{CATALOG}.{SCHEMA}.schema_ex3_source") \
 # MAGIC 2. You need an additional option to allow schema replacement
 # MAGIC 3. The option is "overwriteSchema" set to "true"
 # MAGIC
+# MAGIC In SQL, `CREATE OR REPLACE TABLE ... AS SELECT` replaces data and schema in one statement; with the DataFrame writer you need `overwriteSchema`.
+# MAGIC
 # MAGIC **Common mistakes**:
 # MAGIC - Using only mode("overwrite") without the overwriteSchema option (schema mismatch error)
 # MAGIC - Confusing mergeSchema with overwriteSchema (merge adds columns, overwrite replaces everything)
-# MAGIC - Using CREATE OR REPLACE TABLE instead (valid, but this exercise is about the writer option)
 
 # COMMAND ----------
 
@@ -107,14 +104,14 @@ spark.table(f"{CATALOG}.{SCHEMA}.schema_ex4_source") \
 # MAGIC ## Exercise 5: Handle Column Type Mismatch
 # MAGIC
 # MAGIC **Hints**:
-# MAGIC 1. Delta rejects type mismatches even for "compatible" types like STRING and DOUBLE
+# MAGIC 1. Databricks only applies safe casts on write (INT into BIGINT); STRING into DOUBLE is not one of them
 # MAGIC 2. Use CAST() in your SELECT to convert the mismatched column
 # MAGIC 3. CAST(amount AS DOUBLE) converts STRING amounts to the target's DOUBLE type
 # MAGIC
 # MAGIC **Common mistakes**:
-# MAGIC - Assuming Spark will auto-cast STRING to DOUBLE (Delta enforces strict types)
+# MAGIC - Assuming the INSERT will cast STRING to DOUBLE for you (it fails: a STRING into a numeric column is not a safe cast)
 # MAGIC - Casting to the wrong type (must match target exactly)
-# MAGIC - Forgetting to alias the casted column with the same name
+# MAGIC - In a DataFrame append, losing the `amount` name on the cast column (DataFrame appends match columns by name; a SQL INSERT matches by position)
 
 # COMMAND ----------
 
@@ -132,9 +129,9 @@ spark.sql(f"""
 # MAGIC ## Exercise 6: NOT NULL Constraint Enforcement
 # MAGIC
 # MAGIC **Hints**:
-# MAGIC 1. ALTER TABLE ... ALTER COLUMN lets you modify column properties
-# MAGIC 2. Syntax: `ALTER TABLE t ALTER COLUMN col SET NOT NULL`
-# MAGIC 3. All existing values must be non-null before the constraint can be added
+# MAGIC 1. All existing `status` values are non-null, so the constraint can be added
+# MAGIC 2. Nullability is changed with ALTER TABLE ... ALTER COLUMN
+# MAGIC 3. Syntax: `ALTER TABLE t ALTER COLUMN col SET NOT NULL`
 # MAGIC
 # MAGIC **Common mistakes**:
 # MAGIC - Trying to add NOT NULL on a column that has existing null values (fails)
@@ -162,7 +159,7 @@ spark.sql(f"""
 # MAGIC **Hints**:
 # MAGIC 1. ALTER TABLE ADD CONSTRAINT creates a named rule for the table
 # MAGIC 2. Syntax: `ALTER TABLE t ADD CONSTRAINT name CHECK (expression)`
-# MAGIC 3. Name your constraint descriptively (e.g., `positive_amount`)
+# MAGIC 3. The name must be exactly `positive_amount`: `ALTER TABLE t ADD CONSTRAINT positive_amount CHECK (amount > 0)`
 # MAGIC
 # MAGIC **Common mistakes**:
 # MAGIC - Forgetting to name the constraint (syntax requires a name)
@@ -189,14 +186,13 @@ spark.sql(f"""
 # MAGIC ## Exercise 8: Drop a Constraint
 # MAGIC
 # MAGIC **Hints**:
-# MAGIC 1. Use `ALTER TABLE ... DROP CONSTRAINT` to remove a named constraint
-# MAGIC 2. You need the exact constraint name (it's `positive_amount`)
-# MAGIC 3. NOT NULL constraints use different syntax (ALTER COLUMN ... DROP NOT NULL)
+# MAGIC 1. Named CHECK constraints and NOT NULL are removed with different statements
+# MAGIC 2. You need the exact constraint name: `positive_amount`
+# MAGIC 3. Use `ALTER TABLE ... DROP CONSTRAINT positive_amount`; NOT NULL would need `ALTER COLUMN ... DROP NOT NULL`, which you must not run here
 # MAGIC
 # MAGIC **Common mistakes**:
 # MAGIC - Trying to drop NOT NULL with DROP CONSTRAINT (different syntax)
 # MAGIC - Misspelling the constraint name (must match exactly)
-# MAGIC - Dropping the wrong constraint (read the requirements carefully)
 
 # COMMAND ----------
 
@@ -212,7 +208,7 @@ spark.sql(f"""
 # MAGIC **Hints**:
 # MAGIC 1. Use `SHOW TBLPROPERTIES` to see all properties of a Delta table
 # MAGIC 2. Delta stores CHECK constraints as properties with prefix `delta.constraints.`
-# MAGIC 3. Filter with `WHERE key LIKE 'delta.constraints.%'` to get only constraints
+# MAGIC 3. `SHOW TBLPROPERTIES` cannot be used as a subquery: run it with `spark.sql(...)`, filter the DataFrame with `.filter("key LIKE 'delta.constraints.%'")`, then rename `key` and `value` with `selectExpr`
 # MAGIC
 # MAGIC **Common mistakes**:
 # MAGIC - Querying `information_schema.table_constraints` (returns 0 rows for Delta CHECK constraints on Free Edition)
@@ -237,7 +233,7 @@ constraints.write.mode("overwrite").saveAsTable(f"{CATALOG}.{SCHEMA}.schema_ex9_
 # MAGIC 3. The syntax goes between MERGE and INTO: `MERGE WITH SCHEMA EVOLUTION INTO ...`
 # MAGIC
 # MAGIC **Common mistakes**:
-# MAGIC - Forgetting WITH SCHEMA EVOLUTION (MERGE fails with schema mismatch)
+# MAGIC - Forgetting WITH SCHEMA EVOLUTION (the MERGE succeeds but silently drops `discount_pct` and `shipping_cost`; the target keeps its 7 columns)
 # MAGIC - Placing WITH SCHEMA EVOLUTION after INTO (wrong position)
 # MAGIC - Using .option("mergeSchema") on MERGE (that's a DataFrame writer option, not SQL)
 
@@ -262,9 +258,8 @@ spark.sql(f"""
 # MAGIC 3. The conditions mirror the table's constraints: status IS NOT NULL AND amount > 0
 # MAGIC
 # MAGIC **Common mistakes**:
-# MAGIC - Trying to INSERT all 3 rows and catching errors (Delta rejects the entire batch, not individual rows)
-# MAGIC - Only checking one constraint (need to check both NOT NULL and CHECK)
-# MAGIC - Using try/except (filters are cleaner and more production-appropriate)
+# MAGIC - Inserting all 3 rows and catching the error (Delta Lake rejects the whole batch, so ORD-201 is not inserted either)
+# MAGIC - Checking only one constraint (filter on both `status IS NOT NULL` and `amount > 0`)
 
 # COMMAND ----------
 
@@ -289,8 +284,8 @@ spark.sql(f"""
 # MAGIC 3. Rows that fail the filter never reach the MERGE, so no constraint violation occurs
 # MAGIC
 # MAGIC **Common mistakes**:
-# MAGIC - Trying to MERGE without filtering (fails on the first invalid row)
-# MAGIC - Filtering in WHEN MATCHED instead of USING (the row already reached the target at that point)
+# MAGIC - Running the MERGE without filtering (ORD-202 and ORD-203 break the constraints, so the whole MERGE fails and nothing is written)
+# MAGIC - Adding the conditions to WHEN MATCHED only (ORD-202 and ORD-203 are new keys, so they reach WHEN NOT MATCHED and fail the MERGE; filtering in USING covers both clauses)
 # MAGIC - Forgetting WHEN NOT MATCHED (only updates existing rows, doesn't insert new ones)
 
 # COMMAND ----------

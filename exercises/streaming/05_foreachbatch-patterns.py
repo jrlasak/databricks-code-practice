@@ -2,7 +2,7 @@
 # COMMAND ----------
 # MAGIC %md
 # MAGIC # foreachBatch Patterns
-# MAGIC **Topic**: Streaming | **Exercises**: 7 | **Total Time**: ~95 min
+# MAGIC **Topic**: Streaming | **Exercises**: 7 | **Total Time**: ~105 min
 # MAGIC
 # MAGIC Practice `foreachBatch`, the escape hatch that lets you apply arbitrary batch DataFrame
 # MAGIC logic to each streaming microbatch. Covers basic appends, MERGE in streaming, multi-sink
@@ -14,9 +14,10 @@
 # MAGIC **Key concepts**:
 # MAGIC - `foreachBatch(fn)` calls `fn(batch_df, batch_id)` once per microbatch with a static DataFrame
 # MAGIC - Inside the function you can use any batch API: MERGE, multi-sink writes, joins, materialization via `collect()`
+# MAGIC - A temp view registered on `batch_df` lives in the microbatch's own session: run SQL against it with `batch_df.sparkSession.sql(...)`, not `spark.sql(...)`
 # MAGIC - Every stream uses `.trigger(availableNow=True)` + `.awaitTermination()` so the assertion cell runs only after the stream finishes
-# MAGIC - Sources are Delta tables (Free Edition has no Kafka)
-# MAGIC - To make the function idempotent across retries, you must dedupe on `batch_id` or rely on a transactional sink (MERGE on a primary key is transactional, plain append is not)
+# MAGIC - Sources are Delta tables: Free Edition restricts outbound internet access, so there is no Kafka broker to read from
+# MAGIC - `foreachBatch` is at-least-once: after a failure Spark can call the function again with the same `batch_id`. Make the write idempotent with a MERGE that replaces values on a key, or an append with the `txnAppId` / `txnVersion` write options bound to `batch_id`
 # MAGIC
 # MAGIC **Free Edition note: caching workaround inside foreachBatch**
 # MAGIC
@@ -33,8 +34,7 @@
 # MAGIC # then read `materialized` as many times as you need
 # MAGIC ```
 # MAGIC
-# MAGIC Use this pattern in every multi-read foreachBatch on Free Edition. Each affected exercise
-# MAGIC below points back to this note.
+# MAGIC Use this pattern in every multi-read foreachBatch on Free Edition. It suits small batches like these 40-row sources only: `collect()` pulls the whole batch into driver memory.
 
 # COMMAND ----------
 
@@ -61,8 +61,13 @@
 # MAGIC | amount     | DOUBLE    | Nullable; 2 rows are negative |
 # MAGIC | event_ts   | TIMESTAMP | Event timestamp |
 # MAGIC
-# MAGIC **Checkpoints**: Use the `CHECKPOINT_BASE` variable (`/Volumes/db_code/foreachbatch_patterns/checkpoints/`).
-# MAGIC Each exercise must use its own subdirectory (e.g., `f"{CHECKPOINT_BASE}/ex1"`).
+# MAGIC **Python variables**: the setup defines `CATALOG = "db_code"`, `SCHEMA = "foreachbatch_patterns"` and `CHECKPOINT_BASE = "/Volumes/db_code/foreachbatch_patterns/checkpoints"`.
+# MAGIC
+# MAGIC **Table names**: write every table in full, e.g. `db_code.foreachbatch_patterns.ex1_target` (or `f"{CATALOG}.{SCHEMA}.ex1_target"` in code). The notebook's current schema is `db_code.default`, so a bare `saveAsTable("ex1_target")` creates a new table there, and the validation cell, which reads `db_code.foreachbatch_patterns`, never sees your rows.
+# MAGIC
+# MAGIC **Checkpoints**: wire every exercise like Exercise 1: `.option("checkpointLocation", f"{CHECKPOINT_BASE}/exN")` with its own `exN` subdirectory, then `.trigger(availableNow=True)` and `.start().awaitTermination()`.
+# MAGIC
+# MAGIC **Redo an exercise**: a checkpoint remembers which rows its stream already read, so running a fixed TODO cell again reads nothing new. Re-run the `%run ./setup/foreachbatch-patterns-setup` cell first: it recreates every source table and every target except `ex1_target` (it drops that one, and your first append creates it again), and clears the checkpoints.
 # MAGIC
 # MAGIC **Pattern**: Each exercise reads from `db_code.foreachbatch_patterns.exN_source` as a stream and writes via a `foreachBatch` function to `exN_target` (or, for Exercise 3, to both `ex3_target_raw` and `ex3_target_clean`).
 
@@ -72,13 +77,13 @@
 # MAGIC **Difficulty**: Easy | **Time**: ~10 min
 # MAGIC
 # MAGIC The foundational `foreachBatch` pattern: read a Delta source as a stream, and inside
-# MAGIC the foreachBatch function, append the batch to a Delta target. This is functionally
-# MAGIC equivalent to `.writeStream.format("delta").toTable(...)` but exposes the batch DataFrame
-# MAGIC and `batch_id` so you can apply arbitrary batch logic in later exercises.
+# MAGIC the foreachBatch function, append the batch to a Delta target. It writes the same rows as
+# MAGIC `.writeStream.format("delta").toTable(...)` but exposes the batch DataFrame and `batch_id` so you can apply
+# MAGIC arbitrary batch logic in later exercises. One difference: the direct Delta sink is exactly-once, `foreachBatch` is at-least-once (Exercise 4).
 # MAGIC
 # MAGIC **Source** (`ex1_source`): 40 rows (36 good + 4 bad).
 # MAGIC
-# MAGIC **Target** (`ex1_target`): empty. After the stream completes, expect 40 rows.
+# MAGIC **Target** (`ex1_target`): does not exist yet; your first append creates it. After the stream completes, expect 40 rows.
 # MAGIC
 # MAGIC **Requirements**:
 # MAGIC 1. Read `ex1_source` as a stream with `spark.readStream.table(...)` or `.format("delta").table(...)`
@@ -140,11 +145,10 @@ print("Exercise 1 passed!")
 # MAGIC 1. Read `ex2_source` as a stream
 # MAGIC 2. Define `foreach_batch_function(batch_df, batch_id)` that:
 # MAGIC    - Registers `batch_df` as a temp view (e.g., `fb_ex2_batch`)
-# MAGIC    - Runs `MERGE INTO ex2_target USING fb_ex2_batch ON event_id WHEN MATCHED THEN UPDATE SET * WHEN NOT MATCHED THEN INSERT *`
-# MAGIC 3. Wire the function via `.writeStream.foreachBatch(...)` with the ex2 checkpoint and `availableNow=True`
+# MAGIC    - Runs the MERGE with `batch_df.sparkSession.sql(...)` (the session that owns the temp view): `MERGE INTO db_code.foreachbatch_patterns.ex2_target t USING fb_ex2_batch s ON t.event_id = s.event_id WHEN MATCHED THEN UPDATE SET * WHEN NOT MATCHED THEN INSERT *`
 # MAGIC
 # MAGIC **Constraints**:
-# MAGIC - Use SQL `MERGE INTO`, not `DeltaTable.merge(...)` (either works, but the assertions only care about row state)
+# MAGIC - Use SQL `MERGE INTO` (`DeltaTable.merge(...)` also works; the validation cell checks only the final rows)
 # MAGIC - Do NOT overwrite `ex2_target` - MERGE only
 
 # COMMAND ----------
@@ -165,7 +169,7 @@ def foreach_batch_function(batch_df, batch_id):
 result = spark.table(f"{CATALOG}.{SCHEMA}.ex2_target")
 
 assert result.count() == 40, f"Expected 40 rows after upsert, got {result.count()}"
-# Updated row (was OLD/0.01, should now match source)
+# Updated row: the source values replace the OLD/0.01 placeholder values
 amt_303 = result.filter("event_id = 'EV-303'").select("amount").collect()[0][0]
 assert amt_303 == 120.50, f"EV-303 amount should be UPDATED to 120.50, got {amt_303}"
 type_303 = result.filter("event_id = 'EV-303'").select("event_type").collect()[0][0]
@@ -187,8 +191,7 @@ print("Exercise 2 passed!")
 # MAGIC
 # MAGIC Inside `foreachBatch` you can write the same batch to multiple sinks. The catch:
 # MAGIC if you read `batch_df` twice (once per sink), Spark may recompute the upstream
-# MAGIC plan each time. Use the materialize-via-collect pattern from the notebook header
-# MAGIC (cache() is not supported on serverless).
+# MAGIC plan each time. Materialize it once (Requirement 1).
 # MAGIC
 # MAGIC **Source** (`ex3_source`): 40 rows (36 good + 4 bad).
 # MAGIC
@@ -198,19 +201,19 @@ print("Exercise 2 passed!")
 # MAGIC
 # MAGIC **Expected Output**:
 # MAGIC - `ex3_target_raw`: 40 rows
-# MAGIC - `ex3_target_clean`: 20 rows (19 good purchase rows + EV-903, which is a purchase with amount=50.00 even though its user_id is NULL - this filter does not check user_id. EV-901 and EV-902 are purchases but have negative amounts so they are excluded; EV-904 is a view so it is excluded.)
+# MAGIC - `ex3_target_clean`: 20 rows
+# MAGIC   - In: the 19 good purchases + EV-903 (purchase, `amount` 50.00, NULL `user_id`; this filter ignores `user_id`)
+# MAGIC   - Out: EV-901 and EV-902 (negative `amount`), EV-904 (a view)
 # MAGIC
 # MAGIC **Requirements**:
 # MAGIC 1. Inside `foreach_batch_function`, materialize the batch once:
 # MAGIC    `rows = batch_df.collect()`, then `materialized = batch_df.sparkSession.createDataFrame(rows, batch_df.schema)`
 # MAGIC 2. Append `materialized` to `ex3_target_raw`
 # MAGIC 3. Filter `materialized` for `event_type = 'purchase' AND amount > 0` and append the result to `ex3_target_clean`
-# MAGIC 4. Wire with `availableNow=True` and the ex3 checkpoint
 # MAGIC
 # MAGIC **Constraints**:
 # MAGIC - Use `.write.format("delta").mode("append").saveAsTable(...)` for both sinks
 # MAGIC - Do NOT start two separate `writeStream`s reading the source twice - that's a different pattern
-# MAGIC - See the "Free Edition note: caching workaround" in the notebook header for the required pattern.
 
 # COMMAND ----------
 
@@ -253,11 +256,11 @@ print("Exercise 3 passed!")
 # MAGIC ## Exercise 4: Idempotent foreachBatch via batch_id Dedup Key
 # MAGIC **Difficulty**: Medium | **Time**: ~15 min
 # MAGIC
-# MAGIC `foreachBatch` runs at least once per microbatch. On retry, Spark may call the same
-# MAGIC `batch_id` again. Plain appends produce duplicates; MERGE on the primary key is
-# MAGIC transactionally safe. Another defense, useful when the sink is non-transactional or
-# MAGIC when you want explicit safety: tag each row with the `batch_id`, and inside the
-# MAGIC MERGE, ensure rows with an already-applied `batch_id` are not re-inserted.
+# MAGIC `foreachBatch` is at-least-once: after a failure, Spark can call the function again with the same
+# MAGIC `batch_id`, and a plain append then writes the rows twice. For appends, Databricks documents the
+# MAGIC `txnAppId` + `txnVersion` write options (bound to `batch_id`): Delta skips the repeated write. Here you build
+# MAGIC the same guarantee by hand: tag each row with its `batch_id`, and let an insert-only MERGE skip
+# MAGIC rows that batch already wrote.
 # MAGIC
 # MAGIC In this exercise you implement the pattern and then verify it by calling the
 # MAGIC `foreach_batch_function` a second time with the same `batch_id` - the target must not change.
@@ -267,21 +270,19 @@ print("Exercise 3 passed!")
 # MAGIC **Target** (`ex4_target`): empty. Schema includes a `batch_id LONG` column.
 # MAGIC
 # MAGIC **Expected Output**: After the stream completes, `ex4_target` should have 40 rows, all
-# MAGIC tagged with the same `batch_id` (since `availableNow=True` processes everything in
-# MAGIC one microbatch). Calling the function a second time with the same `batch_id` must
+# MAGIC tagged with the same `batch_id` (this 40-row source fits in one microbatch; `availableNow` still splits large backlogs by `maxFilesPerTrigger`). Calling the function a second time with the same `batch_id` must
 # MAGIC leave the target unchanged.
 # MAGIC
 # MAGIC **Requirements**:
 # MAGIC 1. Inside `foreach_batch_function(batch_df, batch_id)`:
 # MAGIC    - Add a literal `batch_id` column to `batch_df` (`F.lit(batch_id).cast("long")`)
 # MAGIC    - Register the tagged DataFrame as a temp view (e.g., `fb_ex4_batch`)
-# MAGIC    - Run a MERGE: `MERGE INTO ex4_target t USING fb_ex4_batch s ON t.event_id = s.event_id AND t.batch_id = s.batch_id WHEN NOT MATCHED THEN INSERT *`
-# MAGIC 2. After the stream completes, manually invoke `foreach_batch_function(spark.table(f"{CATALOG}.{SCHEMA}.ex4_source"), <same_batch_id>)` to simulate a replay.
-# MAGIC    Under `availableNow` the single microbatch has `batch_id=0`. Pass `0` to your replay call (or read the applied batch_id from the target table).
-# MAGIC 3. Use the ex4 checkpoint and `availableNow=True`
+# MAGIC    - Run a MERGE with `batch_df.sparkSession.sql(...)`: `MERGE INTO db_code.foreachbatch_patterns.ex4_target t USING fb_ex4_batch s ON t.event_id = s.event_id AND t.batch_id = s.batch_id WHEN NOT MATCHED THEN INSERT *`
+# MAGIC 2. After the stream completes, manually invoke `foreach_batch_function(spark.table("db_code.foreachbatch_patterns.ex4_source"), <same_batch_id>)` to simulate a replay.
+# MAGIC    A fresh checkpoint numbers that single microbatch `batch_id=0`, so pass `0` to your replay call (or read the applied batch_id from the target table).
 # MAGIC
 # MAGIC **Constraints**:
-# MAGIC - The MERGE join key must include `batch_id`, otherwise a replay would update rows (not be a true no-op)
+# MAGIC - Key the MERGE on `event_id` AND `batch_id`, so it skips only a replay of the same batch, and each row records the batch that inserted it
 # MAGIC - Do NOT include `WHEN MATCHED THEN UPDATE` - this pattern is insert-only
 # MAGIC - On replay (manual call with the same `batch_id`), the row count must NOT change
 
@@ -307,9 +308,9 @@ def foreach_batch_function(batch_df, batch_id):
 result = spark.table(f"{CATALOG}.{SCHEMA}.ex4_target")
 
 assert result.count() == 40, f"Expected 40 rows after stream + replay, got {result.count()}"
-# All rows should have the same batch_id (single microbatch under availableNow)
+# All rows should have the same batch_id
 distinct_batches = result.select("batch_id").distinct().count()
-assert distinct_batches == 1, f"Expected 1 distinct batch_id, got {distinct_batches} (replay caused new batch_id or stream split)"
+assert distinct_batches == 1, f"Expected 1 distinct batch_id, got {distinct_batches} (this 40-row source fits in one microbatch, and the replay must reuse its batch_id)"
 # No duplicates - dedup key (event_id, batch_id) must hold
 dup_rows = result.count() - result.select("event_id", "batch_id").distinct().count()
 assert dup_rows == 0, f"Expected 0 duplicate (event_id, batch_id) rows, got {dup_rows} - replay was not idempotent"
@@ -322,7 +323,7 @@ print("Exercise 4 passed!")
 # COMMAND ----------
 # MAGIC %md
 # MAGIC ## Exercise 5: Quality Routing - Good Rows to Target, Bad Rows to Quarantine
-# MAGIC **Difficulty**: Hard | **Time**: ~15 min
+# MAGIC **Difficulty**: Hard | **Time**: ~20 min
 # MAGIC
 # MAGIC In production, batches contain rows that fail quality checks. Dropping them silently
 # MAGIC is the worst possible answer - you lose evidence of the upstream problem. The standard
@@ -347,7 +348,7 @@ print("Exercise 4 passed!")
 # MAGIC
 # MAGIC **Requirements**:
 # MAGIC 1. Inside `foreach_batch_function`, materialize the batch once via
-# MAGIC    `rows = batch_df.collect()` + `materialized = batch_df.sparkSession.createDataFrame(rows, batch_df.schema)` (you will read the materialized DataFrame multiple times: at least once for good rows and at least once more to classify the bad rows)
+# MAGIC    `rows = batch_df.collect()` + `materialized = batch_df.sparkSession.createDataFrame(rows, batch_df.schema)`
 # MAGIC 2. Append good rows (`amount >= 0 AND user_id IS NOT NULL`) to `ex5_target`
 # MAGIC 3. Append rows with `amount < 0` to `ex5_quarantine` with `reason = 'negative_amount'`
 # MAGIC 4. Append rows with `user_id IS NULL` to `ex5_quarantine` with `reason = 'null_user_id'`
@@ -356,7 +357,6 @@ print("Exercise 4 passed!")
 # MAGIC - The quarantine table has 5 base columns + `reason` STRING - use `withColumn` to add `reason` before writing
 # MAGIC - Order of writes does not matter
 # MAGIC - A row that fails both checks (e.g., negative amount AND null user) is not present in the source - each bad row fails exactly one rule
-# MAGIC - See the "Free Edition note: caching workaround" in the notebook header for the required pattern.
 
 # COMMAND ----------
 
@@ -396,7 +396,7 @@ print("Exercise 5 passed!")
 # COMMAND ----------
 # MAGIC %md
 # MAGIC ## Exercise 6: Running Batch Metrics
-# MAGIC **Difficulty**: Hard | **Time**: ~10 min
+# MAGIC **Difficulty**: Medium | **Time**: ~10 min
 # MAGIC
 # MAGIC Operationally you need to know what happened in each microbatch: how many rows came
 # MAGIC in, how many were quarantined, when it finished. The standard pattern is to compute
@@ -408,21 +408,22 @@ print("Exercise 5 passed!")
 # MAGIC - `ex6_target` (empty): clean rows go here
 # MAGIC - `ex6_metrics` (empty): one row per microbatch with `(batch_id, rows_in, rows_good, rows_quarantined, processed_at)`
 # MAGIC
+# MAGIC Bad rows are only counted in `rows_quarantined`; this exercise writes them to no table.
+# MAGIC
 # MAGIC **Expected Output**:
 # MAGIC - `ex6_target`: 36 rows
-# MAGIC - `ex6_metrics`: 1 row (single microbatch under `availableNow`) with `rows_in=40, rows_good=36, rows_quarantined=4`
+# MAGIC - `ex6_metrics`: 1 row (this 40-row source fits in one microbatch) with `rows_in=40, rows_good=36, rows_quarantined=4`
 # MAGIC
 # MAGIC **Requirements**:
 # MAGIC 1. Inside `foreach_batch_function`, materialize the batch once via
-# MAGIC    `rows = batch_df.collect()` + `materialized = batch_df.sparkSession.createDataFrame(rows, batch_df.schema)` (you read it for counts and for the write)
-# MAGIC 2. Compute `rows_in = materialized.count()`, `rows_good = materialized.filter("amount >= 0 AND user_id IS NOT NULL").count()`, `rows_quarantined = rows_in - rows_good`
+# MAGIC    `rows = batch_df.collect()` + `materialized = batch_df.sparkSession.createDataFrame(rows, batch_df.schema)`
+# MAGIC 2. From `materialized`, count all rows (`rows_in`), the good rows `amount >= 0 AND user_id IS NOT NULL` (`rows_good`), and the difference (`rows_quarantined`)
 # MAGIC 3. Append clean rows (good filter) to `ex6_target`
-# MAGIC 4. Append exactly one row to `ex6_metrics` with `(batch_id, rows_in, rows_good, rows_quarantined, current_timestamp())`. Use `spark.createDataFrame([(batch_id, ...)], ...)` and `saveAsTable("...", mode="append")`
+# MAGIC 4. Append exactly one row to `ex6_metrics`: `batch_id`, `rows_in`, `rows_good`, `rows_quarantined` (all LONG) and `processed_at` (TIMESTAMP, when the batch was processed, e.g. Python `datetime.now()`)
 # MAGIC
 # MAGIC **Constraints**:
 # MAGIC - The metrics row's `batch_id` must equal the `batch_id` argument
 # MAGIC - Do NOT compute the metrics by reading `ex6_target` after writing - they must come from the in-memory batch DataFrame
-# MAGIC - See the "Free Edition note: caching workaround" in the notebook header for the required pattern.
 
 # COMMAND ----------
 
@@ -445,7 +446,7 @@ target = spark.table(f"{CATALOG}.{SCHEMA}.ex6_target")
 metrics = spark.table(f"{CATALOG}.{SCHEMA}.ex6_metrics")
 
 assert target.count() == 36, f"Expected 36 clean rows in ex6_target, got {target.count()}"
-assert metrics.count() == 1, f"Expected exactly 1 metrics row (single microbatch under availableNow), got {metrics.count()}"
+assert metrics.count() == 1, f"Expected exactly 1 metrics row (this 40-row source fits in one microbatch), got {metrics.count()}"
 
 m = metrics.collect()[0]
 assert m["rows_in"] == 40, f"Expected rows_in=40, got {m['rows_in']}"
@@ -459,18 +460,17 @@ print("Exercise 6 passed!")
 # COMMAND ----------
 # MAGIC %md
 # MAGIC ## Exercise 7: Materialized batch_df for MERGE + Quality Routing in One Pass
-# MAGIC **Difficulty**: Hard | **Time**: ~15 min
+# MAGIC **Difficulty**: Hard | **Time**: ~20 min
 # MAGIC
 # MAGIC The production payoff: combine MERGE upsert with quality routing in a single
 # MAGIC `foreachBatch`. The batch DataFrame is read twice - once for the MERGE (good rows)
-# MAGIC and once for the quarantine append (bad rows). Use the materialize-via-collect pattern
-# MAGIC from the notebook header (cache() is not supported on serverless).
+# MAGIC and once for the quarantine append (bad rows), so materialize it once first.
 # MAGIC
 # MAGIC **Source** (`ex7_source`): 40 rows (36 good + 4 bad).
 # MAGIC
 # MAGIC **Targets**:
-# MAGIC - `ex7_target`: 3 pre-existing rows (EV-301, EV-302, EV-303, all `event_type='OLD'`, `amount=0.01`). MERGE on `event_id` with good rows only.
-# MAGIC - `ex7_quarantine`: empty. Receives bad rows (`amount < 0 OR user_id IS NULL`).
+# MAGIC - `ex7_target`: 3 pre-existing rows (EV-301, EV-302, EV-303, all `event_type='OLD'`, `amount=0.01`). MERGE on `event_id` with good rows only (`amount >= 0 AND user_id IS NOT NULL`).
+# MAGIC - `ex7_quarantine`: empty, same 5 columns as the source (no `reason` column). Receives bad rows (`amount < 0 OR user_id IS NULL`) as they are.
 # MAGIC
 # MAGIC **Expected Output**:
 # MAGIC - `ex7_target`: 36 rows (3 pre-existing get UPDATED, 33 new good rows INSERTED)
@@ -480,15 +480,13 @@ print("Exercise 6 passed!")
 # MAGIC 1. Inside `foreach_batch_function`:
 # MAGIC    - Materialize the batch once: `rows = batch_df.collect()`, then `materialized = batch_df.sparkSession.createDataFrame(rows, batch_df.schema)`
 # MAGIC    - Split: `good_df = materialized.filter(...)`, `bad_df = materialized.filter(...)`
-# MAGIC    - Register `good_df` as a temp view and MERGE into `ex7_target` (UPDATE SET * WHEN MATCHED, INSERT * WHEN NOT MATCHED)
+# MAGIC    - Register `good_df` as a temp view and MERGE it into `db_code.foreachbatch_patterns.ex7_target` with `batch_df.sparkSession.sql(...)` (UPDATE SET * WHEN MATCHED, INSERT * WHEN NOT MATCHED)
 # MAGIC    - Append `bad_df` to `ex7_quarantine`
-# MAGIC 2. Wire with `availableNow=True` and the ex7 checkpoint
 # MAGIC
 # MAGIC **Constraints**:
 # MAGIC - Materialize via `collect()` once on `batch_df`, not on `good_df`/`bad_df` independently - both filters must derive from the same in-memory copy
 # MAGIC - MERGE only against good rows - bad rows do NOT touch the main target
 # MAGIC - The 3 pre-existing rows must end up with the SOURCE values, not the OLD placeholders
-# MAGIC - See the "Free Edition note: caching workaround" in the notebook header for the required pattern.
 
 # COMMAND ----------
 

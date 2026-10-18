@@ -11,7 +11,7 @@
 # MAGIC Re-running is safe - every step uses `CREATE OR REPLACE` / `IF NOT EXISTS` / `INSERT OVERWRITE`.
 # MAGIC Expected runtime: ~3-6 min on serverless (notebook 02 is the slow one).
 # MAGIC
-# MAGIC > Prefer a real orchestrator? Create a **Databricks Workflow** with four notebook tasks
+# MAGIC > Prefer a real orchestrator? Create a **Lakeflow Job** with four notebook tasks
 # MAGIC > (01 → 02 → 03 → 04) chained by dependency, on serverless compute. This run-all notebook does
 # MAGIC > the same thing in one click for the lab.
 
@@ -56,4 +56,8 @@ print("\nUC functions:")
 spark.sql(f"USE CATALOG {CATALOG}")
 spark.sql(f"SHOW USER FUNCTIONS IN {SCHEMA}").show(truncate=False)
 
-print("\n✅ Data layer ready. Next: open genie-setup/01_Genie_Space_Setup.md and build the Genie space.")
+print("Expected: 7 tables; dim_date ~365, dim_product 60, dim_customer 20,000, dim_store 20, fact_sales ~115,000, "
+      "sales_targets 48, performance_insights 32 (8 per region); "
+      "3 functions: explain_driver, simulate_discount, top_drivers.")
+
+print("\n✅ Data layer ready. Next: open genie-setup/01_Genie_Agent_Setup.md and build the Genie Agent.")

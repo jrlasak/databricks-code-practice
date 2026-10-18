@@ -5,7 +5,7 @@
 # MAGIC **Topic**: ELT | **Exercises**: 9
 # MAGIC
 # MAGIC Reference solutions, hints, and common mistakes for each exercise.
-# MAGIC Try solving the exercises first before looking here.
+# MAGIC Try each exercise before you read its solution.
 
 # COMMAND ----------
 
@@ -24,7 +24,7 @@ BASE_SCHEMA = "elt"
 # MAGIC
 # MAGIC **Common mistakes**:
 # MAGIC - Using LEFT JOIN instead of INNER JOIN (would include orders with NULL customer_id)
-# MAGIC - Forgetting to alias columns that exist in both tables (ambiguous column error)
+# MAGIC - Selecting `customer_id` without a table prefix: it exists in both tables, so Spark raises an ambiguous column error (write `o.customer_id`)
 # MAGIC - Not using the three-level namespace (catalog.schema.table)
 
 # COMMAND ----------
@@ -58,7 +58,7 @@ spark.sql(f"""
 # MAGIC **Common mistakes**:
 # MAGIC - Using INNER JOIN (drops orders with no matching customer)
 # MAGIC - Applying COALESCE to customer_id instead of name (customer_id can legitimately be NULL)
-# MAGIC - Forgetting that COALESCE needs the replacement value as a string literal, not a column
+# MAGIC - Filtering with `WHERE c.name IS NOT NULL` after the LEFT JOIN: that drops the orders with no matching customer, which are the rows you must keep
 
 # COMMAND ----------
 
@@ -86,9 +86,9 @@ spark.sql(f"""
 # MAGIC 1. LEFT ANTI JOIN returns rows from the left table that have NO match in the right table
 # MAGIC 2. This is a Spark SQL extension - standard SQL would use NOT EXISTS or NOT IN subqueries
 # MAGIC 3. Think of it as "give me everything in A that is NOT in B"
+# MAGIC 4. `LEFT JOIN ... WHERE o.order_id IS NULL` returns the same rows; LEFT ANTI JOIN states the intent directly and returns only `order_items` columns
 # MAGIC
 # MAGIC **Common mistakes**:
-# MAGIC - Using LEFT JOIN + WHERE IS NULL (works but misses the point - anti-join is cleaner and faster)
 # MAGIC - Using NOT IN with a subquery (breaks if the subquery returns NULLs)
 # MAGIC - Joining on the wrong column (must be order_id, not product_id)
 
@@ -105,16 +105,18 @@ spark.sql(f"""
 
 # COMMAND ----------
 # MAGIC %md
-# MAGIC ## Exercise 4: Semi-Join to Find Customers Who Have Orders
+# MAGIC ## Exercise 4: Semi-Join to Find Customers with a Cancelled Order
 # MAGIC
 # MAGIC **Hints**:
 # MAGIC 1. LEFT SEMI JOIN returns rows from the left table that have at least one match in the right table
 # MAGIC 2. Unlike INNER JOIN, semi-join never duplicates rows and returns only left-table columns
 # MAGIC 3. Think of it as an EXISTS check expressed as a join
+# MAGIC 4. The `status = 'cancelled'` test goes in the ON clause next to the `customer_id` match (or filter `orders` in a subquery first). After a LEFT SEMI JOIN only `customers` columns remain, so a WHERE on `o.status` fails with an UNRESOLVED_COLUMN error.
+# MAGIC 5. `SELECT DISTINCT c.*` after an INNER JOIN gives the same rows; LEFT SEMI JOIN gets there without creating the duplicates first
 # MAGIC
 # MAGIC **Common mistakes**:
-# MAGIC - Using INNER JOIN (duplicates customers who have multiple orders)
-# MAGIC - Using SELECT DISTINCT after INNER JOIN (works but semi-join is cleaner and faster)
+# MAGIC - Using INNER JOIN (duplicates customers who have several cancelled orders, like CUST-004)
+# MAGIC - Leaving out the `status = 'cancelled'` condition: the semi-join then keeps all 50 customers, since every customer has at least one order
 # MAGIC - Including order columns in the SELECT (semi-join only returns left-table columns)
 
 # COMMAND ----------
@@ -126,6 +128,7 @@ spark.sql(f"""
     FROM {CATALOG}.{BASE_SCHEMA}.customers c
     LEFT SEMI JOIN {CATALOG}.{BASE_SCHEMA}.orders o
         ON c.customer_id = o.customer_id
+       AND o.status = 'cancelled'
 """)
 
 # COMMAND ----------
@@ -138,12 +141,12 @@ spark.sql(f"""
 # MAGIC 3. Use o1.order_id < o2.order_id to avoid pairing an order with itself and to deduplicate pairs
 # MAGIC 4. Expect 5 pairs: CUST-003 (2025-07-04), CUST-047 (2025-09-08), and CUST-050
 # MAGIC    (2025-09-12, three same-day orders = three pairs)
+# MAGIC 5. `NULL = NULL` evaluates to NULL, not true, so the join already drops orders with NULL `customer_id`. The `IS NOT NULL` filter in requirement 3 makes that explicit.
 # MAGIC
 # MAGIC **Common mistakes**:
 # MAGIC - Using o1.order_id != o2.order_id instead of < (produces each pair twice: A-B and B-A)
 # MAGIC - Expecting the duplicate rows for ORD-042 / ORD-067 to pair up - they share ONE order_id,
 # MAGIC   so o1.order_id < o2.order_id is never true for them (that is a dedup case, not a pair case)
-# MAGIC - Forgetting to filter out NULL customer_ids (NULL = NULL is false in SQL, but be explicit)
 # MAGIC - Joining only on customer_id without order_date (finds all orders by same customer, not just same-day)
 
 # COMMAND ----------
@@ -174,12 +177,12 @@ spark.sql(f"""
 # MAGIC 1. Chain JOINs sequentially: orders -> customers -> order_items -> products
 # MAGIC 2. QUALIFY filters window function results without a subquery (Databricks SQL extension)
 # MAGIC 3. ROW_NUMBER() OVER (PARTITION BY ... ORDER BY ...) = 1 keeps the first row per group
+# MAGIC 4. A subquery with `WHERE rn = 1` gives the same result; QUALIFY does it in one SELECT
 # MAGIC
 # MAGIC **Common mistakes**:
 # MAGIC - Joining products on orders.product_id instead of order_items.product_id (order_items has the actual line items)
-# MAGIC - Forgetting QUALIFY and using a subquery with WHERE rn = 1 (works but QUALIFY is cleaner)
 # MAGIC - Not aliasing both name columns (customers.name and products.name would collide)
-# MAGIC - Using PARTITION BY without ORDER BY in ROW_NUMBER (non-deterministic results)
+# MAGIC - Leaving ORDER BY out of the ROW_NUMBER window: Databricks rejects it with an error, because ROW_NUMBER needs an ordering to number rows
 
 # COMMAND ----------
 
@@ -202,7 +205,7 @@ spark.sql(f"""
         ON o.order_id = oi.order_id
     INNER JOIN {CATALOG}.{BASE_SCHEMA}.products p
         ON oi.product_id = p.product_id
-    QUALIFY ROW_NUMBER() OVER (PARTITION BY o.order_id ORDER BY oi.quantity DESC) = 1
+    QUALIFY ROW_NUMBER() OVER (PARTITION BY o.order_id ORDER BY oi.quantity DESC, o.updated_at DESC) = 1
 """)
 
 # COMMAND ----------
@@ -217,7 +220,7 @@ spark.sql(f"""
 # MAGIC **Common mistakes**:
 # MAGIC - Using WHERE instead of HAVING for the total_spent filter (WHERE runs before GROUP BY)
 # MAGIC - Forgetting to exclude NULL customer_ids (they create a single group of unattributed orders)
-# MAGIC - Joining before aggregating without re-grouping (produces wrong counts if customers have multiple orders)
+# MAGIC - Grouping by `customer_id` alone after joining first: `name` and `region` then have to be in the GROUP BY (or wrapped in an aggregate), or the query fails
 
 # COMMAND ----------
 
@@ -252,13 +255,13 @@ spark.sql(f"""
 # MAGIC
 # MAGIC **Hints**:
 # MAGIC 1. GROUP BY ROLLUP(a, b) produces: (a, b), (a, NULL), (NULL, NULL) - hierarchical subtotals
-# MAGIC 2. NULL in a grouping column means "all values" (it is a subtotal/total row)
+# MAGIC 2. A NULL in a grouping column marks a subtotal or total row. `region` and `tier` have no NULL values here; on data that does, use `grouping(tier) = 1` to tell a subtotal from a real NULL
 # MAGIC 3. ROLLUP respects column order - ROLLUP(region, tier) gives per-region subtotals but NOT per-tier subtotals
 # MAGIC
 # MAGIC **Common mistakes**:
 # MAGIC - Using GROUP BY region, tier (no subtotals - just regular grouping)
 # MAGIC - Confusing ROLLUP with CUBE (ROLLUP is hierarchical left-to-right, CUBE is all combinations)
-# MAGIC - Not filtering to completed orders before aggregating (inflates revenue with pending/cancelled)
+# MAGIC - Not filtering to completed orders before aggregating (inflates revenue with pending, shipped and cancelled orders)
 # MAGIC - Forgetting that ROLLUP(region, tier) does NOT produce per-tier-only rows
 
 # COMMAND ----------
@@ -286,11 +289,11 @@ spark.sql(f"""
 # MAGIC **Hints**:
 # MAGIC 1. GROUP BY CUBE(a, b) produces: (a, b), (a, NULL), (NULL, b), (NULL, NULL) - all combinations
 # MAGIC 2. CUBE adds per-column subtotals that ROLLUP does not (e.g., per-status totals across all regions)
-# MAGIC 3. The grand total row has NULL for all grouping columns and matches the unfiltered aggregate
+# MAGIC 3. The grand total row has NULL in both grouping columns and equals a plain COUNT/SUM over the same joined rows (orders with a NULL `customer_id` are already gone)
 # MAGIC
 # MAGIC **Common mistakes**:
 # MAGIC - Confusing CUBE and ROLLUP (CUBE produces per-status rows that ROLLUP would not)
-# MAGIC - Using WHERE instead of HAVING for post-aggregation filtering
+# MAGIC - Carrying over Ex 8's `status = 'completed'` filter: Ex 9 aggregates every status
 # MAGIC - Assuming CUBE output is ordered (it is not - use ORDER BY if you need sorted output)
 
 # COMMAND ----------

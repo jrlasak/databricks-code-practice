@@ -2,8 +2,7 @@
 # COMMAND ----------
 # MAGIC %md
 # MAGIC ### Setup: Medallion Architecture
-# MAGIC Creates per-topic schema and independent source tables for each of 8 exercises.
-# MAGIC Run automatically via `%run` from the exercise notebook.
+# MAGIC Creates the `db_code.medallion_architecture` schema and the source tables for all 8 exercises. The exercise notebook runs it for you with `%run`.
 
 # COMMAND ----------
 
@@ -16,11 +15,11 @@ spark.sql(f"CREATE SCHEMA IF NOT EXISTS {CATALOG}.{SCHEMA}")
 # COMMAND ----------
 
 # ============================================================
-# Exercise 1: Raw append to bronze preserving all fields
+# Exercise 1: Raw load to bronze preserving all fields
 # ============================================================
 # 10 raw order rows with messy data: 1 duplicate order_id (ORD-003 twice),
 # 1 null customer_id (ORD-007), 1 zero amount (ORD-009), mixed statuses.
-# User must append ALL rows to bronze - no dedup, no cleaning.
+# You load ALL rows into bronze - no dedup, no cleaning.
 
 spark.sql(f"""
 CREATE OR REPLACE TABLE {CATALOG}.{SCHEMA}.raw_orders_ex1 (
@@ -55,7 +54,7 @@ MEDAL_EX1_RAW_COUNT = 10
 # ============================================================
 # Exercise 2: Bronze with ingestion metadata columns
 # ============================================================
-# 8 raw order rows. User appends to bronze adding _ingested_at and _source_file.
+# 8 raw order rows. You load them into bronze, adding _ingested_at and _source_file.
 # No dedup, no cleaning - just add metadata columns.
 
 spark.sql(f"""
@@ -91,6 +90,7 @@ MEDAL_EX2_RAW_COUNT = 8
 # ============================================================
 # 14 bronze rows with known duplicates: ORD-301 (2x), ORD-305 (2x), ORD-308 (3x).
 # 2 rows have NULL customer_id (ORD-304, ORD-310) but are NOT filtered here.
+# The copies differ in status: ORD-301 is pending then completed, ORD-308 is pending, pending, then shipped.
 # Dedup only - keep latest _ingested_at per order_id. Expected 10 distinct.
 
 spark.sql(f"""
@@ -108,7 +108,7 @@ CREATE OR REPLACE TABLE {CATALOG}.{SCHEMA}.bronze_orders_ex3 (
 
 spark.sql(f"""
 INSERT OVERWRITE {CATALOG}.{SCHEMA}.bronze_orders_ex3 VALUES
-    ('ORD-301', 'C-301', 'P-10', 60.00,  'completed', '2026-03-10', '2026-03-10 09:00:00', 'batch_01.json'),
+    ('ORD-301', 'C-301', 'P-10', 60.00,  'pending',   '2026-03-10', '2026-03-10 09:00:00', 'batch_01.json'),
     ('ORD-301', 'C-301', 'P-10', 60.00,  'completed', '2026-03-10', '2026-03-10 10:00:00', 'batch_02.json'),
     ('ORD-302', 'C-302', 'P-20', 135.00, 'pending',   '2026-03-10', '2026-03-10 09:00:00', 'batch_01.json'),
     ('ORD-303', 'C-303', 'P-30', 90.00,  'shipped',   '2026-03-10', '2026-03-10 09:00:00', 'batch_01.json'),
@@ -117,8 +117,8 @@ INSERT OVERWRITE {CATALOG}.{SCHEMA}.bronze_orders_ex3 VALUES
     ('ORD-305', 'C-305', 'P-10', 60.00,  'cancelled', '2026-03-11', '2026-03-11 10:00:00', 'batch_04.json'),
     ('ORD-306', 'C-306', 'P-50', 22.00,  'completed', '2026-03-11', '2026-03-11 09:00:00', 'batch_03.json'),
     ('ORD-307', 'C-307', 'P-20', 135.00, 'pending',   '2026-03-11', '2026-03-11 09:00:00', 'batch_03.json'),
-    ('ORD-308', 'C-308', 'P-30', 90.00,  'shipped',   '2026-03-12', '2026-03-12 09:00:00', 'batch_05.json'),
-    ('ORD-308', 'C-308', 'P-30', 90.00,  'shipped',   '2026-03-12', '2026-03-12 10:00:00', 'batch_06.json'),
+    ('ORD-308', 'C-308', 'P-30', 90.00,  'pending',   '2026-03-12', '2026-03-12 09:00:00', 'batch_05.json'),
+    ('ORD-308', 'C-308', 'P-30', 90.00,  'pending',   '2026-03-12', '2026-03-12 10:00:00', 'batch_06.json'),
     ('ORD-308', 'C-308', 'P-30', 90.00,  'shipped',   '2026-03-12', '2026-03-12 11:00:00', 'batch_07.json'),
     ('ORD-309', 'C-309', 'P-40', 200.00, 'completed', '2026-03-12', '2026-03-12 09:00:00', 'batch_05.json'),
     ('ORD-310', NULL,    'P-10', 60.00,  'pending',   '2026-03-12', '2026-03-12 09:00:00', 'batch_05.json')
@@ -133,10 +133,11 @@ MEDAL_EX3_EXPECTED_COUNT = 10
 # Exercise 4: Silver data cleaning - nulls, types, standardization
 # ============================================================
 # 12 bronze rows with quality issues:
-# - 2 null order_ids (rows 4, 9) -> filter out
-# - 1 null customer_id (row 7) -> filter out
+# - 2 null order_ids (customer_ids C-404, C-409) -> filter out
+# - 1 null customer_id (ORD-407) -> filter out
 # - status has whitespace and mixed case (' Completed ', 'PENDING', 'shipped')
 # - amount stored as STRING (must cast to DOUBLE)
+# - order_date stored as STRING (must cast to DATE)
 # After cleaning: 9 rows with standardized data.
 
 spark.sql(f"""
@@ -232,10 +233,11 @@ MEDAL_EX5_EXPECTED_COUNT = 8
 # Exercise 6: Incremental bronze-to-silver with MERGE
 # ============================================================
 # Existing silver: 6 rows (ORD-601 through ORD-606).
-# New bronze batch: 8 rows with _ingested_at:
+# New bronze batch: 9 rows with _ingested_at:
 #   3 updates: ORD-601, ORD-603, ORD-605 with newer updated_at
 #   3 new: ORD-607, ORD-608, ORD-609
-#   2 dupes within batch: ORD-607 appears 3 times (different _ingested_at)
+#   2 extra copies of ORD-607: it appears 3 times (different _ingested_at)
+#   1 stale row: ORD-604 with updated_at 07:00, older than the silver row (08:15), so silver keeps it
 # After dedup + MERGE: 9 rows.
 
 spark.sql(f"""
@@ -279,7 +281,8 @@ INSERT OVERWRITE {CATALOG}.{SCHEMA}.bronze_batch_ex6 VALUES
     ('ORD-607', 'C-607', 120.00, 'pending',   '2026-03-25 10:15:00', '2026-03-25 12:00:00'),
     ('ORD-607', 'C-607', 120.00, 'pending',   '2026-03-25 10:15:00', '2026-03-25 13:00:00'),
     ('ORD-608', 'C-608', 55.00,  'pending',   '2026-03-25 10:20:00', '2026-03-25 11:00:00'),
-    ('ORD-609', 'C-609', 180.00, 'shipped',   '2026-03-25 10:25:00', '2026-03-25 11:00:00')
+    ('ORD-609', 'C-609', 180.00, 'shipped',   '2026-03-25 10:25:00', '2026-03-25 11:00:00'),
+    ('ORD-604', 'C-604', 45.00,  'cancelled', '2026-03-25 07:00:00', '2026-03-25 11:00:00')
 """)
 
 # 6 existing + 3 new inserts = 9 total (3 updates overwrite in place)
@@ -291,8 +294,9 @@ MEDAL_EX6_EXPECTED_COUNT = 9
 # Exercise 7: Gold incremental refresh with MERGE
 # ============================================================
 # Existing gold: 5 aggregate rows (date+region combos).
-# New silver: 12 rows - some hit existing combos (update), some are new combos (insert).
-# User must recalculate aggregates from new silver and MERGE into gold.
+# New silver: 12 rows holding every order for the combos they cover (a restated slice).
+# Some hit existing combos (replace), some are new combos (insert).
+# You aggregate the new silver and MERGE the aggregates into gold.
 
 spark.sql(f"""
 CREATE OR REPLACE TABLE {CATALOG}.{SCHEMA}.gold_summary_ex7 (
@@ -341,13 +345,13 @@ INSERT OVERWRITE {CATALOG}.{SCHEMA}.silver_new_ex7 VALUES
 """)
 
 # New silver aggregated:
-#   2026-03-20/US-East: 2 orders, 160.00, avg=80.00  -> UPDATE existing (was 3, 280.00, 93.33)
-#   2026-03-20/US-West: 1 order,  200.00, avg=200.00 -> UPDATE existing (was 2, 250.00, 125.00)
-#   2026-03-21/US-East: 3 orders, 265.00, avg=88.33  -> UPDATE existing (was 2, 250.00, 125.00)
+#   2026-03-20/US-East: 2 orders, 160.00, avg=80.00  -> UPDATE existing (before the MERGE: 3, 280.00, 93.33)
+#   2026-03-20/US-West: 1 order,  200.00, avg=200.00 -> UPDATE existing (before the MERGE: 2, 250.00, 125.00)
+#   2026-03-21/US-East: 3 orders, 265.00, avg=88.33  -> UPDATE existing (before the MERGE: 2, 250.00, 125.00)
 #   2026-03-21/EU-West: 2 orders, 225.00, avg=112.50 -> INSERT new combo
 #   2026-03-22/US-East: 2 orders, 230.00, avg=115.00 -> INSERT new combo
 #   2026-03-22/US-West: 2 orders, 205.00, avg=102.50 -> INSERT new combo
-# After MERGE: 5 original - 3 updated + 3 new inserts = 8 rows total
+# After MERGE: 5 original rows (3 of them updated) + 3 new inserts = 8 rows total
 # Unchanged: 2026-03-20/EU-West (no new silver for it), 2026-03-21/US-West (no new silver)
 # Updated:   2026-03-20/US-East, 2026-03-20/US-West, 2026-03-21/US-East
 # Inserted:  2026-03-21/EU-West, 2026-03-22/US-East, 2026-03-22/US-West
@@ -487,6 +491,6 @@ print(f"Ex2: {MEDAL_EX2_RAW_COUNT} raw rows -> bronze_orders_ex2 (add metadata)"
 print(f"Ex3: 14 bronze rows -> {MEDAL_EX3_EXPECTED_COUNT} after dedup -> silver_orders_ex3")
 print(f"Ex4: 12 dirty rows -> {MEDAL_EX4_EXPECTED_COUNT} after cleaning -> silver_orders_ex4")
 print(f"Ex5: 20 silver rows -> {MEDAL_EX5_EXPECTED_COUNT} gold aggregates -> gold_daily_summary_ex5")
-print(f"Ex6: 6 silver + 8 bronze batch -> {MEDAL_EX6_EXPECTED_COUNT} after MERGE -> silver_orders_ex6_merged")
+print(f"Ex6: 6 silver + 9 bronze batch -> {MEDAL_EX6_EXPECTED_COUNT} after MERGE -> silver_orders_ex6_merged")
 print(f"Ex7: 5 gold + 12 new silver -> {MEDAL_EX7_EXPECTED_COUNT} after MERGE -> gold_summary_ex7_merged")
 print(f"Ex8: Quality checks across 3 tiers -> quality_report_ex8")

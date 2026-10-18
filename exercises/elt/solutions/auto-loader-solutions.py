@@ -4,8 +4,7 @@
 # MAGIC # Auto Loader Ingestion - Solutions
 # MAGIC **Topic**: ELT | **Exercises**: 6
 # MAGIC
-# MAGIC Reference solutions, hints, and common mistakes for each exercise.
-# MAGIC Try solving the exercises first before looking here.
+# MAGIC Reference solutions, hints, and common mistakes for each exercise. Try each exercise before you read its solution.
 
 # COMMAND ----------
 
@@ -21,11 +20,11 @@ CHECKPOINT_BASE = f"/Volumes/{CATALOG}/{SCHEMA}/checkpoints"
 # MAGIC
 # MAGIC **Hints**:
 # MAGIC 1. Auto Loader uses `spark.readStream.format("cloudFiles")` with the `cloudFiles.format` option
-# MAGIC 2. The write side needs `.format("delta")`, a checkpoint location, and a table name
+# MAGIC 2. The read side needs `cloudFiles.schemaLocation` (where the inferred schema is stored); the write side needs `.format("delta")`, a checkpoint location, and a table name
 # MAGIC 3. `trigger(availableNow=True)` processes all files and stops the stream
 # MAGIC
 # MAGIC **Common mistakes**:
-# MAGIC - Using `trigger(once=True)` instead of `trigger(availableNow=True)` (deprecated)
+# MAGIC - Using the deprecated `trigger(once=True)` instead of `trigger(availableNow=True)`
 # MAGIC - Forgetting `.option("checkpointLocation", ...)` on the write side
 # MAGIC - Using `spark.read` instead of `spark.readStream` (not streaming, won't track files)
 # MAGIC - Not calling `.awaitTermination()` (stream starts but code continues before it finishes)
@@ -51,9 +50,9 @@ CHECKPOINT_BASE = f"/Volumes/{CATALOG}/{SCHEMA}/checkpoints"
 # MAGIC ## Exercise 2: Schema Hints for Type Control
 # MAGIC
 # MAGIC **Hints**:
-# MAGIC 1. Schema hints use the option `cloudFiles.schemaHints`
-# MAGIC 2. The syntax is a comma-separated list of `column_name type` pairs
-# MAGIC 3. Schema hints override inferred types without requiring a full schema
+# MAGIC 1. Auto Loader has an option that overrides the inferred type of selected columns while still inferring the rest
+# MAGIC 2. The option is `cloudFiles.schemaHints`
+# MAGIC 3. Its value is a comma-separated list of `column_name TYPE` pairs: here just `amount DOUBLE`
 # MAGIC
 # MAGIC **Common mistakes**:
 # MAGIC - Providing a full schema instead of hints (works but defeats the purpose of inference)
@@ -82,15 +81,14 @@ CHECKPOINT_BASE = f"/Volumes/{CATALOG}/{SCHEMA}/checkpoints"
 # MAGIC ## Exercise 3: Schema Evolution Handling
 # MAGIC
 # MAGIC **Hints**:
-# MAGIC 1. Use `cloudFiles.schemaEvolutionMode` set to `addNewColumns`
-# MAGIC 2. Process batch 1 first (creates table with base schema), then batch 2 (adds priority column)
-# MAGIC 3. Both streams write to the same target table but use separate schema locations and separate checkpoints
+# MAGIC 1. Both streams go in the one TODO cell, each following the Ex 1 pattern: the batch 1 stream first, then the batch 2 stream, both `.toTable()` into `ex3_output`
+# MAGIC 2. `cloudFiles.schemaEvolutionMode` is a read option (`spark.readStream ... .option(...)`); `mergeSchema` is a write option (`.writeStream ... .option("mergeSchema", "true")`)
+# MAGIC 3. Per stream: `cloudFiles.format` json, `cloudFiles.schemaLocation` `.../ex3_schema_batchN`, `cloudFiles.schemaEvolutionMode` `addNewColumns`, then on the write `checkpointLocation` `.../ex3_batchN`, `mergeSchema` `true`, `trigger(availableNow=True)`, `.awaitTermination()`
 # MAGIC
 # MAGIC **Common mistakes**:
-# MAGIC - Processing both batches in a single stream pointing at one directory (files not in same dir)
-# MAGIC - Using `rescue` mode instead of `addNewColumns` (rescue captures new columns as JSON, doesn't add them)
-# MAGIC - Not using `mergeSchema` on the write side (needed for Delta to accept new columns)
-# MAGIC - Sharing the same schema location for both streams (batch 2 loads batch 1's schema, then fails with UNKNOWN_FIELD_EXCEPTION when it encounters the new column)
+# MAGIC - Processing both batches in a single stream pointed at one directory (the two batches sit in different directories)
+# MAGIC - Expecting `addNewColumns` alone to put `priority` in the table: it evolves only the schema Auto Loader reads with; without `mergeSchema` the Delta write rejects the new column
+# MAGIC - Pointing the batch 2 stream at batch 1's schema location: it starts from the 5-column schema, stops once with `UNKNOWN_FIELD_EXCEPTION`, and needs a rerun (that stop-and-rerun is how `addNewColumns` works on one long-lived stream)
 # MAGIC - Reusing the same checkpoint for both streams (checkpoints are per-stream)
 
 # COMMAND ----------
@@ -112,11 +110,9 @@ CHECKPOINT_BASE = f"/Volumes/{CATALOG}/{SCHEMA}/checkpoints"
     .awaitTermination()
 )
 
-# Step 2: Process batch 2 (has new 'priority' column - triggers schema evolution)
-# Uses a separate schema location so Auto Loader infers the full schema (including
-# the new 'priority' column) fresh, rather than loading batch 1's schema and failing
-# with UNKNOWN_FIELD_EXCEPTION. mergeSchema on the write side lets Delta accept the
-# new column.
+# Step 2: a separate schema location, so Auto Loader infers batch 2's full schema (with 'priority') on start.
+# On batch 1's schema location it would stop once with UNKNOWN_FIELD_EXCEPTION and continue on the rerun.
+# mergeSchema on the write side lets Delta add the column.
 (spark.readStream
     .format("cloudFiles")
     .option("cloudFiles.format", "json")
@@ -138,12 +134,11 @@ CHECKPOINT_BASE = f"/Volumes/{CATALOG}/{SCHEMA}/checkpoints"
 # MAGIC
 # MAGIC **Hints**:
 # MAGIC 1. Provide an explicit schema to Auto Loader so it knows `amount` should be DOUBLE
-# MAGIC 2. Set `cloudFiles.rescuedDataColumn` to `_rescued_data`
+# MAGIC 2. Set the `rescuedDataColumn` option to `_rescued_data`
 # MAGIC 3. Records that don't match the schema aren't dropped - they appear with null in the mismatched column and the original value in `_rescued_data`
 # MAGIC
 # MAGIC **Common mistakes**:
-# MAGIC - Relying on schema inference (infers STRING for amount since some values are strings - no rescue needed)
-# MAGIC - Forgetting to provide a schema (without explicit schema, Auto Loader can't know what's "wrong")
+# MAGIC - Relying on schema inference instead of a schema: `amount` comes out as STRING (every JSON column does by default, and with `cloudFiles.inferColumnTypes` the string values still make it STRING), so no value mismatches the schema and nothing is rescued
 # MAGIC - Using `columnNameOfCorruptRecord` (that's for the built-in JSON reader, not Auto Loader)
 # MAGIC - Confusing rescued data with schema evolution (rescued data = type mismatches, schema evolution = new columns)
 
@@ -178,12 +173,12 @@ ex4_schema = StructType([
 # MAGIC ## Exercise 5: Auto Loader with CSV Format and Custom Options
 # MAGIC
 # MAGIC **Hints**:
-# MAGIC 1. Set `cloudFiles.format` to `csv` and use the `delimiter` option for the pipe character
+# MAGIC 1. Set `cloudFiles.format` to `csv` and set the separator to the pipe character with `sep` (or its alias `delimiter`)
 # MAGIC 2. Set `header` to `true` so Auto Loader reads column names from the first row
 # MAGIC 3. Use `cloudFiles.schemaHints` to cast `amount` as DOUBLE (CSV infers everything as STRING)
 # MAGIC
 # MAGIC **Common mistakes**:
-# MAGIC - Using `sep` instead of `delimiter` (for cloudFiles CSV, the option is `delimiter`)
+# MAGIC - Leaving the default comma separator: each line lands as one column
 # MAGIC - Forgetting `header` = `true` (columns become `_c0`, `_c1`, etc.)
 # MAGIC - Not casting numeric columns (amount stays STRING, downstream comparisons fail)
 # MAGIC - Confusing cloudFiles options (prefixed with `cloudFiles.`) with reader options (no prefix)
@@ -209,25 +204,26 @@ ex4_schema = StructType([
 
 # COMMAND ----------
 # MAGIC %md
-# MAGIC ## Exercise 6: Auto Loader + MERGE for Incremental Dedup Upsert
+# MAGIC ## Exercise 6: Auto Loader + MERGE for Incremental Upsert
 # MAGIC
 # MAGIC **Hints**:
 # MAGIC 1. Use `foreachBatch` on the writeStream to get a static DataFrame per micro-batch
-# MAGIC 2. Inside the `foreachBatch` function, create a temp view from the batch and run a MERGE
+# MAGIC 2. Inside the `foreachBatch` function, create a temp view from the batch and run the MERGE through `batch_df.sparkSession`, the session that view belongs to
 # MAGIC 3. The MERGE matches on `order_id` and does UPDATE SET * when matched, INSERT * when not matched
+# MAGIC 4. Default JSON inference reads `amount` and `order_ts` as STRING; `cloudFiles.schemaHints` with `amount DOUBLE, order_ts TIMESTAMP` gives the source the target's types before the MERGE
 # MAGIC
 # MAGIC **Common mistakes**:
 # MAGIC - Trying to run MERGE directly on a streaming DataFrame (MERGE only works on static DataFrames)
 # MAGIC - Using `.writeStream.format("delta").toTable()` (this appends, doesn't merge)
 # MAGIC - Not registering the batch DataFrame as a temp view (needed for SQL MERGE syntax)
-# MAGIC - Forgetting `.awaitTermination()` (MERGE runs async, assertions fail)
-# MAGIC - Using the same checkpoint as the regular write exercises (checkpoints are stream-specific)
+# MAGIC - Forgetting `.awaitTermination()`: the cell returns while the stream is still running, so the validate cell can read the target before the MERGE commits
+# MAGIC - Reusing another exercise's checkpoint path (each stream needs its own checkpoint)
 
 # COMMAND ----------
 
 # EXERCISE_KEY: auto_loader_ex6
 def upsert_to_target(batch_df, batch_id):
-    """Process each micro-batch by MERGing into the target table."""
+    """Merge each micro-batch into the target table."""
     batch_df.createOrReplaceTempView("auto_loader_ex6_batch")
     batch_df.sparkSession.sql(f"""
         MERGE INTO {CATALOG}.{SCHEMA}.ex6_target t
@@ -241,6 +237,7 @@ def upsert_to_target(batch_df, batch_id):
     .format("cloudFiles")
     .option("cloudFiles.format", "json")
     .option("cloudFiles.schemaLocation", f"{CHECKPOINT_BASE}/ex6_schema")
+    .option("cloudFiles.schemaHints", "amount DOUBLE, order_ts TIMESTAMP")
     .load(f"{VOLUME_BASE}/ex6_files/")
     .writeStream
     .foreachBatch(upsert_to_target)

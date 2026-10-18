@@ -17,7 +17,7 @@
 # MAGIC **Schema** (`orders`):
 # MAGIC | Column | Type | Notes |
 # MAGIC |--------|------|-------|
-# MAGIC | order_id | STRING | Primary key |
+# MAGIC | order_id | STRING | Order key (repeats in the base table: ORD-042 and ORD-067 appear twice) |
 # MAGIC | customer_id | STRING | FK to customers (some nulls) |
 # MAGIC | product_id | STRING | FK to products |
 # MAGIC | amount | DOUBLE | Order total in USD |
@@ -35,20 +35,22 @@
 
 # COMMAND ----------
 # MAGIC %md
-# MAGIC **Setup complete.** Exercise tables are in `{CATALOG}.{SCHEMA}` (schema_enforcement schema).
-# MAGIC Base tables (orders, products) are in `{CATALOG}.{BASE_SCHEMA}` (delta_lake schema).
+# MAGIC **Setup complete.** Every exercise table is in `db_code.schema_enforcement`. Write your output tables there too, by full name (for example `db_code.schema_enforcement.schema_ex9_constraints`). In Python cells, the variables `CATALOG` and `SCHEMA` hold `db_code` and `schema_enforcement`. The base tables (`orders`, `products`) are in `db_code.delta_lake`.
+# MAGIC
+# MAGIC Keep the `# EXERCISE_KEY: ...` line as the first line of each answer cell.
+# MAGIC
 # MAGIC Exercise tables:
-# MAGIC - Ex 1 (easy): `schema_ex1_target` + `_source` - matching schemas
-# MAGIC - Ex 2 (easy): `schema_ex2_target` + `_source` - source has extra `discount_pct` column
-# MAGIC - Ex 3 (medium): `schema_ex3_target` + `_source` - same extra column (for mergeSchema)
-# MAGIC - Ex 4 (medium): `schema_ex4_target` + `_source` - completely different schema (products, not orders)
-# MAGIC - Ex 5 (medium): `schema_ex5_target` + `_source` - amount is STRING instead of DOUBLE
-# MAGIC - Ex 6-7 (medium): `schema_ex{6-7}_orders` - single tables for adding constraints
-# MAGIC - Ex 8 (medium): `schema_ex8_orders` - has NOT NULL + CHECK (for dropping)
-# MAGIC - Ex 9 (medium): `schema_ex9_orders` - has 2 CHECK constraints (for SHOW TBLPROPERTIES)
-# MAGIC - Ex 10 (hard): `schema_ex10_target` + `_source` - source has 2 extra columns (for MERGE evolution)
-# MAGIC - Ex 11 (hard): `schema_ex11_orders` - has NOT NULL + CHECK constraints pre-applied
-# MAGIC - Ex 12 (hard): `schema_ex12_target` + `_source` - constrained target, source has invalid rows
+# MAGIC - Ex 1 (easy): `schema_ex1_target`, `schema_ex1_source` - matching schemas
+# MAGIC - Ex 2 (easy): `schema_ex2_target`, `schema_ex2_source` - source has an extra `discount_pct` column
+# MAGIC - Ex 3 (medium): `schema_ex3_target`, `schema_ex3_source` - source has the same extra `discount_pct` column
+# MAGIC - Ex 4 (medium): `schema_ex4_target`, `schema_ex4_source` - source has a product schema, not orders
+# MAGIC - Ex 5 (medium): `schema_ex5_target`, `schema_ex5_source` - source `amount` is STRING, target `amount` is DOUBLE
+# MAGIC - Ex 6 and Ex 7 (medium): `schema_ex6_orders`, `schema_ex7_orders` - no constraints yet
+# MAGIC - Ex 8 (medium): `schema_ex8_orders` - `status` NOT NULL + CHECK `positive_amount`
+# MAGIC - Ex 9 (medium): `schema_ex9_orders` - CHECK `positive_amount` + CHECK `valid_status`
+# MAGIC - Ex 10 (hard): `schema_ex10_target`, `schema_ex10_source` - source has 2 extra columns, `discount_pct` and `shipping_cost`
+# MAGIC - Ex 11 (hard): `schema_ex11_orders` - `status` NOT NULL + CHECK `positive_amount`
+# MAGIC - Ex 12 (hard): `schema_ex12_target`, `schema_ex12_source` - target has `status` NOT NULL + CHECK `positive_amount`; source has 2 rows that break them
 
 # COMMAND ----------
 # MAGIC %md
@@ -119,7 +121,7 @@ result = spark.table(f"{CATALOG}.{SCHEMA}.schema_ex2_target")
 
 assert result.count() == 8, f"Expected 8 rows, got {result.count()}"
 assert "discount_pct" not in result.columns, \
-    "Target should NOT have discount_pct column (schema enforcement)"
+    "Target should not have a discount_pct column: insert only the 7 target columns"
 assert result.filter("order_id = 'ORD-101'").count() == 1, "ORD-101 should be inserted"
 
 print("Exercise 2 passed!")
@@ -136,8 +138,8 @@ print("Exercise 2 passed!")
 # MAGIC
 # MAGIC **Target** (`schema_ex3_target`): 5 rows with 7 columns (standard orders schema).
 # MAGIC
-# MAGIC **Expected Output**: `schema_ex3_target` has 8 rows. `discount_pct` column exists.
-# MAGIC Existing rows have null for `discount_pct`. New rows have their values.
+# MAGIC **Expected Output**: `schema_ex3_target` has 8 rows and a `discount_pct` column.
+# MAGIC ORD-001 to ORD-005 have null `discount_pct`. ORD-101 has `discount_pct` = 5.0.
 # MAGIC
 # MAGIC **Requirements**:
 # MAGIC 1. Write source data to target with schema evolution enabled
@@ -216,8 +218,8 @@ print("Exercise 4 passed!")
 # MAGIC ## Exercise 5: Handle Column Type Mismatch
 # MAGIC **Difficulty**: Medium | **Time**: ~10 min
 # MAGIC
-# MAGIC The source has `amount` as STRING instead of DOUBLE. Delta Lake rejects type mismatches
-# MAGIC even for "compatible" types. Cast the column to match the target schema before writing.
+# MAGIC The source has `amount` as STRING instead of DOUBLE. Databricks safely casts some types on write (an INT into a BIGINT column), but STRING into DOUBLE is not a safe cast, so the write fails.
+# MAGIC Cast the column to match the target schema before writing.
 # MAGIC
 # MAGIC **Source** (`schema_ex5_source`): 3 rows. `amount` column is STRING type (e.g., '49.99').
 # MAGIC
@@ -263,8 +265,7 @@ print("Exercise 5 passed!")
 # MAGIC
 # MAGIC **Table** (`schema_ex6_orders`): 5 rows from base orders. All rows have non-null status.
 # MAGIC
-# MAGIC **Expected Output**: `schema_ex6_orders` has 6 rows. The `status` column is NOT NULL
-# MAGIC enforced (any future write with null status would fail).
+# MAGIC **Expected Output**: `schema_ex6_orders` has 6 rows. The `status` column is NOT NULL, so any later write with a null status fails.
 # MAGIC
 # MAGIC **Requirements**:
 # MAGIC 1. Add a NOT NULL constraint on the `status` column
@@ -330,10 +331,12 @@ result = spark.table(f"{CATALOG}.{SCHEMA}.schema_ex7_orders")
 
 assert result.count() == 6, f"Expected 6 rows, got {result.count()}"
 assert result.filter("order_id = 'ORD-101'").count() == 1, "ORD-101 should be inserted"
-# Verify CHECK constraint exists via table properties
+# Verify the positive_amount CHECK constraint exists with the right expression
 props = spark.sql(f"SHOW TBLPROPERTIES {CATALOG}.{SCHEMA}.schema_ex7_orders")
-check_rows = props.filter("key LIKE 'delta.constraints%'").count()
-assert check_rows > 0, "Should have at least one CHECK constraint"
+check = props.filter("key = 'delta.constraints.positive_amount'").collect()
+assert len(check) == 1, "CHECK constraint positive_amount not found"
+assert check[0].value.replace(" ", "").strip("()") == "amount>0", \
+    f"positive_amount has the wrong expression: {check[0].value}"
 
 print("Exercise 7 passed!")
 
@@ -342,13 +345,12 @@ print("Exercise 7 passed!")
 # MAGIC ## Exercise 8: Drop a Constraint
 # MAGIC **Difficulty**: Medium | **Time**: ~10 min
 # MAGIC
-# MAGIC The table has both a NOT NULL constraint on `status` and a CHECK constraint
-# MAGIC `positive_amount`. Drop the CHECK constraint while keeping NOT NULL in place.
+# MAGIC Remove one constraint from a table and keep the other.
 # MAGIC
 # MAGIC **Table** (`schema_ex8_orders`): 5 rows. Constraints: `status` NOT NULL + CHECK `positive_amount` (amount > 0).
 # MAGIC
-# MAGIC **Expected Output**: The CHECK constraint `positive_amount` is removed. The NOT NULL
-# MAGIC constraint on `status` remains.
+# MAGIC **Expected Output**: `SHOW TBLPROPERTIES` on `schema_ex8_orders` no longer lists `delta.constraints.positive_amount`.
+# MAGIC The `status` column is still NOT NULL.
 # MAGIC
 # MAGIC **Requirements**:
 # MAGIC 1. Drop the CHECK constraint named `positive_amount`
@@ -382,23 +384,20 @@ print("Exercise 8 passed!")
 # MAGIC ## Exercise 9: Query Table Properties for Constraints
 # MAGIC **Difficulty**: Medium | **Time**: ~10 min
 # MAGIC
-# MAGIC Use `SHOW TBLPROPERTIES` to discover what CHECK constraints exist on a table.
-# MAGIC Delta Lake stores CHECK constraints as table properties with the prefix `delta.constraints.`.
+# MAGIC List the CHECK constraints on a table from its table properties.
 # MAGIC
 # MAGIC **Table** (`schema_ex9_orders`): 5 rows. Has 2 CHECK constraints:
 # MAGIC - `positive_amount`: amount > 0
 # MAGIC - `valid_status`: status IN ('pending', 'completed', 'shipped', 'cancelled')
 # MAGIC
-# MAGIC **Expected Output**: Save the constraints to `schema_ex9_constraints` with columns
-# MAGIC `constraint_name` and `constraint_expression`. Should have at least 2 rows.
+# MAGIC **Expected Output**: Delta table `schema_ex9_constraints` with exactly 2 rows and columns `constraint_name` (the full key, for example `delta.constraints.positive_amount`) and `constraint_expression` (for example `amount > 0`).
 # MAGIC
 # MAGIC **Requirements**:
 # MAGIC 1. Query table properties of `schema_ex9_orders` using `SHOW TBLPROPERTIES`
 # MAGIC 2. Filter for properties starting with `delta.constraints.`
-# MAGIC 3. Save the result as `schema_ex9_constraints` with columns `constraint_name` and `constraint_expression`
+# MAGIC 3. Save the result as the Delta table `schema_ex9_constraints` with columns `constraint_name` and `constraint_expression`
 # MAGIC
-# MAGIC **Approach**: `SHOW TBLPROPERTIES` returns all properties as key-value rows. Delta Lake
-# MAGIC CHECK constraints appear as `delta.constraints.{name}` keys with the expression as the value.
+# MAGIC **Approach**: `SHOW TBLPROPERTIES` returns one row per property, with columns `key` and `value`. SQL cannot filter that output, so run it with `spark.sql(...)` and filter the DataFrame.
 
 # COMMAND ----------
 
@@ -413,12 +412,13 @@ print("Exercise 8 passed!")
 # Validate Exercise 9
 result = spark.table(f"{CATALOG}.{SCHEMA}.schema_ex9_constraints")
 
-assert result.count() >= 2, f"Expected at least 2 constraints, got {result.count()}"
+assert result.count() == 2, \
+    f"schema_ex9_constraints should hold only the CHECK constraint properties, got {result.count()} rows"
 assert "constraint_name" in result.columns, "Should have constraint_name column"
 assert "constraint_expression" in result.columns, "Should have constraint_expression column"
 constraint_names = set(row.constraint_name for row in result.collect())
-assert any("positive_amount" in name for name in constraint_names), \
-    "Should find positive_amount constraint"
+assert "delta.constraints.positive_amount" in constraint_names, \
+    "constraint_name should hold the full property key for positive_amount"
 expressions = set(row.constraint_expression for row in result.collect())
 assert any("amount > 0" in expr for expr in expressions), \
     "Should find 'amount > 0' in constraint expressions"
@@ -430,29 +430,27 @@ print("Exercise 9 passed!")
 # MAGIC ## Exercise 10: Schema Evolution Through MERGE
 # MAGIC **Difficulty**: Hard | **Time**: ~15 min
 # MAGIC
-# MAGIC MERGE source data with two extra columns (`discount_pct`, `shipping_cost`) into the
-# MAGIC target using automatic schema evolution. The target schema should gain both columns.
+# MAGIC MERGE source data with two extra columns (`discount_pct`, `shipping_cost`) into the target using automatic schema evolution.
 # MAGIC
 # MAGIC **Source** (`schema_ex10_source`): 3 rows with 9 columns (standard 7 + `discount_pct` + `shipping_cost`).
 # MAGIC ORD-001 and ORD-002 exist in target (will be updated). ORD-101 is new (will be inserted).
 # MAGIC
 # MAGIC **Target** (`schema_ex10_target`): 5 rows with 7 columns (standard orders schema).
 # MAGIC
-# MAGIC **Expected Output**: `schema_ex10_target` has 6 rows. Both `discount_pct` and `shipping_cost`
-# MAGIC columns exist. ORD-001 has discount_pct=10.0. ORD-003 has null for both new columns.
+# MAGIC **Expected Output**: `schema_ex10_target` has 6 rows. Both `discount_pct` and `shipping_cost` columns exist.
+# MAGIC ORD-001 has `discount_pct` = 10.0. ORD-101 has `shipping_cost` = 3.99. ORD-003 has null for both new columns.
 # MAGIC
 # MAGIC **Requirements**:
-# MAGIC 1. Enable automatic schema evolution for MERGE
-# MAGIC 2. MERGE source into target (update matched, insert not matched)
-# MAGIC 3. Target schema should gain both new columns
+# MAGIC 1. MERGE `schema_ex10_source` into `schema_ex10_target` on `order_id` (update matched, insert not matched)
+# MAGIC 2. Make that same MERGE statement add `discount_pct` and `shipping_cost` to the target. Free Edition runs on serverless compute, where `spark.conf.set` cannot switch on schema auto-merge.
 # MAGIC
-# MAGIC **Approach**: MERGE blocks schema changes by default. Use `MERGE WITH SCHEMA EVOLUTION`
-# MAGIC syntax to allow the source to introduce new columns during the operation.
+# MAGIC **Approach**: By default, MERGE ignores source columns the target does not have: `UPDATE SET *` and `INSERT *` succeed and silently drop `discount_pct` and `shipping_cost`.
+# MAGIC Databricks SQL has a form of MERGE that evolves the target schema for that one statement.
 
 # COMMAND ----------
 
 # EXERCISE_KEY: schema_ex10
-# TODO: Enable schema evolution and MERGE source into target
+# TODO: MERGE source into target with schema evolution
 
 # Your code here
 
@@ -479,15 +477,15 @@ print("Exercise 10 passed!")
 # MAGIC ## Exercise 11: Constraint Violation Handling
 # MAGIC **Difficulty**: Hard | **Time**: ~15 min
 # MAGIC
-# MAGIC The table has both a NOT NULL constraint on `status` and a CHECK constraint (`amount > 0`)
-# MAGIC pre-applied by setup. Try inserting bad data to see how Delta Lake enforces constraints,
-# MAGIC then write code that catches the violations and inserts only the valid rows.
+# MAGIC Insert only the valid candidate rows below into `schema_ex11_orders`.
+# MAGIC
+# MAGIC Optional: insert all 3 first to see the error. Delta Lake rejects the whole batch, so nothing is written.
 # MAGIC
 # MAGIC **Table** (`schema_ex11_orders`): 5 rows from base orders. Constraints already applied:
 # MAGIC - `status` is NOT NULL
 # MAGIC - `amount > 0` (CHECK constraint `positive_amount`)
 # MAGIC
-# MAGIC **Bad rows to attempt** (2 of 3 violate constraints):
+# MAGIC **Candidate rows** (ORD-202 and ORD-203 each break a constraint). There is no source table: build these rows with `VALUES`, writing `order_date` as `DATE '2026-03-01'` and `updated_at` as `TIMESTAMP '2026-03-01 10:00:00'`:
 # MAGIC | order_id | customer_id | product_id | amount | status | order_date | updated_at |
 # MAGIC |----------|-------------|------------|--------|--------|------------|------------|
 # MAGIC | ORD-201 | CUST-020 | PROD-005 | 49.99 | pending | 2026-03-01 | 2026-03-01 10:00:00 |
@@ -501,8 +499,7 @@ print("Exercise 10 passed!")
 # MAGIC 1. Filter out rows that would violate constraints before inserting
 # MAGIC 2. Only ORD-201 should be inserted
 # MAGIC
-# MAGIC **Approach**: Rather than catching errors, filter the bad rows out before writing.
-# MAGIC Apply the same conditions that the constraints enforce (status IS NOT NULL AND amount > 0).
+# MAGIC **Approach**: Turn each constraint listed above into a filter condition and apply it to the candidate rows in the SELECT that feeds the `INSERT`.
 
 # COMMAND ----------
 
@@ -529,11 +526,10 @@ print("Exercise 11 passed!")
 # MAGIC ## Exercise 12: MERGE with Constraint-Safe Filtering
 # MAGIC **Difficulty**: Hard | **Time**: ~15 min
 # MAGIC
-# MAGIC MERGE source data into a constrained target. The source has a mix of valid and invalid
-# MAGIC rows. MERGE will fail if it tries to write a row that violates a constraint, so you
-# MAGIC must filter the source in the USING clause.
+# MAGIC MERGE source data into a constrained target. The source has a mix of valid and invalid rows.
+# MAGIC If any row the MERGE writes breaks a constraint, the whole MERGE fails.
 # MAGIC
-# MAGIC **Source** (`schema_ex12_source`): 4 rows:
+# MAGIC **Source** (`schema_ex12_source`): 4 rows with the same 7 columns as the target (key columns shown):
 # MAGIC | order_id | amount | status | Valid? |
 # MAGIC |----------|--------|--------|--------|
 # MAGIC | ORD-001 | 120.00 | shipped | Yes (update existing) |
@@ -543,16 +539,14 @@ print("Exercise 11 passed!")
 # MAGIC
 # MAGIC **Target** (`schema_ex12_target`): 5 rows. Constraints: `status` NOT NULL + CHECK `positive_amount`.
 # MAGIC
-# MAGIC **Expected Output**: 6 rows. ORD-001 updated (amount=120.00). ORD-201 inserted.
+# MAGIC **Expected Output**: `schema_ex12_target` has 6 rows. ORD-001 updated (amount = 120.00). ORD-201 inserted.
 # MAGIC ORD-202 and ORD-203 excluded.
 # MAGIC
 # MAGIC **Requirements**:
 # MAGIC 1. MERGE source into target (update matched, insert not matched)
-# MAGIC 2. Filter out constraint-violating rows in the USING clause
-# MAGIC 3. Only valid rows should reach the target
+# MAGIC 2. Let only the source rows that satisfy both target constraints reach the MERGE
 # MAGIC
-# MAGIC **Approach**: Pre-filter the source inside the USING subquery with the same conditions
-# MAGIC the constraints enforce (status IS NOT NULL AND amount > 0).
+# MAGIC **Approach**: Write the `USING` clause as a subquery over `schema_ex12_source` that keeps only the rows both target constraints accept.
 
 # COMMAND ----------
 

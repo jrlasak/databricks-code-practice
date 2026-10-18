@@ -1,13 +1,13 @@
 # Databricks notebook source
 # MAGIC %md
 # MAGIC # 04 - Compute Insights (the "daily job")
-# MAGIC This is the workflow notebook. For each region it decomposes the **month-over-month revenue change**
-# MAGIC for the current month into ranked drivers (which categories and products moved the most) and writes
-# MAGIC them to `performance_insights`. The `top_drivers()` and `explain_driver()` UC functions read this table.
+# MAGIC This is the notebook you would schedule as a daily job. For each region it decomposes the
+# MAGIC **month-over-month revenue change** for the current month into ranked drivers (which categories and
+# MAGIC products moved the most) and writes them to `performance_insights`. The `top_drivers()` and
+# MAGIC `explain_driver()` UC functions read this table.
 # MAGIC
-# MAGIC In production you would schedule this notebook as a **Databricks Workflow** (e.g. daily 06:00 on
-# MAGIC serverless). For the lab, running it once by hand is enough - see the genie-setup guides. Re-running
-# MAGIC is safe (`INSERT OVERWRITE`).
+# MAGIC In production that schedule is a **Lakeflow Job** (e.g. daily 06:00 on serverless). For the lab, `00_Run_All` already ran it once; re-run it only after you regenerate data.
+# MAGIC Re-running is safe (`INSERT OVERWRITE`).
 # MAGIC
 # MAGIC **Prerequisites**: notebooks 01, 02, 03 must have run.
 
@@ -80,18 +80,24 @@ for region in REGIONS:
     # CATEGORY drivers
     cat_rows = []
     for _, r in cregion.iterrows():
-        contrib = round(100.0 * r.revenue_delta / total_decline, 1)
-        verb = "fell" if r.revenue_delta < 0 else "grew"
+        if r.revenue_delta < 0:
+            contrib = round(100.0 * r.revenue_delta / total_decline, 1)
+            insight = (f"{r.dim_value} in {region} fell from ${round(r.revenue_prior):,} to "
+                       f"${round(r.revenue_current):,} (-${abs(round(r.revenue_delta)):,} month over month, "
+                       f"{contrib:.0f}% of the region's category declines).")
+        else:
+            # a growing category offsets the other categories' declines; it is not part of them
+            contrib = 0.0
+            insight = (f"{r.dim_value} in {region} grew from ${round(r.revenue_prior):,} to "
+                       f"${round(r.revenue_current):,} (+${abs(round(r.revenue_delta)):,} month over month, "
+                       f"offsetting part of the other categories' declines).")
         cat_rows.append({
             "region": region, "year_month": CURRENT_YEAR_MONTH, "driver_type": "CATEGORY",
             "dimension_value": r.dim_value,
             "revenue_current": round(r.revenue_current), "revenue_prior": round(r.revenue_prior),
             "revenue_delta": round(r.revenue_delta),
             "contribution_to_gap_pct": contrib,
-            "insight": (f"{r.dim_value} in {region} {verb} from ${round(r.revenue_prior):,} to "
-                        f"${round(r.revenue_current):,} ({'-' if r.revenue_delta < 0 else '+'}"
-                        f"${abs(round(r.revenue_delta)):,} month over month, {abs(contrib):.0f}% "
-                        f"of the region's decline)."),
+            "insight": insight,
         })
 
     # PRODUCT drivers - drill into the single worst category for this region
@@ -109,7 +115,8 @@ for region in REGIONS:
             "revenue_delta": round(r.revenue_delta),
             "contribution_to_gap_pct": contrib,
             "insight": (f"{r.dim_value} ({worst_cat}) in {region} fell from ${round(r.revenue_prior):,} "
-                        f"to ${round(r.revenue_current):,} (-${abs(round(r.revenue_delta)):,} MoM)."),
+                        f"to ${round(r.revenue_current):,} (-${abs(round(r.revenue_delta)):,} MoM). "
+                        f"Part of the {worst_cat} decline, not additional to it."),
         })
 
     # combine, rank by most negative delta first, keep top 8
@@ -142,7 +149,7 @@ print(f"{PERFORMANCE_INSIGHTS}: {spark.table(PERFORMANCE_INSIGHTS).count()} rows
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## Spot-check the hero region and the UC functions
+# MAGIC ## Spot-check the West and the UC functions
 
 # COMMAND ----------
 

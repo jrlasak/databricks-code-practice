@@ -2,8 +2,7 @@
 # COMMAND ----------
 # MAGIC %md
 # MAGIC ### Setup: Stream-Static Joins
-# MAGIC Creates per-exercise streaming source tables (cloned from the shared
-# MAGIC `db_code.streaming.events_source` base table) and a shared static customer dimension
+# MAGIC Creates per-exercise streaming source tables (the 50 events defined in this notebook) and a shared static customer dimension
 # MAGIC table in the `stream_static_joins` schema. Each exercise gets its own isolated
 # MAGIC source so streams cannot interfere with each other. Checkpoints live under a
 # MAGIC Unity Catalog volume so streams are restartable.
@@ -26,37 +25,8 @@ CHECKPOINT_BASE = f"/Volumes/{CATALOG}/{SCHEMA}/checkpoints"
 
 # COMMAND ----------
 
-# -- Defensive fallback: ensure the base streaming events table exists --
-# In production this table is created by `00_Setup.py` and lives in `db_code.streaming`.
-# Re-create it here only if missing so this notebook can be validated standalone.
-base_exists = spark.sql(
-    f"SHOW TABLES IN {CATALOG}.{BASE_SCHEMA}"
-).filter("tableName = 'events_source'").count() > 0
-
-if not base_exists:
-    spark.sql(f"""
-        CREATE OR REPLACE TABLE {CATALOG}.{BASE_SCHEMA}.events_source (
-            event_id STRING,
-            event_type STRING,
-            user_id STRING,
-            amount DOUBLE,
-            event_ts TIMESTAMP
-        ) USING DELTA
-    """)
-    spark.sql(f"""
-        INSERT INTO {CATALOG}.{BASE_SCHEMA}.events_source VALUES
-            ('EV-001', 'purchase', 'U-1', 50.00, TIMESTAMP '2026-04-01 10:00:00'),
-            ('EV-002', 'view',     'U-2', 0.00,  TIMESTAMP '2026-04-01 10:01:00'),
-            ('EV-003', 'purchase', 'U-3', 120.50, TIMESTAMP '2026-04-01 10:02:00'),
-            ('EV-004', 'click',    'U-1', 0.00,  TIMESTAMP '2026-04-01 10:03:00'),
-            ('EV-005', 'purchase', 'U-2', 75.25, TIMESTAMP '2026-04-01 10:04:00')
-    """)
-
-# COMMAND ----------
-
-# -- Clean previous runs --
-# Drop per-exercise source and target tables, and wipe checkpoints, so the notebook
-# is fully idempotent. The base table in BASE_SCHEMA is left alone.
+# Clean previous runs
+# Drop per-exercise source and target tables and wipe checkpoints, so every run starts from the same state.
 for i in range(1, 8):
     spark.sql(f"DROP TABLE IF EXISTS {CATALOG}.{SCHEMA}.ex{i}_source")
     spark.sql(f"DROP TABLE IF EXISTS {CATALOG}.{SCHEMA}.ex{i}_target")
@@ -65,7 +35,11 @@ for i in range(1, 8):
 spark.sql(f"DROP TABLE IF EXISTS {CATALOG}.{SCHEMA}.ex6_target_run1")
 spark.sql(f"DROP TABLE IF EXISTS {CATALOG}.{SCHEMA}.ex6_target_run2")
 
-# The static customer dimension - dropped and recreated below so refresh exercise starts clean
+# Exercise 5 writes the plan table; Exercise 7 writes the error log and may create the attempt target
+for t in ["ex5_explain", "ex7_error_log", "ex7_target_attempt"]:
+    spark.sql(f"DROP TABLE IF EXISTS {CATALOG}.{SCHEMA}.{t}")
+
+# The static customer dimension: dropped and recreated below so Exercise 6 starts without C-999
 spark.sql(f"DROP TABLE IF EXISTS {CATALOG}.{SCHEMA}.customers_static")
 
 dbutils.fs.rm(CHECKPOINT_BASE, recurse=True)
@@ -74,11 +48,11 @@ spark.sql(f"CREATE VOLUME IF NOT EXISTS {CATALOG}.{SCHEMA}.checkpoints")
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## Static dimension: customers_static
+# MAGIC #### Static dimension: customers_static
 # MAGIC Small dimension table (20 rows). Customers C-001 .. C-020.
-# MAGIC Mix of active/inactive customers (for predicate-pushdown exercise).
-# MAGIC The events table will reference customer_ids C-001..C-015 plus some NULLs and
-# MAGIC unmatched ids (C-991, C-992) so the left-outer exercise has unmatched rows.
+# MAGIC Mix of active and inactive customers (Exercise 4 filters to active ones).
+# MAGIC The events reference customer_ids C-001..C-015 plus some NULLs and
+# MAGIC unmatched ids (C-991, C-992), so Exercise 3 has unmatched rows.
 
 # COMMAND ----------
 
@@ -116,20 +90,20 @@ spark.sql(f"""
         ('C-020', 'Tara Mehta',    'apac',    'gold',     TRUE)
 """)
 
-# Active count: 14, Inactive count: 6 (used by predicate-pushdown exercise)
+# Active: 15, inactive: 5 (C-004, C-007, C-011, C-014, C-018); Exercise 4 keeps the 15 active ones
 
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## Per-exercise streaming source tables
-# MAGIC Each `exN_source` is a Delta table users will read via `spark.readStream.table(...)`.
+# MAGIC #### Per-exercise streaming source tables
+# MAGIC Each `exN_source` is a Delta table you read with `spark.readStream.table(...)`.
 # MAGIC Events reference a `customer_id` column - a mix of matched, NULL, and unmatched.
 
 # COMMAND ----------
 
 # Shared schema for all event sources: customer_id is the join key.
-# Rows: ~50 total. customer_ids spread across C-001..C-015 (matched in static),
-# plus 5 NULL customer_ids and 3 unmatched ids (C-991, C-992) -> left-outer exercise gets unmatched rows.
+# Rows: 50. customer_ids spread across C-001..C-015 (matched in static),
+# plus 5 NULL customer_ids and 3 unmatched ids (C-991, C-992) -> Exercise 3 gets unmatched rows.
 EVENTS_VALUES = """
     ('EV-001', 'purchase', 'C-001', 50.00,  TIMESTAMP '2026-04-01 10:00:00'),
     ('EV-002', 'view',     'C-002', 0.00,   TIMESTAMP '2026-04-01 10:01:00'),
@@ -209,11 +183,11 @@ for ex in [1, 2, 3, 4, 5, 7]:
 
 # Exercise 6 (static refresh, hard): two batches of events.
 # Run 1 reads ex6_source_run1, joins against the initial customers_static, writes ex6_target_run1.
-# User then inserts a new customer into customers_static.
+# You then insert a new customer into customers_static.
 # Run 2 reads ex6_source_run2, joins against the UPDATED static table, writes ex6_target_run2.
-# Both source batches contain ONLY the new customer's id (C-999) so the assertion is clean:
+# Both source batches contain ONLY the new customer's id (C-999), so run 1 matches nothing and run 2 matches every row:
 #   run 1 -> 0 matched rows (customer doesn't exist yet -> no inner-join output)
-#   run 2 -> matched rows after the user inserts C-999
+#   run 2 -> 2 matched rows after you insert C-999
 
 spark.sql(f"""
     CREATE OR REPLACE TABLE {CATALOG}.{SCHEMA}.ex6_source_run1 (
@@ -250,7 +224,7 @@ spark.sql(f"""
 
 print(f"Setup complete for Stream-Static Joins")
 print(f"  Schema: {CATALOG}.{SCHEMA}")
-print(f"  Static dimension: {CATALOG}.{SCHEMA}.customers_static (20 customers, 14 active / 6 inactive)")
+print(f"  Static dimension: {CATALOG}.{SCHEMA}.customers_static (20 customers, 15 active / 5 inactive)")
 print(f"  Checkpoints: {CHECKPOINT_BASE}")
 print(f"  Per-exercise event sources: ex1_source-ex5_source and ex7_source (50 rows each; ex6 uses two separate run tables)")
 print(f"     - 42 matched customer_ids, 3 unmatched (C-991/C-992), 5 NULL customer_id")

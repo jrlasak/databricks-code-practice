@@ -2,32 +2,28 @@
 # COMMAND ----------
 # MAGIC %md
 # MAGIC # 00_Setup: Shared Data Generator
-# MAGIC **Run this notebook once** before solving any exercise. It creates the `db_code` catalog,
-# MAGIC zone schemas, per-topic schemas, and all base tables that exercise notebooks reference.
+# MAGIC Every exercise notebook runs this notebook for you in its second cell (`%run ./00_Setup`), so you never run it by hand. It creates the `db_code` catalog, its schemas, and the base tables in `db_code.delta_lake`.
 # MAGIC
 # MAGIC **What it creates**:
 # MAGIC - Catalog: `db_code`
-# MAGIC - Zone schemas: `delta_lake`, `elt`, `streaming`, `production`, `governance`, `performance`, `fundamentals`
-# MAGIC - Per-topic schemas: `merge_operations`, `time_travel`, `schema_enforcement`, `optimize_file_mgmt`, `liquid_clustering`, `change_data_feed`
-# MAGIC - Base tables (in `delta_lake`): `orders` (~100 rows), `customers` (~50 rows), `products` (~30 rows),
-# MAGIC   `events` (~150 rows), `order_items` (~200 rows)
+# MAGIC - Shared schemas: `delta_lake` (the base tables below), `elt`, `streaming`, `production`, `governance`, `performance`, `fundamentals`
+# MAGIC - Exercise schemas (one per notebook): `merge_operations`, `time_travel`, `schema_enforcement`, `optimize_file_mgmt`, `liquid_clustering`, `change_data_feed`
+# MAGIC - Base tables (in `delta_lake`): `orders` (~100 rows), `customers` (~50 rows), `products` (~30 rows), `events` (~150 rows), `order_items` (~200 rows)
 # MAGIC
-# MAGIC **Idempotent**: Safe to run multiple times. Checks if base tables already exist with
-# MAGIC correct row counts before recreating. Schema creation is always idempotent via IF NOT EXISTS.
+# MAGIC **Safe to rerun**: when the five base tables already hold exactly the expected rows (102 orders, 50 customers, 30 products, 152 events, 205 order items), spot-checked values match and the source files exist, the notebook skips rebuilding them. Schemas are created with `IF NOT EXISTS`.
 # MAGIC
-# MAGIC **Deterministic**: All data is fixed. No randomness. Same data for everyone,
-# MAGIC enabling exact-value assertions in exercises.
+# MAGIC **Deterministic**: every row is fixed, with no randomness, so the expected values in each exercise match the data you query.
 
 # COMMAND ----------
 
-# -- Catalog and Schemas --
+# Catalog and schemas
 
 CATALOG = "db_code"
 
 spark.sql(f"CREATE CATALOG IF NOT EXISTS {CATALOG}")
 spark.sql(f"USE CATALOG {CATALOG}")
 
-# Zone schemas
+# Shared schemas
 for schema in [
     "delta_lake",
     "elt",
@@ -39,7 +35,7 @@ for schema in [
 ]:
     spark.sql(f"CREATE SCHEMA IF NOT EXISTS {CATALOG}.{schema}")
 
-# Per-topic schemas (exercise tables go here, base tables stay in delta_lake)
+# Exercise schemas, one per notebook (base tables stay in delta_lake)
 for schema in [
     "merge_operations",
     "time_travel",
@@ -52,42 +48,51 @@ for schema in [
 
 # COMMAND ----------
 
-# -- Idempotency Check --
-# If base tables already exist with correct row counts, skip recreation.
-# This avoids redundant writes on repeated runs and respects schema quotas.
+# Rerun check
+# If the base tables and source files already hold the expected data, skip the rebuild.
+# Every exercise notebook runs this notebook, so this keeps reruns fast.
+# Anything missing or different (a row count, a spot-checked value, a source file) rebuilds everything.
 
+_EXPECTED_COUNTS = {"orders": 102, "customers": 50, "products": 30, "events": 152, "order_items": 205}
 _SETUP_SKIP = False
 try:
-    _orders_ct = spark.table(f"{CATALOG}.delta_lake.orders").count()
-    _customers_ct = spark.table(f"{CATALOG}.delta_lake.customers").count()
-    _products_ct = spark.table(f"{CATALOG}.delta_lake.products").count()
-    _events_ct = spark.table(f"{CATALOG}.delta_lake.events").count()
-    _items_ct = spark.table(f"{CATALOG}.delta_lake.order_items").count()
-    if _orders_ct >= 100 and _customers_ct >= 50 and _products_ct >= 30 and _events_ct >= 150 and _items_ct >= 200:
+    _counts = {t: spark.table(f"{CATALOG}.delta_lake.{t}").count() for t in _EXPECTED_COUNTS}
+    _ord001_status = spark.sql(f"SELECT status FROM {CATALOG}.delta_lake.orders WHERE order_id = 'ORD-001'").first()["status"]
+    _ord067_amount = spark.sql(f"SELECT max(amount) AS a FROM {CATALOG}.delta_lake.orders WHERE order_id = 'ORD-067'").first()["a"]
+    _ord091_year = spark.sql(f"SELECT year(order_date) AS y FROM {CATALOG}.delta_lake.orders WHERE order_id = 'ORD-091'").first()["y"]
+    _files_ok = all(
+        len(dbutils.fs.ls(f"/Volumes/{CATALOG}/{_path}")) > 0
+        for _path in [
+            "elt/source_files/json/new_orders",
+            "elt/source_files/csv/customer_updates",
+            "streaming/source_files/parquet/event_batch",
+        ]
+    )
+    if _counts == _EXPECTED_COUNTS and _ord001_status == "completed" and _ord067_amount == 340.0 and _ord091_year == 2099 and _files_ok:
         _SETUP_SKIP = True
         print("=" * 60)
-        print(f"  Base tables already exist with correct row counts. Skipping creation.")
-        print(f"  orders={_orders_ct}, customers={_customers_ct}, products={_products_ct}, events={_events_ct}, order_items={_items_ct}")
+        print("  Base tables already exist with the expected data. Skipping creation.")
+        print(f"  {_counts}")
         print("=" * 60)
 except Exception:
     _SETUP_SKIP = False
 
 # COMMAND ----------
 
-# -- Orders Table --
+# Orders table
 # ~100 rows. Primary table referenced by most exercises.
 #
 # Edge cases built in:
 #   - Duplicates: ORD-042 and ORD-067 appear twice with different updated_at
 #   - Null customer_id: ORD-015, ORD-038, ORD-071
 #   - $0 amounts: ORD-022, ORD-058
-#   - Future dates: ORD-091 through ORD-095 have order_date in 2027
+#   - Future dates: ORD-091 through ORD-095 have order_date in 2099
 #   - Mixed statuses: pending, completed, shipped, cancelled
 #   - amount < 100: ORD-003, ORD-005, ORD-009, ORD-013, ORD-022, ORD-038, ORD-058 (and others)
 #   - amount >= 100: ORD-001, ORD-002, ORD-004, ORD-006, ORD-007, ORD-008 (and others)
 #
 # ORD-001 through ORD-005 are the most referenced subset across exercises.
-# ORD-001 through ORD-020 must exist for OPTIMIZE/liquid-clustering setup (LIMIT 20 queries).
+# The optimize and liquid-clustering setups copy orders from the start of this list (ORD-001 through ORD-020).
 
 if not _SETUP_SKIP:
     spark.sql(f"""
@@ -218,11 +223,11 @@ if not _SETUP_SKIP:
     ('ORD-090', 'CUST-036', 'PROD-008', 199.00, 'completed', DATE '2025-10-20', TIMESTAMP '2025-10-20 08:00:00'),
 
     -- ORD-091 through ORD-095: future dates (edge case)
-    ('ORD-091', 'CUST-037', 'PROD-001', 109.50, 'pending',   DATE '2027-01-15', TIMESTAMP '2027-01-15 09:00:00'),
-    ('ORD-092', 'CUST-038', 'PROD-003', 175.00, 'pending',   DATE '2027-02-20', TIMESTAMP '2027-02-20 10:30:00'),
-    ('ORD-093', 'CUST-039', 'PROD-005', 320.00, 'pending',   DATE '2027-03-10', TIMESTAMP '2027-03-10 14:00:00'),
-    ('ORD-094', 'CUST-040', 'PROD-002', 45.00,  'pending',   DATE '2027-04-05', TIMESTAMP '2027-04-05 11:00:00'),
-    ('ORD-095', 'CUST-041', 'PROD-004', 210.00, 'pending',   DATE '2027-05-01', TIMESTAMP '2027-05-01 16:00:00'),
+    ('ORD-091', 'CUST-037', 'PROD-001', 109.50, 'pending',   DATE '2099-01-15', TIMESTAMP '2099-01-15 09:00:00'),
+    ('ORD-092', 'CUST-038', 'PROD-003', 175.00, 'pending',   DATE '2099-02-20', TIMESTAMP '2099-02-20 10:30:00'),
+    ('ORD-093', 'CUST-039', 'PROD-005', 320.00, 'pending',   DATE '2099-03-10', TIMESTAMP '2099-03-10 14:00:00'),
+    ('ORD-094', 'CUST-040', 'PROD-002', 45.00,  'pending',   DATE '2099-04-05', TIMESTAMP '2099-04-05 11:00:00'),
+    ('ORD-095', 'CUST-041', 'PROD-004', 210.00, 'pending',   DATE '2099-05-01', TIMESTAMP '2099-05-01 16:00:00'),
 
     -- ORD-096 through ORD-100: recent orders
     ('ORD-096', 'CUST-042', 'PROD-010', 112.00, 'completed', DATE '2026-01-05', TIMESTAMP '2026-01-05 09:30:00'),
@@ -236,8 +241,8 @@ if not _SETUP_SKIP:
 
 # COMMAND ----------
 
-# -- Customers Table --
-# ~50 rows. Used by MERGE SCD Type 2 exercises and governance exercises.
+# Customers table
+# ~50 rows. The MERGE setup copies rows from it for the SCD Type 2 exercise.
 #
 # Edge cases built in:
 #   - Null emails: CUST-015, CUST-033, CUST-047
@@ -315,8 +320,8 @@ if not _SETUP_SKIP:
 
 # COMMAND ----------
 
-# -- Products Table --
-# ~30 rows. Used by schema enforcement exercises (product_id, name, category, price).
+# Products table
+# ~30 rows. The schema-enforcement setup copies PROD-001 to PROD-003 (columns product_id, name as product_name, category, price) for Exercise 4.
 #
 # Edge cases built in:
 #   - $0 price: PROD-022
@@ -372,11 +377,11 @@ if not _SETUP_SKIP:
 
 # COMMAND ----------
 
-# -- Events Table --
-# ~150 rows. Used by streaming, ELT, and performance exercises.
+# Events table
+# ~150 rows.
 #
 # Edge cases built in:
-#   - Late arrivals: EVT-031 through EVT-035 have event_ts 30+ days before their neighbors
+#   - Late arrivals: EVT-031 through EVT-035 have event_ts one month (31 days) before their neighbors
 #   - Null payloads: EVT-011, EVT-044, EVT-077, EVT-110, EVT-143
 #   - Duplicate event_ids: EVT-050 and EVT-100 each appear twice
 #   - Event types: page_view, click, purchase, signup, logout, error, search
@@ -417,7 +422,7 @@ if not _SETUP_SKIP:
         day_offset = (i - 1) // 8
         hour_offset = ((i - 1) % 8) * 3
         if i in _late_arrival_ids:
-            # Late arrivals: timestamp 45 days before expected
+            # Late arrivals: same day and hour, one month earlier (May instead of June)
             ts = f"2025-{5 + (day_offset // 30):02d}-{((day_offset % 30) + 1):02d} {hour_offset:02d}:00:00"
         else:
             month = 6 + (day_offset // 30)
@@ -449,8 +454,8 @@ if not _SETUP_SKIP:
 
 # COMMAND ----------
 
-# -- Order Items Table --
-# ~200 rows. Used by ELT join exercises and aggregation problems.
+# Order items table
+# ~200 rows.
 #
 # Edge cases built in:
 #   - Orphan order_ids (no matching order): ORD-201 through ORD-205
@@ -514,9 +519,8 @@ if not _SETUP_SKIP:
 
 # COMMAND ----------
 
-# -- Source Files for Ingestion Exercises --
-# Creates JSON, CSV, and Parquet files in volumes for Auto Loader and COPY INTO exercises.
-# These are used by ELT and streaming zone exercises.
+# Source files
+# Writes sample JSON, CSV and Parquet files to two volumes: /Volumes/db_code/elt/source_files and /Volumes/db_code/streaming/source_files.
 
 if not _SETUP_SKIP:
     # Create volumes for source files
@@ -526,7 +530,7 @@ if not _SETUP_SKIP:
     _volume_path_elt = f"/Volumes/{CATALOG}/elt/source_files"
     _volume_path_stream = f"/Volumes/{CATALOG}/streaming/source_files"
 
-    # JSON source: new orders arriving (for Auto Loader / COPY INTO)
+    # JSON files: orders ORD-081 through ORD-090
     _json_orders = spark.sql(f"""
         SELECT order_id, customer_id, product_id, amount, status,
                CAST(order_date AS STRING) AS order_date,
@@ -536,7 +540,7 @@ if not _SETUP_SKIP:
     """)
     _json_orders.coalesce(1).write.mode("overwrite").json(f"{_volume_path_elt}/json/new_orders")
 
-    # CSV source: customer updates (for file format exercises)
+    # CSV file with a header row: customers CUST-041 through CUST-050
     _csv_customers = spark.sql(f"""
         SELECT customer_id, name, email, region, tier,
                CAST(signup_date AS STRING) AS signup_date
@@ -545,7 +549,7 @@ if not _SETUP_SKIP:
     """)
     _csv_customers.coalesce(1).write.mode("overwrite").option("header", "true").csv(f"{_volume_path_elt}/csv/customer_updates")
 
-    # Parquet source: events batch (for streaming simulation)
+    # Parquet file: events EVT-101 through EVT-120
     _parquet_events = spark.sql(f"""
         SELECT * FROM {CATALOG}.delta_lake.events
         WHERE event_id BETWEEN 'EVT-101' AND 'EVT-120'
@@ -554,7 +558,7 @@ if not _SETUP_SKIP:
 
 # COMMAND ----------
 
-# -- Confirmation --
+# Confirmation
 if not _SETUP_SKIP:
     _orders_count = spark.table(f"{CATALOG}.delta_lake.orders").count()
     _customers_count = spark.table(f"{CATALOG}.delta_lake.customers").count()
@@ -574,7 +578,7 @@ if not _SETUP_SKIP:
     print(f"  events:      {_events_count} rows")
     print(f"  order_items: {_items_count} rows")
     print("=" * 60)
-    print(f"  Zone schemas: delta_lake, elt, streaming, production, governance, performance, fundamentals")
-    print(f"  Topic schemas: merge_operations, time_travel, schema_enforcement, optimize_file_mgmt, liquid_clustering, change_data_feed")
+    print(f"  Shared schemas: delta_lake, elt, streaming, production, governance, performance, fundamentals")
+    print(f"  Exercise schemas: merge_operations, time_travel, schema_enforcement, optimize_file_mgmt, liquid_clustering, change_data_feed")
     print(f"  Source files: {_volume_path_elt}/json, {_volume_path_elt}/csv, {_volume_path_stream}/parquet")
     print("=" * 60)

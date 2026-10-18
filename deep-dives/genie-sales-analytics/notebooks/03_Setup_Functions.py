@@ -7,7 +7,9 @@
 # MAGIC - `simulate_discount(product_id, discount_pct)` - a **what-if**: projects units, revenue, and margin
 # MAGIC   if you discount a product. Can't be done from historical SQL alone, so it must be a function.
 # MAGIC - `top_drivers(region)` - reads the precomputed `performance_insights` table and returns the ranked
-# MAGIC   drivers of a region's gap to target (scoped to the latest precomputed month automatically).
+# MAGIC   drivers of a region's month-over-month revenue decline (scoped to the latest precomputed month
+# MAGIC   automatically). In production you'd give `top_drivers` a `year_month` parameter and keep monthly
+# MAGIC   history; this lab precomputes only the current month.
 # MAGIC - `explain_driver(region, rank)` - a one-sentence natural-language rationale for one driver.
 # MAGIC
 # MAGIC Each function's `COMMENT` is the prompt Genie reads to decide whether to call it. The what/how/avoid
@@ -23,7 +25,7 @@
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## simulate_discount - what-if margin impact (the Agent hero)
+# MAGIC ## simulate_discount - what-if margin impact (called in Agent mode)
 
 # COMMAND ----------
 
@@ -47,13 +49,11 @@ RETURNS TABLE(
     projected_margin_pct DOUBLE,
     margin_safe BOOLEAN
 )
-COMMENT 'Projects the revenue and margin impact of marking a product down by p_discount_pct, using a fixed price-elasticity assumption (a 10 percent discount lifts units ~15 percent) against the product''s 12-month average monthly volume. Returns one row: current vs discounted price, baseline vs projected monthly units/revenue/margin, projected margin percent, and a margin_safe flag (TRUE only if the discounted price still clears unit cost and projected margin stays at or above 15 percent). HOW TO USE: call when the user asks "what if we discount X by Y percent", "what would a markdown do to margin", or any pricing what-if. CALL SYNTAX: positional arguments only - SELECT * FROM {FQ}.simulate_discount(''SKU-1042'', 15). WHAT TO AVOID: do NOT use named-parameter syntax (p_product_id => ...) - Spark SQL does not support named parameters for UC table functions; do NOT answer pricing what-ifs with raw SQL over historical sales - always call this function so the elasticity and the margin-safety check are applied.'
+COMMENT 'Projects the revenue and margin impact of marking a product down by p_discount_pct, using a fixed price-elasticity assumption (a 10 percent discount lifts units ~15 percent) against the product''s 12-month average monthly units (all sales, discounted or not), with baseline revenue and margin valued at full list price so baseline and projection compare like for like. Returns one row: current vs discounted price, baseline vs projected monthly units/revenue/margin, projected margin percent, and a margin_safe flag (TRUE only if the discounted price still clears unit cost and projected margin stays at or above 15 percent). HOW TO USE: call when the user asks "what if we discount X by Y percent", "what would a markdown do to margin", or any pricing what-if. CALL SYNTAX: positional arguments only - SELECT * FROM {FQ}.simulate_discount(''SKU-1042'', 15). WHAT TO AVOID: do NOT use named-parameter syntax; do NOT answer pricing what-ifs with raw SQL over historical sales - always call this function so the elasticity and the margin-safety check are applied.'
 RETURN
 WITH baseline AS (
   SELECT
-    SUM(quantity) / 12.0       AS baseline_monthly_units,
-    SUM(net_sales) / 12.0      AS baseline_monthly_revenue,
-    SUM(gross_margin) / 12.0   AS baseline_monthly_margin
+    SUM(quantity) / 12.0       AS baseline_monthly_units
   FROM {FACT_SALES} f
   JOIN {DIM_PRODUCT} p ON f.product_key = p.product_key
   WHERE p.product_id = p_product_id
@@ -71,8 +71,9 @@ calc AS (
     ROUND(prod.list_price * (1 - p_discount_pct / 100.0), 2) AS discounted_price,
     prod.unit_cost,
     baseline.baseline_monthly_units,
-    baseline.baseline_monthly_revenue,
-    baseline.baseline_monthly_margin,
+    -- baseline at full list price, the same basis as the projection
+    baseline.baseline_monthly_units * prod.list_price AS baseline_monthly_revenue,
+    baseline.baseline_monthly_units * (prod.list_price - prod.unit_cost) AS baseline_monthly_margin,
     -- elasticity: +1.5 percent units per 1 percent discount
     baseline.baseline_monthly_units * (1 + 1.5 * p_discount_pct / 100.0) AS projected_monthly_units
   FROM prod CROSS JOIN baseline
@@ -99,7 +100,7 @@ print("Created simulate_discount")
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## top_drivers - read precomputed ranked gap drivers
+# MAGIC ## top_drivers - read the precomputed ranked drivers of the month-over-month decline
 
 # COMMAND ----------
 
@@ -117,7 +118,7 @@ RETURNS TABLE(
     contribution_to_gap_pct DOUBLE,
     insight STRING
 )
-COMMENT 'Returns the ranked drivers (rank 1 = biggest) of a region''s revenue decline for the most recent precomputed month, from the performance_insights table. The function scopes to the current (latest) month automatically, so NO month argument is needed. HOW TO USE: call when the user asks "what is driving the gap in [region]", "what is dragging down [region] this month", "top detractors for [region]", or "why is [region] behind". CALL SYNTAX: positional argument only - SELECT * FROM {FQ}.top_drivers(''West'') ORDER BY rank. WHAT TO AVOID: do NOT use named-parameter syntax; do NOT recompute this with raw SQL - call the function so the ranking and gap-contribution logic stay governed and consistent. Returns empty if notebook 04 has not been run yet (that is expected, not an error). (Production note: a real system would add a year_month parameter and keep monthly history; this lab precomputes only the current month.)'
+COMMENT 'Returns the ranked drivers (rank 1 = biggest) of a region''s revenue decline for the most recent precomputed month, from the performance_insights table. The function scopes to the current (latest) month automatically, so NO month argument is needed. HOW TO USE: call when the user asks "what is driving the gap in [region]", "what is dragging down [region] this month", "top detractors for [region]", or "why is [region] behind". CALL SYNTAX: positional argument only - SELECT * FROM {FQ}.top_drivers(''West'') ORDER BY rank. WHAT TO AVOID: do NOT use named-parameter syntax; do NOT recompute this with raw SQL - call the function so the ranking and gap-contribution logic stay governed and consistent. Returns empty if notebook 04 has not been run yet (that is expected, not an error).'
 RETURN
 SELECT rank, driver_type, dimension_value, revenue_current, revenue_prior,
        revenue_delta, contribution_to_gap_pct, insight
@@ -141,7 +142,7 @@ CREATE OR REPLACE FUNCTION {FQ}.explain_driver(
     p_rank INT           COMMENT 'Which driver to explain (1 is the biggest).'
 )
 RETURNS TABLE(explanation STRING)
-COMMENT 'Returns a one-sentence natural-language explanation of a single ranked gap driver for a region, scoped to the most recent precomputed month (no month argument needed). HOW TO USE: call when the user asks "why" or "explain" about a specific driver already surfaced by top_drivers; pass the region and the rank (1, 2, 3...). CALL SYNTAX: positional arguments only - SELECT * FROM {FQ}.explain_driver(''West'', 1). WHAT TO AVOID: do NOT use named-parameter syntax; do NOT call before top_drivers has returned rows for the same region - the result will be empty.'
+COMMENT 'Returns a one-sentence natural-language explanation of a single ranked driver of a region''s month-over-month revenue decline, scoped to the most recent precomputed month (no month argument needed). HOW TO USE: call when the user asks "why" or "explain" about a specific driver already surfaced by top_drivers; pass the region and the rank (1, 2, 3...). CALL SYNTAX: positional arguments only - SELECT * FROM {FQ}.explain_driver(''West'', 1). WHAT TO AVOID: do NOT use named-parameter syntax; do NOT call before top_drivers has returned rows for the same region - the result will be empty.'
 RETURN
 SELECT MAX(insight) AS explanation
 FROM {PERFORMANCE_INSIGHTS}
@@ -159,7 +160,8 @@ print("Created explain_driver")
 
 print(f"simulate_discount test - 15% markdown on {HERO_DISCOUNT_PRODUCT_ID} (Summit 600 Down Jacket):")
 spark.sql(f"SELECT * FROM {FQ}.simulate_discount('{HERO_DISCOUNT_PRODUCT_ID}', 15)").show(truncate=False)
-print("Expected: discounted_price ~ $186, projected units up ~22%, margin_safe = true.")
+print("Expected: discounted_price ~ $186, projected units up ~22%, projected revenue up ~4% and projected "
+      "margin down ~9% against the list-price baseline, projected_margin_pct ~50.6%, margin_safe = true.")
 
 # COMMAND ----------
 

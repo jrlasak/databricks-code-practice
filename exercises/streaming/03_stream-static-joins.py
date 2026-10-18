@@ -6,18 +6,17 @@
 # MAGIC
 # MAGIC Practice the most common enrichment pattern: joining a streaming events DataFrame with
 # MAGIC a static Delta dimension table. Covers inner and left-outer joins, broadcast hints,
-# MAGIC predicate pushdown on the static side, what happens when the static table changes
-# MAGIC mid-run, and why right-outer joins on the streaming side are unsupported.
+# MAGIC filtering the static side, what happens when the static table changes
+# MAGIC mid-run, and why a right outer join with the stream on the left is unsupported.
 # MAGIC
 # MAGIC **Solutions**: If stuck, see `solutions/stream-static-joins-solutions.py` for hints and answers.
 # MAGIC
 # MAGIC **Key concepts**:
 # MAGIC - Stream-static joins use a regular DataFrame `.join(static_df, ...)` - no special API
 # MAGIC - Every micro-batch re-reads the static side as of its current Delta version (snapshot per batch)
-# MAGIC - Left outer with the stream on the left preserves unmatched events; right outer on the streaming side is unsupported
-# MAGIC - Broadcast hints (`df.hint("broadcast")`) avoid shuffling the static side on every batch
-# MAGIC - Filtering the static side before the join reduces what each batch scans
-# MAGIC - All streams use `.trigger(availableNow=True)` + `.awaitTermination()` so they finish and stop
+# MAGIC - Left outer with the stream on the left preserves unmatched events; right outer with the stream on the left is unsupported
+# MAGIC - Broadcast hints (`df.hint("broadcast")`) ship the small static side to every executor, so the stream is not shuffled by the join key on every batch
+# MAGIC - Filter the static side before the join: an inner join gets the same plan either way, but after a left outer join the same filter also drops the unmatched events
 
 # COMMAND ----------
 
@@ -38,7 +37,7 @@
 # MAGIC | name | STRING | Customer name |
 # MAGIC | region | STRING | us-east, us-west, eu, apac |
 # MAGIC | tier | STRING | gold, silver, bronze |
-# MAGIC | is_active | BOOLEAN | 14 active, 6 inactive |
+# MAGIC | is_active | BOOLEAN | 15 active, 5 inactive |
 # MAGIC
 # MAGIC **Event sources** (`ex1_source`-`ex5_source` and `ex7_source`, 50 rows each; ex6 uses two separate run tables):
 # MAGIC | Column | Type | Notes |
@@ -51,9 +50,11 @@
 # MAGIC
 # MAGIC **Exercise 6 sources**: `ex6_source_run1` (3 rows, all customer_id='C-999') and `ex6_source_run2` (2 rows, all customer_id='C-999').
 # MAGIC
-# MAGIC **Pattern**: Each exercise reads from its own `exN_source` via `spark.readStream.table(...)`,
-# MAGIC joins with `customers_static`, and writes to `exN_target` using `trigger(availableNow=True)`.
-# MAGIC Checkpoints live under `CHECKPOINT_BASE` (one subdir per exercise).
+# MAGIC **Pattern**: Every table here lives in `db_code.stream_static_joins`, so use the full name, for example `spark.readStream.table("db_code.stream_static_joins.ex1_source")`. Each exercise reads its own `exN_source` as a stream, joins it with `customers_static`, writes to `exN_target` with `.trigger(availableNow=True)`, and calls `.awaitTermination()` on the returned query so the validation cell runs after the data lands.
+# MAGIC
+# MAGIC The setup cell defines the Python variables `CATALOG` (`db_code`), `SCHEMA` (`stream_static_joins`) and `CHECKPOINT_BASE` (`/Volumes/db_code/stream_static_joins/checkpoints`). Give each query its own checkpoint under it, e.g. `f"{CHECKPOINT_BASE}/ex1"`.
+# MAGIC
+# MAGIC **Redo an exercise**: a checkpoint remembers which rows its stream already read, so running a fixed TODO cell again reads nothing new. Re-run the `%run ./setup/stream-static-joins-setup` cell first: it drops every target and checkpoint of this notebook and recreates `customers_static` without C-999.
 
 # COMMAND ----------
 # MAGIC %md
@@ -69,17 +70,16 @@
 # MAGIC **Static side** (`customers_static`): 20 customers (C-001..C-020).
 # MAGIC
 # MAGIC **Target**: Write to `db_code.stream_static_joins.ex1_target`. Expected 42 rows
-# MAGIC (inner join drops the 3 unmatched + 5 NULL customer_ids).
+# MAGIC (inner join drops the 3 unmatched + 5 NULL customer_ids). Example: `EV-001` joins to `Alice Chen`, region `us-east`.
 # MAGIC
 # MAGIC **Requirements**:
 # MAGIC 1. Read `ex1_source` as a stream with `spark.readStream.table(...)`
 # MAGIC 2. Read `customers_static` as a regular (non-streaming) DataFrame with `spark.read.table(...)`
-# MAGIC 3. Inner join on `customer_id`
-# MAGIC 4. Write the result as Delta to `ex1_target` with `trigger(availableNow=True)` and `.awaitTermination()`
+# MAGIC 3. Inner join on `customer_id`, passing the column name (`"customer_id"`) so the output keeps one `customer_id` column
+# MAGIC 4. Write the result as Delta to `ex1_target`
 # MAGIC
 # MAGIC **Constraints**:
 # MAGIC - Use `trigger(availableNow=True)`, NOT `trigger(once=True)` (deprecated)
-# MAGIC - Checkpoint path must be in a Volume under `CHECKPOINT_BASE`
 # MAGIC - The static side is read with `spark.read`, NOT `spark.readStream`
 
 # COMMAND ----------
@@ -122,16 +122,14 @@ print("Exercise 1 passed!")
 # MAGIC **Target**: Write to `db_code.stream_static_joins.ex2_target`. Expected 42 rows.
 # MAGIC Output schema must contain exactly these columns (in any order):
 # MAGIC `event_id`, `event_type`, `customer_id`, `amount`, `event_ts`, `name`, `region`, `tier`.
-# MAGIC The `is_active` column from the dimension must NOT appear.
+# MAGIC Example: `EV-003` has `name = 'Carla Diaz'`, `tier = 'gold'`.
 # MAGIC
 # MAGIC **Requirements**:
 # MAGIC 1. Inner join `ex2_source` with `customers_static` on `customer_id`
-# MAGIC 2. Project the 5 event columns + only `name`, `region`, `tier` from the static side
-# MAGIC 3. Drop / do not select `is_active`
-# MAGIC 4. Write to `ex2_target` with `trigger(availableNow=True)`
+# MAGIC 2. Project the 5 event columns + only `name`, `region`, `tier` from the static side (no `is_active`)
+# MAGIC 3. Write to `ex2_target`
 # MAGIC
 # MAGIC **Constraints**:
-# MAGIC - Do NOT include `is_active` in the output
 # MAGIC - Use `select(...)` after the join (not `drop("is_active")` only - explicit projection is clearer)
 
 # COMMAND ----------
@@ -169,22 +167,19 @@ print("Exercise 2 passed!")
 # MAGIC consumers can route or count unmatched traffic. Stream-static left-outer with the stream on
 # MAGIC the left is supported and is the default pattern for "enrich but never lose".
 # MAGIC
-# MAGIC **Source stream** (`ex3_source`): 50 events. 42 matched + 3 unmatched (C-991/C-992) + 5 NULL = 50 rows expected.
+# MAGIC **Source stream** (`ex3_source`): 50 events: 42 matched, 3 unmatched (C-991/C-992), 5 NULL `customer_id`.
 # MAGIC
 # MAGIC **Target**: Write to `db_code.stream_static_joins.ex3_target`. Expected 50 rows.
 # MAGIC - 42 rows with `name` populated
 # MAGIC - 8 rows with `name IS NULL` (3 unmatched + 5 NULL customer_id)
+# MAGIC - Example: `EV-036` (`C-991`) has `name` NULL; `EV-039` has NULL `customer_id` and NULL `name`.
 # MAGIC
 # MAGIC **Requirements**:
 # MAGIC 1. Left outer join `ex3_source` (left) with `customers_static` (right) on `customer_id`
 # MAGIC 2. Stream must be on the LEFT side of the join
 # MAGIC 3. All 50 events must appear in the output
 # MAGIC 4. Unmatched / NULL events should have NULL for `name`, `region`, `tier`, `is_active`
-# MAGIC 5. Write to `ex3_target` with `trigger(availableNow=True)`
-# MAGIC
-# MAGIC **Constraints**:
-# MAGIC - The join type string is `"left"` or `"left_outer"`
-# MAGIC - Do NOT swap sides - stream MUST be on the left
+# MAGIC 5. Write to `ex3_target`
 
 # COMMAND ----------
 
@@ -222,28 +217,23 @@ print("Exercise 3 passed!")
 # MAGIC ## Exercise 4: Filter the Static Side Before Joining
 # MAGIC **Difficulty**: Medium | **Time**: ~10 min
 # MAGIC
-# MAGIC The dimension is read on every micro-batch. Filtering it BEFORE the join reduces what each
-# MAGIC batch scans and what each task carries through the join. Here, restrict the static side to
-# MAGIC active customers only - any event whose customer is inactive becomes "no match".
+# MAGIC The dimension is re-read on every micro-batch. Restrict it to active customers BEFORE the join, so any event whose customer is inactive becomes "no match". For an inner join, Catalyst would push a post-join filter on `is_active` below the join anyway; filtering the dimension first is the habit that stays correct in a left outer join, where the same filter written after the join also drops every unmatched event.
 # MAGIC
 # MAGIC **Source stream** (`ex4_source`): 50 events.
 # MAGIC
-# MAGIC **Static side**: `customers_static` filtered to `is_active = TRUE` (14 customers).
+# MAGIC **Static side**: `customers_static` filtered to `is_active = TRUE` (15 customers).
 # MAGIC Inactive customers in C-001..C-015 are: C-004, C-007, C-011, C-014 (4 inactive in the matched-id range).
 # MAGIC
-# MAGIC **Target**: Write to `db_code.stream_static_joins.ex4_target`. Inner join + active-only filter.
-# MAGIC - Events whose `customer_id` matches an INACTIVE customer become unmatched and are dropped (inner join)
-# MAGIC - Expected row count: 42 (matched) minus the events for inactive customers.
-# MAGIC - In the source, events for inactive customers (C-004, C-007, C-011, C-014) total 10 rows.
-# MAGIC - So expected = 42 - 10 = 32 rows.
+# MAGIC **Target**: Write to `db_code.stream_static_joins.ex4_target`. Expected 32 rows: the 42 matched events minus the 10 events of inactive customers C-004, C-007, C-011, C-014.
 # MAGIC
 # MAGIC **Requirements**:
 # MAGIC 1. Filter `customers_static` to `is_active = TRUE` BEFORE the join
 # MAGIC 2. Inner join the events stream with the filtered dimension on `customer_id`
-# MAGIC 3. Write to `ex4_target` with `trigger(availableNow=True)`
+# MAGIC 3. Keep every column from both sides (the validation cell reads `is_active`)
+# MAGIC 4. Write to `ex4_target`
 # MAGIC
 # MAGIC **Constraints**:
-# MAGIC - Apply the filter on the static DataFrame, NOT in a WHERE on the joined output (the goal is to scan less)
+# MAGIC - Apply the filter on the static DataFrame, not in a WHERE on the joined output
 # MAGIC - Inner join (not left outer) - inactive matches should be dropped
 
 # COMMAND ----------
@@ -266,7 +256,7 @@ assert inactive_present == 0, f"Expected 0 events for inactive customers, got {i
 # Active customer C-001 should still appear
 active_present = result.filter("customer_id = 'C-001'").count()
 assert active_present > 0, f"Active customer C-001 should have events in the output"
-# is_active should not be FALSE anywhere (we joined against active-only)
+# is_active should not be FALSE anywhere (the join used active customers only)
 false_active = result.filter("is_active = FALSE").count()
 assert false_active == 0, f"Joined output should never contain is_active=FALSE, got {false_active}"
 
@@ -277,31 +267,21 @@ print("Exercise 4 passed!")
 # MAGIC ## Exercise 5: Broadcast the Static Dimension
 # MAGIC **Difficulty**: Medium | **Time**: ~15 min
 # MAGIC
-# MAGIC When the static side is small (fits in driver/executor memory), broadcast it instead of
-# MAGIC shuffling the stream by `customer_id` on every micro-batch. On Free Edition serverless
-# MAGIC `spark.conf.set` is not available, so apply the hint on the DataFrame itself:
-# MAGIC `customers_df.hint("broadcast")`.
+# MAGIC When the static side is small (fits in driver/executor memory), broadcast it instead of shuffling the stream by `customer_id` on every micro-batch. A 20-row table is far under Spark's auto-broadcast threshold, so it broadcasts even without a hint; the hint makes it certain when the size estimate is larger than the real table. Serverless does not support setting `spark.sql.autoBroadcastJoinThreshold`, so apply the hint on the DataFrame itself: `customers_df.hint("broadcast")`.
 # MAGIC
 # MAGIC **Source stream** (`ex5_source`): 50 events.
 # MAGIC
-# MAGIC **Target**: Write to `db_code.stream_static_joins.ex5_target`. Expected 42 rows (inner join).
+# MAGIC **Target**: Write to `db_code.stream_static_joins.ex5_target`. Expected 42 rows (inner join). Example: `EV-001` joins to `Alice Chen`.
 # MAGIC
 # MAGIC **Requirements**:
 # MAGIC 1. Apply `.hint("broadcast")` to the static `customers_static` DataFrame
 # MAGIC 2. Inner join the events stream with the hinted static side on `customer_id`
-# MAGIC 3. Capture the join's explain plan as a STRING and store one row in the `ex5_explain` table
-# MAGIC    with column `plan STRING`. The captured plan must contain `BroadcastHashJoin`.
-# MAGIC 4. Write the streaming join result to `ex5_target` with `trigger(availableNow=True)`
-# MAGIC
-# MAGIC **Note**: streaming queries materialize plans per micro-batch, so capturing the plan of
-# MAGIC the streaming DataFrame directly is unreliable. Build the equivalent BATCH join (read
-# MAGIC `ex5_source` with `spark.read`, apply the same broadcast-hinted join) and capture its
-# MAGIC `.explain(extended=False)` output. The physical join operator is identical.
+# MAGIC 3. Build the equivalent BATCH join: read `db_code.stream_static_joins.ex5_source` with `spark.read.table(...)` and join it to the same hinted static DataFrame. You can capture its plan before the stream runs, and it uses the same join operator as each micro-batch.
+# MAGIC 4. `.explain()` prints the plan and returns `None`. Capture the printout as a string with `contextlib.redirect_stdout(io.StringIO())`, then save it as one row in `db_code.stream_static_joins.ex5_explain` with a single column `plan STRING`. The plan must contain `BroadcastHashJoin`.
+# MAGIC 5. Write the streaming join result to `ex5_target`
 # MAGIC
 # MAGIC **Constraints**:
-# MAGIC - Use DataFrame `.hint("broadcast")` (NOT `spark.conf.set` - blocked on serverless)
 # MAGIC - The broadcast hint must be on the small (static) side, not the stream
-# MAGIC - The explain plan saved to `ex5_explain` must contain the substring "BroadcastHashJoin"
 
 # COMMAND ----------
 
@@ -322,7 +302,7 @@ assert explain.count() == 1, f"Expected 1 row in ex5_explain (the plan string), 
 plan_str = explain.collect()[0]["plan"]
 assert plan_str is not None and len(plan_str) > 0, "ex5_explain.plan should be non-empty"
 assert "BroadcastHashJoin" in plan_str, \
-    f"Expected 'BroadcastHashJoin' in explain plan (proves the hint took effect). Got plan:\n{plan_str[:500]}"
+    f"Expected 'BroadcastHashJoin' in explain plan (the static side is broadcast). Got plan:\n{plan_str[:500]}"
 # Sanity: standard inner-join row check
 ev001 = result.filter("event_id = 'EV-001'").select("name").collect()[0]["name"]
 assert ev001 == "Alice Chen", f"EV-001 should join to Alice Chen, got {ev001}"
@@ -352,18 +332,19 @@ print("Exercise 5 passed!")
 # MAGIC
 # MAGIC **Requirements**:
 # MAGIC 1. **Run 1**: Inner join `ex6_source_run1` with `customers_static` on `customer_id`. Write
-# MAGIC    to `ex6_target_run1` with `trigger(availableNow=True)` and `.awaitTermination()`.
+# MAGIC    to `ex6_target_run1`.
 # MAGIC    Result will be empty (C-999 doesn't exist yet).
 # MAGIC 2. **Refresh the dimension**: After run 1 finishes, INSERT a new row into `customers_static`:
 # MAGIC    `('C-999', 'New Customer', 'us-east', 'gold', TRUE)`.
 # MAGIC 3. **Run 2**: Inner join `ex6_source_run2` with `customers_static` (now refreshed) on
-# MAGIC    `customer_id`. Write to `ex6_target_run2` with `trigger(availableNow=True)`.
+# MAGIC    `customer_id`. Write to `ex6_target_run2`.
 # MAGIC    Result will contain 2 enriched rows.
 # MAGIC
 # MAGIC **Constraints**:
 # MAGIC - Use a DIFFERENT checkpoint subdirectory for each run (run1 and run2 are separate queries)
 # MAGIC - The two source batches are separate tables; do NOT combine them into one stream
 # MAGIC - The INSERT into `customers_static` is regular SQL, run between the two streams
+# MAGIC - To rerun this exercise, rerun the setup cell (`%run ./setup/stream-static-joins-setup`) first: it recreates `customers_static` without C-999 and clears the checkpoints.
 
 # COMMAND ----------
 
@@ -401,34 +382,26 @@ print("Exercise 6 passed!")
 # MAGIC
 # MAGIC A right outer join with the **stream on the left** and the **static on the right** is unsupported
 # MAGIC in Structured Streaming. The semantics would require emitting one row per static row that has
-# MAGIC no match in the stream - but the stream is unbounded, so "no match" is never decidable. Spark
-# MAGIC raises `AnalysisException: Right outer/Full outer joins are not supported with streaming
-# MAGIC DataFrame/Dataset on the left side.`
+# MAGIC no match in the stream - but the stream is unbounded, so "no match" is never decidable. Spark raises an
+# MAGIC `AnalysisException` saying a right outer join with a streaming DataFrame on the left and a static DataFrame on the right is not supported.
 # MAGIC
 # MAGIC The correct alternative when you want to KEEP all events including unmatched ones is a
-# MAGIC LEFT OUTER join with the stream on the left (Exercise 3's pattern). For this exercise, do both:
-# MAGIC 1. Attempt the right outer join and catch the exception
-# MAGIC 2. Implement the correct alternative (left outer with stream on the left) and write the result
+# MAGIC LEFT OUTER join with the stream on the left (Exercise 3's pattern).
 # MAGIC
 # MAGIC **Source stream** (`ex7_source`): 50 events (42 matched, 3 unmatched, 5 NULL customer_id).
 # MAGIC
 # MAGIC **Targets**:
-# MAGIC - `ex7_error_log`: 1 row, column `error_msg STRING`. Contains the exception message text from the
-# MAGIC   failed right outer join attempt (must contain the substring "Right outer").
+# MAGIC - `ex7_error_log`: 1 row, column `error_msg STRING`: the exception message from the failed right outer join attempt.
 # MAGIC - `ex7_target`: Left outer join result (the correct alternative). Expected 50 rows.
 # MAGIC
 # MAGIC **Requirements**:
-# MAGIC 1. Attempt `events_stream.join(customers_static, "customer_id", "right_outer")` and start a
-# MAGIC    streaming write. Wrap in `try / except` to catch `AnalysisException` (or any Exception).
-# MAGIC    Capture the exception message as a STRING.
+# MAGIC 1. Attempt `events_stream.join(customers_df, "customer_id", "right_outer")` (where `customers_df` is `customers_static` read with `spark.read`) and start a streaming write to `ex7_target_attempt` with checkpoint `f"{CHECKPOINT_BASE}/ex7_attempt"`. Wrap it in `try / except` to catch `AnalysisException` (or any `Exception`) and keep `str(e)`.
 # MAGIC 2. Save the captured error message to `ex7_error_log` as a single row with column `error_msg`.
 # MAGIC 3. Implement the correct alternative: left outer join with the stream on the left.
-# MAGIC 4. Write the alternative result to `ex7_target` with `trigger(availableNow=True)`.
+# MAGIC 4. Write the alternative result to `ex7_target`.
 # MAGIC
 # MAGIC **Constraints**:
-# MAGIC - The exception must be caught at analysis time (when `writeStream...start()` or `.toTable()` is
-# MAGIC   called). The error message stored must mention right outer / not supported (the assertion
-# MAGIC   checks for "right" or "Right" + "outer" tokens in the message).
+# MAGIC - The exception is raised when `.toTable()` (or `.start()`) is called, not when the join is defined. The stored message must contain the words "right" and "outer" (any case).
 # MAGIC - The correct-alternative output (`ex7_target`) must include the 8 unmatched events with NULL dimension columns.
 
 # COMMAND ----------

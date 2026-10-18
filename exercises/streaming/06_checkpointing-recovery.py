@@ -12,7 +12,7 @@
 # MAGIC **Solutions**: If stuck, see `solutions/checkpointing-recovery-solutions.py` for hints and answers.
 # MAGIC
 # MAGIC **Tables used**:
-# MAGIC - `db_code.checkpointing_recovery.exN_source` - per-exercise Delta source (clone of `db_code.streaming.events_source`)
+# MAGIC - `db_code.checkpointing_recovery.exN_source` - per-exercise Delta source: the first 30 rows (`EV-001` ... `EV-030`) of `db_code.streaming.events_source`; `ex5_source` starts with the first 20, and Exercise 6 splits the 30 rows into `ex6_source_a` and `ex6_source_b`
 # MAGIC - `db_code.checkpointing_recovery.exN_target` - per-exercise Delta sink the stream writes to
 # MAGIC
 # MAGIC **Source schema** (`exN_source`):
@@ -22,17 +22,17 @@
 # MAGIC | event_type | STRING | purchase, view, click |
 # MAGIC | user_id | STRING | U-1 ... U-5 |
 # MAGIC | amount | DOUBLE | 0.0 for non-purchase events |
-# MAGIC | event_ts | TIMESTAMP | Event time, ~1 min apart starting 2026-04-01 10:00:00 |
+# MAGIC | event_ts | TIMESTAMP | Event time, one per minute: `EV-001` at 2026-04-01 10:00:00 to `EV-030` at 10:29:00 |
 # MAGIC
-# MAGIC **Checkpoint convention**: every exercise uses `CHECKPOINT_BASE/exN/` (defined in setup).
+# MAGIC **Checkpoint convention**: every exercise uses `/Volumes/db_code/checkpointing_recovery/checkpoints/exN/`. The setup cell stores the base in the Python variable `CHECKPOINT_BASE`, so in code write `f"{CHECKPOINT_BASE}/exN/"`.
 # MAGIC The checkpoint directory is what Structured Streaming uses to remember which source files
 # MAGIC and offsets have been processed and what state (e.g., per-window counts) has been
-# MAGIC accumulated. Losing it forces a full replay. Sharing it across queries causes corruption.
+# MAGIC accumulated. Losing it on a Delta source like the ones here means the next run replays the whole table. A Kafka source would start from the latest offsets instead. Two queries must never share one checkpoint.
 # MAGIC
 # MAGIC **Free Edition constraints**:
 # MAGIC - Every stream uses `.trigger(availableNow=True)` + `.awaitTermination()` so it terminates.
 # MAGIC - Sources are Delta tables (Kafka is not available on Free Edition).
-# MAGIC - No `spark.conf.set()` - serverless does not allow runtime Spark config changes.
+# MAGIC - No Spark config is needed: serverless lets you set only a short list of properties, and none of these exercises uses one.
 
 # COMMAND ----------
 
@@ -46,16 +46,11 @@
 # MAGIC %md
 # MAGIC **Setup complete.** Per-exercise tables are in `db_code.checkpointing_recovery`.
 # MAGIC
-# MAGIC **Pattern**: Each exercise reads from `exN_source` (a Delta table) with
-# MAGIC `spark.readStream.table(...)`, writes to `exN_target` with `.trigger(availableNow=True)`
-# MAGIC and a checkpoint location of `{CHECKPOINT_BASE}/exN/`. Every TODO cell runs the full
-# MAGIC demonstration sequence (initial stream, in-between mutation, second stream) and produces
-# MAGIC a final state that the validate cell asserts.
+# MAGIC **Python variables**: the setup defines `CATALOG = "db_code"`, `SCHEMA = "checkpointing_recovery"`, `BASE_SCHEMA = "streaming"` and `CHECKPOINT_BASE = "/Volumes/db_code/checkpointing_recovery/checkpoints"`. Write tables by their full name (`db_code.checkpointing_recovery.exN_target`).
 # MAGIC
-# MAGIC **Why one cell per exercise**: Databricks notebook cells execute once per invocation, but
-# MAGIC each TODO cell is self-contained - it spans multiple `.start()` / `.awaitTermination()`
-# MAGIC calls separated by `dbutils.fs.rm`, `INSERT INTO`, or a second `.start()` with a different
-# MAGIC checkpoint. The whole sequence runs from one click.
+# MAGIC **Pattern**: each exercise streams from `exN_source` with `spark.readStream.table(...)` into `exN_target`, using `.trigger(availableNow=True)`, `.awaitTermination()` and the checkpoint `/Volumes/db_code/checkpointing_recovery/checkpoints/exN/`. Put the exercise's whole sequence (its stream runs and any change between them) in the exercise's TODO cell so it runs in one click. The validation cell below it checks the final tables.
+# MAGIC
+# MAGIC **Redo an exercise**: re-run the `%run ./setup/checkpointing-recovery-setup` cell first. It recreates every source and target table of this notebook and deletes every checkpoint, so the exercise starts from the state its text describes.
 
 # COMMAND ----------
 # MAGIC %md
@@ -67,21 +62,22 @@
 # MAGIC Delta sinks.
 # MAGIC
 # MAGIC **Source** (`ex1_source`): 30 rows. **Target** (`ex1_target`): empty Delta table.
-# MAGIC **Checkpoint**: `{CHECKPOINT_BASE}/ex1/`
+# MAGIC **Checkpoint**: `/Volumes/db_code/checkpointing_recovery/checkpoints/ex1/`
 # MAGIC
 # MAGIC **What you will do AND observe**:
 # MAGIC 1. Start a streaming read from `ex1_source`, write to `ex1_target` with
-# MAGIC    `trigger(availableNow=True)` and a checkpoint at `{CHECKPOINT_BASE}/ex1/`. Wait for
+# MAGIC    `trigger(availableNow=True)` and a checkpoint at `/Volumes/db_code/checkpointing_recovery/checkpoints/ex1/`. Wait for
 # MAGIC    it to terminate. Target now has 30 rows.
 # MAGIC 2. Start the SAME query again (same source, same target, same checkpoint).
 # MAGIC 3. Observe: the second run completes immediately and processes 0 new rows because the
 # MAGIC    checkpoint already records that all 30 source rows were committed. The target row
 # MAGIC    count is unchanged at 30, not 60.
 # MAGIC
+# MAGIC **Expected Output**: `ex1_target` has 30 rows, each event_id (`EV-001` ... `EV-030`) exactly once.
+# MAGIC
 # MAGIC **Requirements**:
 # MAGIC 1. Both runs must use the SAME `checkpointLocation`
-# MAGIC 2. Both runs must use `trigger(availableNow=True)` and `.awaitTermination()`
-# MAGIC 3. Do NOT truncate or overwrite `ex1_target` between runs
+# MAGIC 2. Do NOT truncate or overwrite `ex1_target` between runs
 # MAGIC
 # MAGIC **Constraints**:
 # MAGIC - Source is a Delta table - use `spark.readStream.table(...)`
@@ -117,81 +113,85 @@ print("Exercise 1 passed!")
 # MAGIC **Difficulty**: Easy | **Time**: ~10 min
 # MAGIC
 # MAGIC The checkpoint directory is not a black box. After a streaming query commits, it writes a
-# MAGIC well-defined set of subdirectories that you can list with `dbutils.fs.ls`. Knowing what
+# MAGIC well-defined set of entries that you can list with `dbutils.fs.ls`. Knowing what
 # MAGIC each one does is the difference between guessing and diagnosing a recovery problem.
 # MAGIC
-# MAGIC **Source** (`ex2_source`): 30 rows. **Checkpoint**: `{CHECKPOINT_BASE}/ex2/`
+# MAGIC **Source** (`ex2_source`): 30 rows. **Checkpoint**: `/Volumes/db_code/checkpointing_recovery/checkpoints/ex2/`
 # MAGIC
 # MAGIC **What you will do AND observe**:
 # MAGIC 1. Run a streaming read of `ex2_source` and write it to `ex2_target` once
-# MAGIC    with checkpoint `{CHECKPOINT_BASE}/ex2/` (so the directory gets populated).
+# MAGIC    with checkpoint `/Volumes/db_code/checkpointing_recovery/checkpoints/ex2/` (so the directory gets populated).
 # MAGIC 2. List the checkpoint directory with `dbutils.fs.ls(f"{CHECKPOINT_BASE}/ex2/")`.
-# MAGIC 3. Observe the four standard subdirectories Structured Streaming creates:
-# MAGIC    - **offsets/**: per-batch source offsets (what the stream is about to read)
-# MAGIC    - **commits/**: per-batch commit markers (proof the batch finished)
-# MAGIC    - **sources/**: source-specific bookkeeping (for file sources: which files were seen)
-# MAGIC    - **state/**: state store snapshots for aggregating queries; directory is created at query start (may be empty for non-stateful queries). If `dbutils.fs.ls` doesn't show `state/` on your runtime, write `"state"` anyway - it's the canonical name and the assertion accepts it.
+# MAGIC 3. Match each entry in the listing to its role:
+# MAGIC    - the directory recording, for each batch, which source data the batch will read (written BEFORE the batch runs)
+# MAGIC    - the directory recording, for each batch, that its output reached the sink (written AFTER the batch finishes)
+# MAGIC    - the top-level file holding the query's unique ID
+# MAGIC 4. Record those three names.
 # MAGIC
-# MAGIC    You will also see a `metadata` file at the top level (query ID + stable settings).
-# MAGIC    Databricks docs sometimes mention `metadata` and omit `sources` (or vice versa). Both
-# MAGIC    exist: `metadata` is a small file, `sources` is a directory that only appears for
-# MAGIC    file/Delta sources.
-# MAGIC 4. Fill in the four subdirectory names below.
+# MAGIC A checkpoint can hold two more entries. A `state/` directory appears only for stateful queries (aggregations, deduplication, stream-stream joins); this query is stateless, and you will find `state/` in Exercise 7's checkpoint. A `sources/` directory holds source bookkeeping when the source keeps any (a file source lists the files it has seen), so your listing may or may not show it.
 # MAGIC
-# MAGIC **Expected Output**: `ex2_findings` table with 1 row and columns
-# MAGIC `(offsets_dir, commits_dir, sources_dir, state_dir)`, all populated with the four standard
-# MAGIC subdirectory names (one per column).
+# MAGIC **Expected Output**: `ex2_findings` has 1 row with columns `planned_batches_dir`, `finished_batches_dir` and `query_id_file`, each holding a name from your listing. `ex2_target` has 30 rows.
 # MAGIC
 # MAGIC **Requirements**:
-# MAGIC 1. Run the stream first (with `availableNow=True`) so the checkpoint dir exists
-# MAGIC 2. List the checkpoint dir and visually identify the four subdirectories
-# MAGIC 3. Fill in the four placeholder strings in the pre-built INSERT below
+# MAGIC 1. Run the stream first so the checkpoint dir exists
+# MAGIC 2. List the checkpoint dir and match its entries to the three roles above
+# MAGIC 3. Fill in the three placeholder strings above the pre-built `CREATE OR REPLACE TABLE ... ex2_findings` statement
 # MAGIC
 # MAGIC **Constraints**:
-# MAGIC - The four values must be the lowercase directory names exactly as they appear on disk
+# MAGIC - The values are the lowercase names without the trailing `/` that `dbutils.fs.ls` prints
 
 # COMMAND ----------
 
 # EXERCISE_KEY: checkpoint_ex2
-# TODO: Run the stream once, then list the checkpoint dir and fill in the four subdir names
+# TODO: Run the stream once, then list the checkpoint dir and fill in the three names
 
 # 1. Run the stream once so the checkpoint directory is populated.
 # Your code here for the streaming write:
 
 
-# 2. List the checkpoint directory and inspect the subdirectory names:
+# 2. List the checkpoint directory and inspect the names:
 # Your code here:
 # dbutils.fs.ls(f"{CHECKPOINT_BASE}/ex2/")
 
 
-# 3. Fill in the four standard checkpoint subdirectory names you observed above:
-offsets_dir = ""   # Replace: name of the subdir holding per-batch offsets
-commits_dir = ""   # Replace: name of the subdir holding per-batch commit markers
-sources_dir = ""   # Replace: name of the subdir holding source-specific bookkeeping
-state_dir = ""     # Replace: name of the subdir holding state store snapshots
+# 3. Fill in the names you observed above:
+planned_batches_dir = ""   # Replace: the directory written BEFORE each batch runs
+finished_batches_dir = ""  # Replace: the directory written AFTER each batch finishes
+query_id_file = ""         # Replace: the top-level file holding the query ID
 
 spark.sql(f"""
     CREATE OR REPLACE TABLE {CATALOG}.{SCHEMA}.ex2_findings AS
     SELECT
-        '{offsets_dir}' AS offsets_dir,
-        '{commits_dir}' AS commits_dir,
-        '{sources_dir}' AS sources_dir,
-        '{state_dir}'   AS state_dir
+        '{planned_batches_dir}'  AS planned_batches_dir,
+        '{finished_batches_dir}' AS finished_batches_dir,
+        '{query_id_file}'        AS query_id_file
 """)
 
 # COMMAND ----------
 
 # Validate Exercise 2
-row = spark.table(f"{CATALOG}.{SCHEMA}.ex2_findings").collect()[0]
+findings = spark.table(f"{CATALOG}.{SCHEMA}.ex2_findings")
+assert findings.count() == 1, f"ex2_findings should have exactly 1 row, got {findings.count()}"
+row = findings.collect()[0]
 
-assert row.offsets_dir == "offsets", \
-    f"offsets_dir should be 'offsets', got '{row.offsets_dir}'"
-assert row.commits_dir == "commits", \
-    f"commits_dir should be 'commits', got '{row.commits_dir}'"
-assert row.sources_dir == "sources", \
-    f"sources_dir should be 'sources', got '{row.sources_dir}'"
-assert row.state_dir == "state", \
-    f"state_dir should be 'state', got '{row.state_dir}'"
+ckpt = f"{CHECKPOINT_BASE}/ex2"
+entries = dbutils.fs.ls(f"{ckpt}/")
+listing = [f.name.rstrip("/") for f in entries]
+dirs = [f.name.rstrip("/") for f in entries if f.name.endswith("/")]
+for column in ["planned_batches_dir", "finished_batches_dir", "query_id_file"]:
+    assert row[column] in listing, \
+        f"{column} = '{row[column]}' is not an entry of the checkpoint listing {sorted(listing)}"
+assert row.planned_batches_dir in dirs and row.finished_batches_dir in dirs, \
+    "planned_batches_dir and finished_batches_dir must both be directories"
+assert row.query_id_file not in dirs, "query_id_file must be a file, not a directory"
+
+# Check each role by what the entry holds: the record written before batch 0 ran, the record written after it finished, the query ID
+assert "batchTimestampMs" in dbutils.fs.head(f"{ckpt}/{row.planned_batches_dir}/0"), \
+    f"'{row.planned_batches_dir}/0' is not the record written BEFORE batch 0 ran"
+assert "nextBatchWatermarkMs" in dbutils.fs.head(f"{ckpt}/{row.finished_batches_dir}/0"), \
+    f"'{row.finished_batches_dir}/0' is not the record written AFTER batch 0 finished"
+assert '"id"' in dbutils.fs.head(f"{ckpt}/{row.query_id_file}"), \
+    f"'{row.query_id_file}' does not hold the query ID"
 
 # Also sanity-check the stream actually ran
 target_count = spark.table(f"{CATALOG}.{SCHEMA}.ex2_target").count()
@@ -205,18 +205,18 @@ print("Exercise 2 passed!")
 # MAGIC ## Exercise 3: Deleted Checkpoint Causes Full Reprocessing
 # MAGIC **Difficulty**: Medium | **Time**: ~10 min
 # MAGIC
-# MAGIC The checkpoint is what makes a stream exactly-once. Without it, the stream has no memory
-# MAGIC of what it has already processed and replays the source from the beginning. With a
+# MAGIC The checkpoint is what makes a stream exactly-once. Without it, a stream on a Delta source has no memory
+# MAGIC of what it already processed and replays the whole table. With a
 # MAGIC Delta sink that has no idempotency key, this produces duplicates.
 # MAGIC
 # MAGIC **Source** (`ex3_source`): 30 rows. **Target** (`ex3_target`): empty Delta table.
-# MAGIC **Checkpoint**: `{CHECKPOINT_BASE}/ex3/`
+# MAGIC **Checkpoint**: `/Volumes/db_code/checkpointing_recovery/checkpoints/ex3/`
 # MAGIC
 # MAGIC **What you will do AND observe**:
 # MAGIC 1. Run the stream once. Target has 30 rows.
 # MAGIC 2. Delete the entire checkpoint directory: `dbutils.fs.rm(f"{CHECKPOINT_BASE}/ex3/", recurse=True)`.
-# MAGIC 3. Run the SAME stream again (same source, same target, same path, but the checkpoint
-# MAGIC    is now empty). The stream has no memory, so it reprocesses all 30 source rows and
+# MAGIC 3. Run the SAME stream again (same source, same target, same checkpoint path, but the directory is gone).
+# MAGIC    The stream has no memory, so it reprocesses all 30 source rows and
 # MAGIC    appends them again.
 # MAGIC 4. Observe: the target now has 60 rows. Each source event_id appears twice. This is
 # MAGIC    why losing a checkpoint is a data-quality incident, not just a restart problem.
@@ -226,7 +226,6 @@ print("Exercise 2 passed!")
 # MAGIC **Requirements**:
 # MAGIC 1. Both runs must use the SAME checkpoint path string
 # MAGIC 2. Between the runs, delete the checkpoint directory recursively
-# MAGIC 3. Both runs use `trigger(availableNow=True)` and `.awaitTermination()`
 # MAGIC
 # MAGIC **Constraints**:
 # MAGIC - Do NOT truncate `ex3_target` between runs - the duplicate rows are the point
@@ -269,21 +268,21 @@ print("Exercise 3 passed!")
 # MAGIC forgets to keep the checkpoint path, and silently doubles every row.
 # MAGIC
 # MAGIC **Source** (`ex4_source`): 30 rows. **Target** (`ex4_target`): empty Delta table.
-# MAGIC **Checkpoints**: `{CHECKPOINT_BASE}/ex4_a/` and `{CHECKPOINT_BASE}/ex4_b/`
+# MAGIC **Checkpoints**: `/Volumes/db_code/checkpointing_recovery/checkpoints/ex4_a/` and `/Volumes/db_code/checkpointing_recovery/checkpoints/ex4_b/`
 # MAGIC
 # MAGIC **What you will do AND observe**:
-# MAGIC 1. Run the stream with checkpoint `{CHECKPOINT_BASE}/ex4_a/`. Target has 30 rows.
+# MAGIC 1. Run the stream with checkpoint `/Volumes/db_code/checkpointing_recovery/checkpoints/ex4_a/`. Target has 30 rows.
 # MAGIC 2. Run the SAME stream (same source, same target) but with checkpoint
-# MAGIC    `{CHECKPOINT_BASE}/ex4_b/` - a different path with no prior state.
+# MAGIC    `/Volumes/db_code/checkpointing_recovery/checkpoints/ex4_b/` - a different path with no prior state.
 # MAGIC 3. Observe: the second query has no record of what the first committed, so it replays
 # MAGIC    all 30 rows. Target now has 60 rows.
 # MAGIC
 # MAGIC **Expected Output**: `ex4_target` has 60 rows total (each event_id appears exactly 2x).
 # MAGIC
 # MAGIC **Requirements**:
-# MAGIC 1. First run uses `{CHECKPOINT_BASE}/ex4_a/`
-# MAGIC 2. Second run uses `{CHECKPOINT_BASE}/ex4_b/`
-# MAGIC 3. Both runs write to the same `ex4_target` with `trigger(availableNow=True)`
+# MAGIC 1. First run uses `f"{CHECKPOINT_BASE}/ex4_a/"`
+# MAGIC 2. Second run uses `f"{CHECKPOINT_BASE}/ex4_b/"`
+# MAGIC 3. Both runs write to the same `ex4_target`
 # MAGIC
 # MAGIC **Constraints**:
 # MAGIC - Do NOT delete or copy any files between the two checkpoint paths
@@ -327,7 +326,7 @@ print("Exercise 4 passed!")
 # MAGIC
 # MAGIC **Source** (`ex5_source`): starts with 20 rows (`EV-001` ... `EV-020`).
 # MAGIC **Target** (`ex5_target`): empty Delta table.
-# MAGIC **Checkpoint**: `{CHECKPOINT_BASE}/ex5/`
+# MAGIC **Checkpoint**: `/Volumes/db_code/checkpointing_recovery/checkpoints/ex5/`
 # MAGIC
 # MAGIC **What you will do AND observe**:
 # MAGIC 1. Run the stream once. Target has 20 rows (`EV-001` ... `EV-020`).
@@ -356,7 +355,7 @@ print("Exercise 4 passed!")
 # MAGIC
 # MAGIC **Constraints**:
 # MAGIC - Both runs use the same checkpoint path
-# MAGIC - Do NOT use `dropDuplicates` to fake the assertion - the dedup must come from the checkpoint
+# MAGIC - Do NOT add `dropDuplicates`: the checkpoint alone keeps the 20 committed rows from being processed again
 
 # COMMAND ----------
 
@@ -376,7 +375,7 @@ assert src.count() == 30, \
     f"ex5_source should have 30 rows after your insert, got {src.count()}"
 assert result.count() == 30, \
     f"Expected 30 rows in target (20 initial + 10 incremental), got {result.count()}. " \
-    f"60 means the second run replayed everything (wrong checkpoint?)."
+    f"50 means the second run replayed all 30 source rows (wrong checkpoint path?)."
 unique_ids = result.select("event_id").distinct().count()
 assert unique_ids == 30, f"Expected 30 distinct event_ids, got {unique_ids}"
 # The first 20 should be there, AND the 10 incremental rows should be there
@@ -392,50 +391,34 @@ print("Exercise 5 passed!")
 # MAGIC ## Exercise 6: Concurrent Streams Need Distinct Checkpoints
 # MAGIC **Difficulty**: Hard | **Time**: ~20 min
 # MAGIC
-# MAGIC Two streaming queries that share BOTH a sink AND a checkpoint location collide.
-# MAGIC Structured Streaming uses the checkpoint as the identity of a query - two queries with
-# MAGIC the same checkpoint path are not "two queries" to the engine, they are "the same query
-# MAGIC running twice." Starting the second one while the first still holds the checkpoint
-# MAGIC typically raises an error (commonly: `ConcurrentModificationException` or a similar
-# MAGIC checkpoint-lock error). See the timing caveat below.
+# MAGIC Two streaming queries must never share a checkpoint location: the checkpoint is the query's identity. On one cluster Spark will not run two copies side by side. When a second run starts on a checkpoint that an active run is using, Spark stops the first run and keeps the second (`spark.sql.streaming.stopActiveRunOnRestart`, on by default). Two runs on different clusters, such as two jobs pointing at the same path, race on the same offset log and can fail with `ConcurrentModificationException` or corrupt it.
 # MAGIC
-# MAGIC **Source** (`ex6_source`): 30 rows. **Target** (`ex6_target`): empty Delta table.
+# MAGIC Two concurrent streams can write to one table safely when each query has its own checkpoint and its own input.
+# MAGIC
+# MAGIC **Sources**: `ex6_source_a` (15 rows, `EV-001` ... `EV-015`) and `ex6_source_b` (15 rows, `EV-016` ... `EV-030`).
+# MAGIC **Targets**: `ex6_shared_target` (bad case) and `ex6_target` (good case), both empty Delta tables.
 # MAGIC **Checkpoints**:
-# MAGIC - `{CHECKPOINT_BASE}/ex6_shared/` (the bad case - both queries try to use it)
-# MAGIC - `{CHECKPOINT_BASE}/ex6_a/` and `{CHECKPOINT_BASE}/ex6_b/` (the good case)
+# MAGIC - `/Volumes/db_code/checkpointing_recovery/checkpoints/ex6_shared/` (the bad case - both queries use it)
+# MAGIC - `/Volumes/db_code/checkpointing_recovery/checkpoints/ex6_a/` and `/Volumes/db_code/checkpointing_recovery/checkpoints/ex6_b/` (the good case)
 # MAGIC
 # MAGIC **What you will do AND observe**:
-# MAGIC 1. **Bad case**: Try to start two concurrent streams from `ex6_source` to `ex6_target`
-# MAGIC    sharing `{CHECKPOINT_BASE}/ex6_shared/`. Wrap each `.start()` call in `try/except` so
-# MAGIC    the cell doesn't abort. Record whether starting the second one raised an exception.
-# MAGIC 2. **Good case**: Start two concurrent streams again, each writing to `ex6_target`, but
-# MAGIC    with DISTINCT checkpoint paths `ex6_a` and `ex6_b`. Both succeed. Both append 30 rows
-# MAGIC    each into the target, giving 60 total.
-# MAGIC 3. Record both observations in `ex6_observation`:
-# MAGIC    - `shared_checkpoint_errored` (BOOLEAN): did the shared-checkpoint case error?
-# MAGIC    - `distinct_checkpoints_target_count` (BIGINT): row count in `ex6_target` after both
-# MAGIC      distinct-checkpoint runs (expected 60).
+# MAGIC 1. **Bad case**: Start query 1 from `ex6_source_a` into `ex6_shared_target` with `.toTable(...)` on the `ex6_shared/` checkpoint, then start query 2 (the same source, target and checkpoint) inside `try / except Exception`, and call `.awaitTermination()` on both inside `try` blocks. Set `shared_checkpoint_errored` to True if any of these raised.
+# MAGIC 2. **Good case**: Start two concurrent streams into `ex6_target`, one reading `ex6_source_a` with checkpoint `ex6_a/`, one reading `ex6_source_b` with checkpoint `ex6_b/`. Both succeed and `ex6_target` ends with 30 rows, each event_id once.
+# MAGIC 3. Create `db_code.checkpointing_recovery.ex6_observation` with one row holding the two observed values (`CREATE OR REPLACE TABLE ... AS SELECT ...`):
+# MAGIC    - `shared_checkpoint_errored` (BOOLEAN): did anything in the bad case raise?
+# MAGIC    - `distinct_checkpoints_target_count` (BIGINT): the `ex6_target` row count after both distinct-checkpoint runs, measured with `spark.table(...).count()`.
 # MAGIC
-# MAGIC **Note**: `availableNow=True` means each `.start()` returns quickly after processing
-# MAGIC its available data. The collision is timing-dependent - if q1 finishes before q2 begins,
-# MAGIC no error fires. Record whether the collision was observed; the assertion only requires
-# MAGIC that the DISTINCT-checkpoint case succeeds. In production with a continuous trigger the
-# MAGIC collision is reliably reproduced, but on Free Edition serverless with `availableNow` it's
-# MAGIC best-effort.
+# MAGIC **Note**: Both shared-checkpoint queries run on one cluster here, so starting the second one usually does not raise. Spark stops the first run instead, or the first run has already finished because `availableNow` returns quickly.
 # MAGIC
-# MAGIC **Expected Output**: `ex6_observation` has 1 row. `shared_checkpoint_errored` may be
-# MAGIC True or False (timing-dependent). `distinct_checkpoints_target_count` must equal 60.
-# MAGIC `ex6_target` ends up with at least 60 rows.
+# MAGIC **Expected Output**: `ex6_observation` has 1 row. `shared_checkpoint_errored` is usually False (see the note above); either value passes. `ex6_shared_target` holds at least 15 rows, which shows the bad case ran. `distinct_checkpoints_target_count` is 30, and `ex6_target` has 30 rows with 30 distinct event_ids.
 # MAGIC
 # MAGIC **Requirements**:
 # MAGIC 1. Try the shared-checkpoint case first; catch any exception and record whether one was raised (True or False).
 # MAGIC 2. Run the distinct-checkpoint case next; both `.awaitTermination()` calls succeed
-# MAGIC 3. Insert one row into `ex6_observation` with the observed values
+# MAGIC 3. Count `ex6_target` and create `ex6_observation` with the two values
 # MAGIC
 # MAGIC **Constraints**:
-# MAGIC - Do NOT truncate the target between cases - the test reads its final state
-# MAGIC - Use `try / except Exception as e` around the second `.start()` in the bad case so the
-# MAGIC   cell continues to the good case
+# MAGIC - Do NOT truncate or overwrite `ex6_target`: the validation cell reads its final row count
 # MAGIC - `.toTable(...)` already starts the query and returns a `StreamingQuery` - do NOT chain
 # MAGIC   `.start()` after it. If your helper builds a write with `.toTable(...)`, just call
 # MAGIC   `.awaitTermination()` directly on its return value.
@@ -443,7 +426,7 @@ print("Exercise 5 passed!")
 # COMMAND ----------
 
 # EXERCISE_KEY: checkpoint_ex6
-# TODO: Demonstrate shared-checkpoint collision, then distinct checkpoints succeeding
+# TODO: Run two queries on one shared checkpoint, then two queries with distinct checkpoints, and record what you observed
 
 # Your code here
 
@@ -451,22 +434,27 @@ print("Exercise 5 passed!")
 # COMMAND ----------
 
 # Validate Exercise 6
-obs = spark.table(f"{CATALOG}.{SCHEMA}.ex6_observation").collect()[0]
+obs_rows = spark.table(f"{CATALOG}.{SCHEMA}.ex6_observation").collect()
+assert len(obs_rows) == 1, f"ex6_observation should have exactly 1 row, got {len(obs_rows)}"
+obs = obs_rows[0]
 target = spark.table(f"{CATALOG}.{SCHEMA}.ex6_target")
 
-# Whether the shared-checkpoint case raises is timing-dependent under availableNow;
-# we only require that the user RECORDED a boolean observation (the value itself is fine
-# either way - the production lesson is in the markdown, not in forcing a runtime collision).
+# On one cluster Spark stops the first shared-checkpoint run instead of raising, so either boolean passes.
 assert obs.shared_checkpoint_errored in (True, False), \
     "Record `shared_checkpoint_errored` as a BOOLEAN (True if the shared-checkpoint case " \
     "raised, False if it didn't)."
-assert obs.distinct_checkpoints_target_count == 60, \
-    f"Two streams with distinct checkpoints should each append 30 rows " \
-    f"(total 60), got {obs.distinct_checkpoints_target_count}"
-# Final target should still reflect those 60 rows (plus possibly partial writes from the bad case)
-assert target.count() >= 60, \
-    f"ex6_target should have at least 60 rows from the two distinct-checkpoint runs, " \
-    f"got {target.count()}"
+shared_rows = spark.table(f"{CATALOG}.{SCHEMA}.ex6_shared_target").count()
+assert shared_rows >= 15, \
+    f"ex6_shared_target should hold at least the 15 rows of ex6_source_a from the bad case, got {shared_rows}. " \
+    "Run the bad case too: two queries from ex6_source_a into ex6_shared_target on the ex6_shared/ checkpoint."
+assert target.count() == 30, \
+    f"ex6_target should have 30 rows (15 from each source, each through its own checkpoint), got {target.count()}"
+distinct_ids = target.select("event_id").distinct().count()
+assert distinct_ids == 30, \
+    f"Every event_id should appear once in ex6_target, got {distinct_ids} distinct ids in {target.count()} rows"
+assert obs.distinct_checkpoints_target_count == target.count(), \
+    f"distinct_checkpoints_target_count should be the ex6_target row count ({target.count()}), " \
+    f"got {obs.distinct_checkpoints_target_count}"
 
 print("Exercise 6 passed!")
 
@@ -478,19 +466,19 @@ print("Exercise 6 passed!")
 # MAGIC For STATEFUL streams (windowed aggregations, dropDuplicates with watermark, stream-stream
 # MAGIC joins), the checkpoint holds more than offsets - it holds the STATE STORE (per-window
 # MAGIC counts, dedup hashes, etc.). When the stream restarts, it RESTORES that state instead of
-# MAGIC recomputing from the beginning. This is what makes long-running aggregations practical
-# MAGIC even though the underlying source data may be much shorter than the run.
+# MAGIC recomputing from the beginning. This is what lets a long-running aggregation restart
+# MAGIC without re-reading its whole source history.
 # MAGIC
 # MAGIC **Source** (`ex7_source`): starts with 30 rows. Event timestamps span 10:00 to 10:29
 # MAGIC (30 minutes), so a 5-minute tumbling window produces 6 windows.
 # MAGIC **Target** (`ex7_target`): a `(window_start, window_end, event_count)` table written in
 # MAGIC `complete` output mode (windowed aggregation rewrites the full result each batch).
-# MAGIC **Checkpoint**: `{CHECKPOINT_BASE}/ex7/`
+# MAGIC **Checkpoint**: `/Volumes/db_code/checkpointing_recovery/checkpoints/ex7/`
 # MAGIC
 # MAGIC **What you will do AND observe**:
 # MAGIC 1. Build a streaming query that counts events per 5-minute tumbling window on `event_ts`.
-# MAGIC    Use a watermark of `0 seconds` so all input is in scope. Write to `ex7_target` with
-# MAGIC    `outputMode("complete")`, `trigger(availableNow=True)`, and checkpoint `{CHECKPOINT_BASE}/ex7/`.
+# MAGIC    Add a watermark of `0 seconds`. `complete` mode keeps every window's state whatever the watermark, so the appended rows still land in their window even though most of them are behind it. Write to `ex7_target` with
+# MAGIC    `outputMode("complete")`, `trigger(availableNow=True)`, and checkpoint `/Volumes/db_code/checkpointing_recovery/checkpoints/ex7/`.
 # MAGIC    Run once. The target has 6 windows with counts summing to 30.
 # MAGIC 2. Append 5 more rows to `ex7_source` that fall into the `10:25-10:30` window. After the
 # MAGIC    append, the source has 35 rows total. The window `10:25-10:30` originally held 5
@@ -516,15 +504,14 @@ print("Exercise 6 passed!")
 # MAGIC = 35. The window starting at `2026-04-01 10:25:00` has `event_count` = 10.
 # MAGIC
 # MAGIC **Requirements**:
-# MAGIC 1. Use `window(event_ts, "5 minutes")` and `groupBy(window).count()`
+# MAGIC 1. Count events with `.groupBy(window("event_ts", "5 minutes")).count()`, then select `window.start AS window_start`, `window.end AS window_end`, `count AS event_count` to match `ex7_target`
 # MAGIC 2. Apply `.withWatermark("event_ts", "0 seconds")` before the groupBy
 # MAGIC 3. `outputMode("complete")` and `format("delta")` writing to `ex7_target`
 # MAGIC 4. Same checkpoint on both runs - state must be restored, not recomputed
-# MAGIC 5. Both runs use `trigger(availableNow=True)` and `.awaitTermination()`
 # MAGIC
 # MAGIC **Constraints**:
 # MAGIC - `outputMode("complete")` overwrites the sink each batch - that's expected for windowed aggs
-# MAGIC - Do NOT recompute counts via a batch query - the test verifies the streaming aggregation
+# MAGIC - Write it as a streaming query: a batch `groupBy` gives the same six rows but never reads or writes the state store in the checkpoint
 
 # COMMAND ----------
 

@@ -4,9 +4,9 @@
 # MAGIC # Liquid Clustering
 # MAGIC **Topic**: Delta Lake | **Exercises**: 6 | **Checkpoints**: 1 | **Total Time**: ~70 min
 # MAGIC
-# MAGIC Practice the recommended data layout strategy for Delta tables. Liquid clustering
-# MAGIC replaces ZORDER and manual partitioning with automatic, adaptive data organization
-# MAGIC that doesn't require you to pick partition boundaries upfront.
+# MAGIC Practice the recommended data layout for Delta tables. Liquid clustering replaces
+# MAGIC partitioning and ZORDER: you pick up to 4 clustering keys instead of partition boundaries,
+# MAGIC you can change those keys later without rewriting data, and `OPTIMIZE` organizes the files by them.
 # MAGIC
 # MAGIC **Solutions**: If stuck, see `solutions/liquid-clustering-solutions.py` for hints and answers.
 # MAGIC
@@ -16,7 +16,7 @@
 # MAGIC **Schema** (`orders`):
 # MAGIC | Column | Type | Notes |
 # MAGIC |--------|------|-------|
-# MAGIC | order_id | STRING | Primary key |
+# MAGIC | order_id | STRING | Order key (repeats in the base table: ORD-042 and ORD-067 appear twice) |
 # MAGIC | customer_id | STRING | FK to customers (some nulls) |
 # MAGIC | product_id | STRING | FK to products |
 # MAGIC | amount | DOUBLE | Order total in USD |
@@ -34,28 +34,32 @@
 
 # COMMAND ----------
 # MAGIC %md
-# MAGIC **Setup complete.** Exercise tables are in `{CATALOG}.{SCHEMA}` (liquid_clustering schema).
-# MAGIC Base tables (orders, customers) are in `{CATALOG}.{BASE_SCHEMA}` (delta_lake schema).
-# MAGIC - Exercises 1, 6: no pre-created tables (you create them from scratch using base orders)
-# MAGIC - `lc_ex2_orders`: fragmented clustered table (for OPTIMIZE)
-# MAGIC - `lc_ex3_orders`: clustered + optimized (for inspection)
-# MAGIC - `lc_ex4_orders`: unpartitioned, previously ZORDER'd (for migration)
-# MAGIC - `lc_ex5_orders`: fragmented, clustered by `status` (for metadata-only key change demo)
-# MAGIC - `lc_ex7_partitioned`: partitioned by `status` (for full migration)
+# MAGIC **Setup complete.** Every exercise table is in `db_code.liquid_clustering`. Write your output tables there too,
+# MAGIC by full name (for example `db_code.liquid_clustering.lc_ex1_orders`). In Python cells, the variables `CATALOG`
+# MAGIC and `SCHEMA` hold `db_code` and `liquid_clustering`. The base table (`orders`) is in `db_code.delta_lake`.
+# MAGIC
+# MAGIC Keep the `# EXERCISE_KEY: ...` line as the first line of each answer cell.
+# MAGIC
+# MAGIC - Exercises 1 and 6: no pre-created table (you create `lc_ex1_orders` and `lc_ex6_orders` from `db_code.delta_lake.orders`)
+# MAGIC - `lc_ex2_orders`: 20 rows in about 10 small files, clustered by `status`
+# MAGIC - `lc_ex3_orders`: 20 rows, liquid clustered, already optimized
+# MAGIC - `lc_ex4_orders`: 5 rows, unpartitioned, previously ZORDER'd by `status`
+# MAGIC - `lc_ex5_orders`: 20 rows in about 10 small files, clustered by `status`
+# MAGIC - `lc_ex7_partitioned`: 5 rows, partitioned by `status`
 
 # COMMAND ----------
 # MAGIC %md
 # MAGIC ## Exercise 1: Create a Liquid Clustered Table
 # MAGIC **Difficulty**: Easy | **Time**: ~5 min
 # MAGIC
-# MAGIC Create a new Delta table with liquid clustering enabled on the `status` column.
-# MAGIC Copy data from the base orders table.
+# MAGIC Create a Delta table with liquid clustering on the `status` column, filled with 5 rows from
+# MAGIC `db_code.delta_lake.orders`.
 # MAGIC
 # MAGIC **Expected Output**: `lc_ex1_orders` exists with 5 rows and `CLUSTER BY (status)`.
 # MAGIC
 # MAGIC **Requirements**:
-# MAGIC 1. Create `lc_ex1_orders` with `CLUSTER BY (status)`
-# MAGIC 2. Copy rows where `order_id IN ('ORD-001', 'ORD-002', 'ORD-003', 'ORD-004', 'ORD-005')` from base orders
+# MAGIC 1. Create `db_code.liquid_clustering.lc_ex1_orders` with `CLUSTER BY (status)`
+# MAGIC 2. Copy rows where `order_id IN ('ORD-001', 'ORD-002', 'ORD-003', 'ORD-004', 'ORD-005')` from `db_code.delta_lake.orders`
 
 # COMMAND ----------
 
@@ -83,10 +87,10 @@ print("Exercise 1 passed!")
 # MAGIC ## Exercise 2: Trigger Clustering with OPTIMIZE
 # MAGIC **Difficulty**: Easy | **Time**: ~5 min
 # MAGIC
-# MAGIC Liquid clustering is applied when you run OPTIMIZE. The setup created a fragmented
-# MAGIC clustered table with 10+ small files. Run OPTIMIZE to compact and cluster the data.
+# MAGIC Small writes like the setup's 10 INSERTs are not clustered on write: the clustering happens
+# MAGIC when you run `OPTIMIZE`, which also compacts the small files.
 # MAGIC
-# MAGIC **Table** (`lc_ex2_orders`): ~20 rows across 10+ files, CLUSTER BY (status).
+# MAGIC **Table** (`lc_ex2_orders`): 20 rows in about 10 small files (one per INSERT), CLUSTER BY (status).
 # MAGIC
 # MAGIC **Expected Output**: After OPTIMIZE, the table has 1-2 files (compacted and clustered).
 # MAGIC
@@ -118,7 +122,10 @@ print("Exercise 2 passed!")
 # MAGIC Inspect a clustered table's configuration using `DESCRIBE DETAIL`. The output
 # MAGIC includes a `clusteringColumns` field showing which columns are used for clustering.
 # MAGIC
-# MAGIC **Table** (`lc_ex3_orders`): clustered by `status`, already optimized.
+# MAGIC **Table** (`lc_ex3_orders`): 20 rows, liquid clustered, already optimized.
+# MAGIC
+# MAGIC **Expected Output**: `lc_ex3_report` holds 1 row whose `clustering_col` and `num_files` equal the
+# MAGIC `clusteringColumns` entry and `numFiles` that `DESCRIBE DETAIL` shows for `lc_ex3_orders`.
 # MAGIC
 # MAGIC **Requirements**:
 # MAGIC 1. Run `DESCRIBE DETAIL` on `lc_ex3_orders`
@@ -130,7 +137,7 @@ print("Exercise 2 passed!")
 # EXERCISE_KEY: lc_ex3
 # TODO: Run DESCRIBE DETAIL on lc_ex3_orders, then fill in what you observe
 
-clustering_col = ""    # Replace: the column name from clusteringColumns (e.g., "status")
+clustering_col = ""    # Replace: the column name listed in clusteringColumns
 num_files = 0          # Replace: numFiles after optimization
 
 spark.sql(f"""
@@ -140,13 +147,14 @@ spark.sql(f"""
 
 # COMMAND ----------
 
-# Validate Exercise 3
+# Validate Checkpoint 3
 row = spark.table(f"{CATALOG}.{SCHEMA}.lc_ex3_report").collect()[0]
 
-assert row.clustering_col == "status", f"Clustering column should be 'status', got '{row.clustering_col}'"
-assert row.num_files >= 1, f"Should have at least 1 file, got {row.num_files}"
+assert row.clustering_col == "status", f"clustering_col does not match clusteringColumns from DESCRIBE DETAIL, got '{row.clustering_col}'"
+actual = spark.sql(f"DESCRIBE DETAIL {CATALOG}.{SCHEMA}.lc_ex3_orders").collect()[0]
+assert row.num_files == actual.numFiles, f"num_files should match numFiles from DESCRIBE DETAIL, got {row.num_files}"
 
-print("Exercise 3 passed!")
+print("Checkpoint 3 passed!")
 
 # COMMAND ----------
 # MAGIC %md
@@ -158,13 +166,14 @@ print("Exercise 3 passed!")
 # MAGIC
 # MAGIC **Table** (`lc_ex4_orders`): 5 rows, unpartitioned, previously ZORDER'd by status.
 # MAGIC
-# MAGIC **Expected Output**: `lc_ex4_orders` has `CLUSTER BY (status)` enabled. Future
-# MAGIC OPTIMIZE calls will use liquid clustering instead of ZORDER.
+# MAGIC **Expected Output**: `DESCRIBE DETAIL` on `lc_ex4_orders` shows `clusteringColumns` = `[status]`.
+# MAGIC
+# MAGIC This exercise only needs the ALTER. In production you follow it with one `OPTIMIZE ... FULL`,
+# MAGIC because the ALTER does not cluster the rows already in the table; after that, regular OPTIMIZE
+# MAGIC runs use liquid clustering instead of ZORDER.
 # MAGIC
 # MAGIC **Requirements**:
 # MAGIC 1. Use `ALTER TABLE` to enable liquid clustering on the `status` column
-# MAGIC
-# MAGIC **Approach**: ALTER TABLE supports adding CLUSTER BY to existing unpartitioned tables.
 
 # COMMAND ----------
 
@@ -187,34 +196,37 @@ print("Exercise 4 passed!")
 
 # COMMAND ----------
 # MAGIC %md
-# MAGIC ## Exercise 5: Change Cluster Keys (Metadata-Only)
+# MAGIC ## Exercise 5: Change Clustering Keys (Metadata-Only)
 # MAGIC **Difficulty**: Medium | **Time**: ~15 min
 # MAGIC
 # MAGIC Change the clustering key from `status` to `order_date`. A key advantage of liquid
-# MAGIC clustering over partitioning: changing keys is a **metadata-only operation** - no files
-# MAGIC are rewritten until the next OPTIMIZE.
+# MAGIC clustering over partitioning: changing keys is a **metadata-only operation** - the ALTER
+# MAGIC rewrites no files, and `OPTIMIZE ... FULL` re-clusters the existing rows with the new key.
 # MAGIC
-# MAGIC **Table** (`lc_ex5_orders`): ~20 rows across 10+ files, currently `CLUSTER BY (status)`.
+# MAGIC **Table** (`lc_ex5_orders`): 20 rows in about 10 small files (one per INSERT), currently `CLUSTER BY (status)`.
+# MAGIC
+# MAGIC **Expected Output**: `clusteringColumns` is `[order_date]`. `files_before_alter` and `files_after_alter` are equal
+# MAGIC (about 10), and `files_after_optimize` is 1 or 2.
 # MAGIC
 # MAGIC **Requirements**:
-# MAGIC 1. Run `DESCRIBE DETAIL` and note the current `numFiles`
+# MAGIC 1. Run `DESCRIBE DETAIL` and read the current `numFiles`
 # MAGIC 2. Use `ALTER TABLE` to change the clustering key to `order_date`
-# MAGIC 3. Run `DESCRIBE DETAIL` again - notice `numFiles` is unchanged (metadata-only!)
-# MAGIC 4. Run `OPTIMIZE` to actually re-cluster the data with the new key
-# MAGIC 5. Fill in the placeholder values below
+# MAGIC 3. Run `DESCRIBE DETAIL` again: `numFiles` is unchanged, because the ALTER only changed metadata
+# MAGIC 4. Run `OPTIMIZE ... FULL` to re-cluster all existing data with the new key (plain `OPTIMIZE` is incremental and does not rewrite data already clustered by the old key)
+# MAGIC 5. Set each `files_*` variable in the cell below by reading `numFiles` from `DESCRIBE DETAIL` in code at that step (the ALTER and OPTIMIZE run in the same cell, so typed-in numbers cannot be known in advance). To start again from the fragmented table, rerun the `%run ./setup/liquid-clustering-setup` cell; it rebuilds the `lc_*` input tables and drops your output tables, so rerun your answer cells for the other exercises before you revalidate them.
 
 # COMMAND ----------
 
 # EXERCISE_KEY: lc_ex5
-# TODO: Check files, change key, check files again (same!), OPTIMIZE, check files (compacted!)
+# TODO: Record numFiles, change the key, record numFiles, run OPTIMIZE ... FULL, record numFiles
 
 files_before_alter = 0   # Replace: numFiles before ALTER TABLE
 # Write your ALTER TABLE CLUSTER BY here
 
-files_after_alter = 0    # Replace: numFiles after ALTER (should equal files_before_alter!)
-# Write your OPTIMIZE here
+files_after_alter = 0    # Replace: numFiles after ALTER (equals files_before_alter)
+# Write your OPTIMIZE ... FULL here
 
-files_after_optimize = 0 # Replace: numFiles after OPTIMIZE
+files_after_optimize = 0 # Replace: numFiles after OPTIMIZE FULL
 
 spark.sql(f"""
     CREATE OR REPLACE TABLE {CATALOG}.{SCHEMA}.lc_ex5_proof AS
@@ -232,27 +244,30 @@ assert "order_date" in detail.clusteringColumns, \
 
 proof = spark.table(f"{CATALOG}.{SCHEMA}.lc_ex5_proof").collect()[0]
 assert proof.files_before_alter >= 8, \
-    f"Should start with 8+ files, got {proof.files_before_alter}"
-assert proof.files_before_alter == proof.files_after_alter, \
-    f"ALTER is metadata-only: files should be unchanged ({proof.files_before_alter} vs {proof.files_after_alter})"
-assert proof.files_after_optimize <= 2, \
-    f"After OPTIMIZE, should have 1-2 files, got {proof.files_after_optimize}"
+    f"Setup writes about 10 small files; expected at least 8 before ALTER, got {proof.files_before_alter}"
+assert proof.files_after_alter >= 8 and proof.files_before_alter == proof.files_after_alter, \
+    f"ALTER is metadata-only: files_after_alter should equal files_before_alter (about 10), got {proof.files_before_alter} vs {proof.files_after_alter}"
+assert 1 <= proof.files_after_optimize <= 2, \
+    f"After OPTIMIZE FULL, expected 1-2 files, got {proof.files_after_optimize}"
+assert proof.files_after_optimize == detail.numFiles, \
+    f"files_after_optimize does not match the table's current numFiles from DESCRIBE DETAIL, got {proof.files_after_optimize}"
 
-print("Exercise 5 passed! ALTER TABLE was metadata-only, OPTIMIZE did the actual rewrite.")
+print("Exercise 5 passed!")
 
 # COMMAND ----------
 # MAGIC %md
-# MAGIC ## Exercise 6: Multi-Column Cluster Keys
+# MAGIC ## Exercise 6: Multi-Column Clustering Keys
 # MAGIC **Difficulty**: Medium | **Time**: ~10 min
 # MAGIC
-# MAGIC Create a table clustered on multiple columns. Liquid clustering supports up to 4
-# MAGIC clustering columns, which co-locate data for queries filtering on any combination.
+# MAGIC Create a table clustered on multiple columns. Liquid clustering supports up to 4 clustering
+# MAGIC keys, in any order, and a filter on any of them can skip files. On tables under 10 TB, each
+# MAGIC extra key weakens single-column filters, so cluster only on columns you filter by.
 # MAGIC
 # MAGIC **Expected Output**: `lc_ex6_orders` exists with 5 rows and `CLUSTER BY (status, customer_id)`.
 # MAGIC
 # MAGIC **Requirements**:
-# MAGIC 1. Create `lc_ex6_orders` with `CLUSTER BY (status, customer_id)`
-# MAGIC 2. Copy rows where `order_id IN ('ORD-001', 'ORD-002', 'ORD-003', 'ORD-004', 'ORD-005')` from base orders
+# MAGIC 1. Create `db_code.liquid_clustering.lc_ex6_orders` with `CLUSTER BY (status, customer_id)`
+# MAGIC 2. Copy rows where `order_id IN ('ORD-001', 'ORD-002', 'ORD-003', 'ORD-004', 'ORD-005')` from `db_code.delta_lake.orders`
 
 # COMMAND ----------
 
@@ -280,22 +295,20 @@ print("Exercise 6 passed!")
 # MAGIC ## Exercise 7: Migrate Partitioned Table to Liquid Clustering
 # MAGIC **Difficulty**: Hard | **Time**: ~20 min
 # MAGIC
-# MAGIC A table is currently `PARTITIONED BY (status)`. You can't add CLUSTER BY to a
-# MAGIC partitioned table directly - you need to recreate it. Migrate the data to a new
-# MAGIC liquid clustered table.
+# MAGIC A table is currently `PARTITIONED BY (status)`. Plain `ALTER TABLE ... CLUSTER BY` fails on a
+# MAGIC partitioned table. On Databricks Runtime 18.1 and above you can convert it in place with
+# MAGIC `ALTER TABLE ... REPLACE PARTITIONED BY WITH CLUSTER BY`; here you practice the other path: copy
+# MAGIC the data into a new liquid clustered table, which leaves the original untouched until readers switch over.
 # MAGIC
 # MAGIC **Source** (`lc_ex7_partitioned`): 5 rows, PARTITIONED BY (status).
 # MAGIC
 # MAGIC **Expected Output**: `lc_ex7_clustered` exists with same 5 rows, CLUSTER BY (status),
-# MAGIC and no partitioning.
+# MAGIC and no partitioning, and its `DESCRIBE HISTORY` shows an `OPTIMIZE` row.
 # MAGIC
 # MAGIC **Requirements**:
-# MAGIC 1. Create `lc_ex7_clustered` with `CLUSTER BY (status)` (no partitioning)
+# MAGIC 1. Create `db_code.liquid_clustering.lc_ex7_clustered` with `CLUSTER BY (status)` (no partitioning)
 # MAGIC 2. Copy all data from `lc_ex7_partitioned`
 # MAGIC 3. Run `OPTIMIZE` on the new table
-# MAGIC
-# MAGIC **Approach**: You can't ALTER a partitioned table to add CLUSTER BY. The migration
-# MAGIC path is: create new table with CLUSTER BY, INSERT SELECT from old, OPTIMIZE.
 
 # COMMAND ----------
 
@@ -317,5 +330,7 @@ assert "status" in clustering, f"Should be clustered by status, got {clustering}
 # Verify no partitioning
 assert len(detail.partitionColumns) == 0, \
     f"Should not be partitioned, got partitionColumns={detail.partitionColumns}"
+optimize_rows = spark.sql(f"DESCRIBE HISTORY {CATALOG}.{SCHEMA}.lc_ex7_clustered").filter("operation = 'OPTIMIZE'").count()
+assert optimize_rows > 0, "No OPTIMIZE in the history of lc_ex7_clustered: run OPTIMIZE on the new table"
 
 print("Exercise 7 passed!")

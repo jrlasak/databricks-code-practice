@@ -2,7 +2,7 @@
 # COMMAND ----------
 # MAGIC %md
 # MAGIC # OPTIMIZE & File Management
-# MAGIC **Topic**: Delta Lake | **Exercises**: 6 | **Checkpoints**: 2 | **Total Time**: ~80 min
+# MAGIC **Topic**: Delta Lake | **Exercises**: 6 | **Checkpoints**: 2 | **Total Time**: ~55 min
 # MAGIC
 # MAGIC Practice Delta Lake table maintenance: inspect file metrics, compact small files
 # MAGIC with OPTIMIZE, co-locate data with ZORDER, clean up old files with VACUUM, and
@@ -16,7 +16,7 @@
 # MAGIC **Schema** (`orders`):
 # MAGIC | Column | Type | Notes |
 # MAGIC |--------|------|-------|
-# MAGIC | order_id | STRING | Primary key |
+# MAGIC | order_id | STRING | Order key (repeats in the base table: ORD-042 and ORD-067 appear twice) |
 # MAGIC | customer_id | STRING | FK to customers (some nulls) |
 # MAGIC | product_id | STRING | FK to products |
 # MAGIC | amount | DOUBLE | Order total in USD |
@@ -34,31 +34,31 @@
 
 # COMMAND ----------
 # MAGIC %md
-# MAGIC **Setup complete.** Exercise tables are in `{CATALOG}.{SCHEMA}` (optimize_file_mgmt schema).
-# MAGIC Base tables (orders) are in `{CATALOG}.{BASE_SCHEMA}` (delta_lake schema).
+# MAGIC **Setup complete.** Every exercise table is in `db_code.optimize_file_mgmt`. Write your output tables there too, by full name (for example `db_code.optimize_file_mgmt.opt_ex1_detail`). In Python cells, the variables `CATALOG` and `SCHEMA` hold `db_code` and `optimize_file_mgmt`. The base table (`orders`) is in `db_code.delta_lake`.
+# MAGIC
+# MAGIC Keep the `# EXERCISE_KEY: ...` line as the first line of each answer cell. The answer cells are Python: run SQL with `spark.sql()`.
+# MAGIC
 # MAGIC Exercise tables:
-# MAGIC - `opt_ex{1-4}_orders` - intentionally fragmented (10+ small files each) for OPTIMIZE demos
-# MAGIC - `opt_ex5_orders` - normal table for setting retention properties
-# MAGIC - `opt_ex6_orders` - table with stale files from UPDATE/DELETE operations (for VACUUM)
-# MAGIC - `opt_ex7_orders` - normal table for DESCRIBE DETAIL exploration
-# MAGIC - `opt_ex8_orders` - pre-optimized fragmented table (for history analysis)
+# MAGIC - `opt_ex1_orders`, `opt_ex2_orders`, `opt_ex3_orders`, `opt_ex4_orders`: 20 rows each (`ORD-001` to `ORD-020`), written by 10 two-row INSERTs, so 10 small files each
+# MAGIC - `opt_ex5_orders`, `opt_ex7_orders`: 5 rows each (`ORD-001` to `ORD-005`), written in one CTAS
+# MAGIC - `opt_ex6_orders`: 4 rows; setup updated `ORD-001` and `ORD-002` and deleted `ORD-005`
+# MAGIC - `opt_ex8_orders`: 20 rows written by 10 two-row INSERTs, then compacted by one `OPTIMIZE` in setup
 
 # COMMAND ----------
 # MAGIC %md
 # MAGIC ## Checkpoint 1: Inspect File Count and Size
 # MAGIC **Time**: ~5 min
 # MAGIC
-# MAGIC Use `DESCRIBE DETAIL` to inspect how many files and how much storage a Delta table uses.
-# MAGIC The setup created this table with many small INSERT operations, so it has 10+ small files.
+# MAGIC Use `DESCRIBE DETAIL` to read how many data files a Delta table has and how many bytes they take.
 # MAGIC
-# MAGIC **Table** (`opt_ex1_orders`): ~20 rows across 10+ small files.
+# MAGIC **Table** (`db_code.optimize_file_mgmt.opt_ex1_orders`): 20 rows (`ORD-001` to `ORD-020`) written by 10 separate 2-row INSERTs, so 10 small files.
 # MAGIC
-# MAGIC **Expected Output**: Fill in the observed `numFiles` and `sizeInBytes` values below.
+# MAGIC **Expected Output**: `opt_ex1_detail` has 1 row: `num_files` is the `numFiles` you read (10) and `size_bytes` is the `sizeInBytes` you read.
 # MAGIC
 # MAGIC **Requirements**:
-# MAGIC 1. Run `DESCRIBE DETAIL` on `opt_ex1_orders` (add a cell above or use the space below)
-# MAGIC 2. Read the `numFiles` and `sizeInBytes` from the output
-# MAGIC 3. Fill in the placeholder values and run this cell
+# MAGIC 1. Add a new cell and run `DESCRIBE DETAIL db_code.optimize_file_mgmt.opt_ex1_orders`
+# MAGIC 2. Read `numFiles` and `sizeInBytes` from the output
+# MAGIC 3. Put them in `num_files` and `size_bytes` in the code cell below and run it
 
 # COMMAND ----------
 
@@ -75,34 +75,33 @@ spark.sql(f"""
 
 # COMMAND ----------
 
-# Validate Exercise 1
+# Validate Checkpoint 1
 result = spark.table(f"{CATALOG}.{SCHEMA}.opt_ex1_detail").collect()[0]
+actual = spark.sql(f"DESCRIBE DETAIL {CATALOG}.{SCHEMA}.opt_ex1_orders").collect()[0]
 
-assert result.num_files >= 8, f"Expected at least 8 files (fragmented table), got {result.num_files}"
-assert result.size_bytes > 0, f"sizeInBytes should be positive, got {result.size_bytes}"
+assert result.num_files == actual.numFiles, f"num_files should be the numFiles that DESCRIBE DETAIL shows, got {result.num_files}"
+assert result.size_bytes == actual.sizeInBytes, f"size_bytes should be the sizeInBytes that DESCRIBE DETAIL shows, got {result.size_bytes}"
 
-print("Exercise 1 passed!")
+print("Checkpoint 1 passed!")
 
 # COMMAND ----------
 # MAGIC %md
 # MAGIC ## Exercise 2: Run OPTIMIZE to Compact Files
 # MAGIC **Difficulty**: Easy | **Time**: ~5 min
 # MAGIC
-# MAGIC OPTIMIZE compacts many small files into fewer, larger files. Run it on a fragmented
-# MAGIC table and verify the file count decreased.
+# MAGIC OPTIMIZE compacts many small files into a few larger ones without changing the data.
 # MAGIC
-# MAGIC **Table** (`opt_ex2_orders`): ~20 rows across 10+ small files (same fragmented pattern as Ex 1).
+# MAGIC **Table** (`db_code.optimize_file_mgmt.opt_ex2_orders`): 20 rows in 10 small files.
 # MAGIC
-# MAGIC **Expected Output**: After OPTIMIZE, `opt_ex2_orders` should have 1-2 files instead of 10+.
+# MAGIC **Expected Output**: After OPTIMIZE, `opt_ex2_orders` has 1-2 files instead of 10 and still holds the same 20 rows.
 # MAGIC
 # MAGIC **Requirements**:
 # MAGIC 1. Run `OPTIMIZE` on `opt_ex2_orders`
-# MAGIC 2. The data should be unchanged (same rows), just in fewer files
 
 # COMMAND ----------
 
 # EXERCISE_KEY: opt_ex2
-# TODO: Run OPTIMIZE on the fragmented table
+# TODO: Run OPTIMIZE on opt_ex2_orders
 
 # Your code here
 
@@ -115,37 +114,31 @@ detail = spark.sql(f"DESCRIBE DETAIL {CATALOG}.{SCHEMA}.opt_ex2_orders").collect
 assert detail.numFiles <= 2, f"After OPTIMIZE, expected 1-2 files, got {detail.numFiles}"
 # Data should be unchanged
 row_count = spark.table(f"{CATALOG}.{SCHEMA}.opt_ex2_orders").count()
-assert row_count >= 18, f"Data should be preserved after OPTIMIZE, got {row_count} rows"
+assert row_count == 20, f"opt_ex2_orders has {row_count} rows: OPTIMIZE must not add or remove rows"
 
 print("Exercise 2 passed!")
 
 # COMMAND ----------
 # MAGIC %md
 # MAGIC ## Exercise 3: OPTIMIZE with ZORDER
-# MAGIC **Difficulty**: Medium | **Time**: ~10 min
+# MAGIC **Difficulty**: Easy | **Time**: ~5 min
 # MAGIC
-# MAGIC ZORDER co-locates rows with similar values in the same files, enabling file skipping
-# MAGIC on filtered queries. Run OPTIMIZE with ZORDER BY on the `status` column.
+# MAGIC ZORDER co-locates rows with similar values in the same files, so a filter on that column can skip files. It pays off on high-cardinality filter columns such as `customer_id`.
 # MAGIC
 # MAGIC **Note**: Liquid Clustering is the recommended replacement for ZORDER on new tables.
-# MAGIC ZORDER is still valid on existing non-clustered tables. See the Liquid Clustering notebook
-# MAGIC for the modern approach.
+# MAGIC ZORDER is still valid on existing non-clustered tables; `05_liquid-clustering.py` covers the replacement.
 # MAGIC
-# MAGIC **Table** (`opt_ex3_orders`): ~20 rows across 10+ small files.
+# MAGIC **Table** (`db_code.optimize_file_mgmt.opt_ex3_orders`): 20 rows in 10 small files.
 # MAGIC
-# MAGIC **Expected Output**: After OPTIMIZE ZORDER BY (status), the table is compacted AND
-# MAGIC data is physically sorted by status within files.
+# MAGIC **Expected Output**: `opt_ex3_orders` is compacted to 1-2 files, and `DESCRIBE HISTORY` shows an `OPTIMIZE` row Z-ordered by `customer_id`.
 # MAGIC
 # MAGIC **Requirements**:
-# MAGIC 1. Run `OPTIMIZE` with `ZORDER BY (status)` on `opt_ex3_orders`
-# MAGIC
-# MAGIC **Approach**: ZORDER is an extension of OPTIMIZE. Same OPTIMIZE command, just add
-# MAGIC a ZORDER BY clause specifying which columns to co-locate.
+# MAGIC 1. Run `OPTIMIZE` with `ZORDER BY (customer_id)` on `opt_ex3_orders`
 
 # COMMAND ----------
 
 # EXERCISE_KEY: opt_ex3
-# TODO: Run OPTIMIZE with ZORDER BY on the status column
+# TODO: Run OPTIMIZE with ZORDER BY on the customer_id column
 
 # Your code here
 
@@ -156,42 +149,44 @@ print("Exercise 2 passed!")
 detail = spark.sql(f"DESCRIBE DETAIL {CATALOG}.{SCHEMA}.opt_ex3_orders").collect()[0]
 assert detail.numFiles <= 2, f"Table should be compacted, got {detail.numFiles} files"
 
-# Verify ZORDER was used via DESCRIBE HISTORY
+# Every OPTIMIZE row has a zOrderBy parameter; it is '[]' when no ZORDER BY was used
 hist = spark.sql(f"DESCRIBE HISTORY {CATALOG}.{SCHEMA}.opt_ex3_orders")
-optimize_ops = hist.filter("operation = 'OPTIMIZE'").collect()
-assert len(optimize_ops) > 0, "Should have at least one OPTIMIZE in history"
-# Check operationParameters for zOrderBy
-params = optimize_ops[0].operationParameters
-assert 'zOrderBy' in str(params), "OPTIMIZE should include zOrderBy in parameters"
+zorder_ops = [r for r in hist.filter("operation = 'OPTIMIZE'").collect()
+              if r.operationParameters.get("zOrderBy", "[]") != "[]"]
+assert len(zorder_ops) > 0, "No Z-ordered OPTIMIZE in the history: add ZORDER BY to your OPTIMIZE"
+assert "customer_id" in zorder_ops[0].operationParameters["zOrderBy"], \
+    f"The Z-order column is not the one the requirement names: got {zorder_ops[0].operationParameters['zOrderBy']}"
 
 print("Exercise 3 passed!")
 
 # COMMAND ----------
 # MAGIC %md
 # MAGIC ## Exercise 4: Measure File Metrics Before and After OPTIMIZE
-# MAGIC **Difficulty**: Medium | **Time**: ~15 min
+# MAGIC **Difficulty**: Medium | **Time**: ~10 min
 # MAGIC
-# MAGIC Capture the file count before and after OPTIMIZE to quantify the compaction.
+# MAGIC Record the file count of a fragmented table before and after `OPTIMIZE`.
 # MAGIC
-# MAGIC **Table** (`opt_ex4_orders`): ~20 rows across 10+ small files (not yet optimized).
+# MAGIC **Table** (`db_code.optimize_file_mgmt.opt_ex4_orders`): 20 rows in 10 small files, not yet optimized.
 # MAGIC
-# MAGIC **Expected Output**: Fill in the before/after file counts in the placeholder below.
+# MAGIC **Expected Output**: `opt_ex4_comparison` holds one row: `before_files` = 10 and `after_files` = 1 (the check accepts 1 or 2).
 # MAGIC
-# MAGIC **Requirements**:
-# MAGIC 1. Run `DESCRIBE DETAIL` on `opt_ex4_orders` to find current `numFiles`
+# MAGIC **Requirements** (all in the code cell below, in this order):
+# MAGIC 1. Read `numFiles` of `opt_ex4_orders` into `before_files`
 # MAGIC 2. Run `OPTIMIZE` on `opt_ex4_orders`
-# MAGIC 3. Run `DESCRIBE DETAIL` again to find new `numFiles`
-# MAGIC 4. Fill in the placeholder values below
+# MAGIC 3. Read `numFiles` again into `after_files`
+# MAGIC 4. Run the cell: it saves both values to `opt_ex4_comparison`
+# MAGIC
+# MAGIC Read the counts in code rather than typing them: once `OPTIMIZE` has run, the before count is gone. If that happens, rerun the `%run ./setup/optimize-file-mgmt-setup` cell to rebuild the fragmented table. That resets the whole notebook: every exercise table is rebuilt and your output tables are dropped, so rerun the answer cells of any exercise you already passed.
 
 # COMMAND ----------
 
 # EXERCISE_KEY: opt_ex4
-# TODO: Run DESCRIBE DETAIL, OPTIMIZE, DESCRIBE DETAIL again, then fill in values
+# TODO: Read numFiles, run OPTIMIZE, read numFiles again
 
-before_files = 0  # Replace: numFiles BEFORE optimize
+before_files = 0  # Replace: numFiles of opt_ex4_orders before OPTIMIZE
 # Write your OPTIMIZE statement here
 
-after_files = 0   # Replace: numFiles AFTER optimize
+after_files = 0   # Replace: numFiles of opt_ex4_orders after OPTIMIZE
 
 spark.sql(f"""
     CREATE OR REPLACE TABLE {CATALOG}.{SCHEMA}.opt_ex4_comparison AS
@@ -203,35 +198,35 @@ spark.sql(f"""
 # Validate Exercise 4
 row = spark.table(f"{CATALOG}.{SCHEMA}.opt_ex4_comparison").collect()[0]
 
-assert row.before_files >= 8, f"Before OPTIMIZE should have 8+ files, got {row.before_files}"
-assert row.after_files <= 2, f"After OPTIMIZE should have 1-2 files, got {row.after_files}"
+assert row.before_files >= 8, f"before_files should be the numFiles of opt_ex4_orders before OPTIMIZE, got {row.before_files}"
+assert 1 <= row.after_files <= 2, f"after_files should be the numFiles of opt_ex4_orders after OPTIMIZE (1-2 files), got {row.after_files}"
 assert row.before_files > row.after_files, \
     f"before_files ({row.before_files}) should be greater than after_files ({row.after_files})"
+
+detail = spark.sql(f"DESCRIBE DETAIL {CATALOG}.{SCHEMA}.opt_ex4_orders").collect()[0]
+assert detail.numFiles <= 2, f"opt_ex4_orders still has {detail.numFiles} files: run OPTIMIZE on it"
+assert row.after_files == detail.numFiles, f"after_files should be the current numFiles of opt_ex4_orders, got {row.after_files}"
 
 print("Exercise 4 passed!")
 
 # COMMAND ----------
 # MAGIC %md
 # MAGIC ## Exercise 5: Set VACUUM Retention Period
-# MAGIC **Difficulty**: Medium | **Time**: ~10 min
+# MAGIC **Difficulty**: Easy | **Time**: ~5 min
 # MAGIC
-# MAGIC Set the `delta.deletedFileRetentionDuration` table property to control how long
-# MAGIC old files are kept before VACUUM can remove them.
+# MAGIC Keep removed data files of `opt_ex5_orders` for 30 days instead of the default 7, so time travel can reach a month back.
 # MAGIC
-# MAGIC **Table** (`opt_ex5_orders`): 5 rows from base orders.
+# MAGIC **Table** (`db_code.optimize_file_mgmt.opt_ex5_orders`): 5 rows (`ORD-001` to `ORD-005`).
 # MAGIC
-# MAGIC **Expected Output**: The table property `delta.deletedFileRetentionDuration` is set to `168 hours`.
+# MAGIC **Expected Output**: `SHOW TBLPROPERTIES` on `opt_ex5_orders` lists `delta.deletedFileRetentionDuration` = `720 hours`.
 # MAGIC
 # MAGIC **Requirements**:
-# MAGIC 1. Use `ALTER TABLE SET TBLPROPERTIES` to set the retention duration to `168 hours`
-# MAGIC
-# MAGIC **Approach**: Delta Lake table properties are set via ALTER TABLE. The retention property
-# MAGIC controls the minimum age of files that VACUUM will delete.
+# MAGIC 1. With `ALTER TABLE ... SET TBLPROPERTIES`, set the table property that controls VACUUM's retention to `720 hours`
 
 # COMMAND ----------
 
 # EXERCISE_KEY: opt_ex5
-# TODO: Set the VACUUM retention property to 168 hours
+# TODO: Set VACUUM's retention on opt_ex5_orders to 720 hours
 
 # Your code here
 
@@ -243,8 +238,8 @@ props = spark.sql(f"SHOW TBLPROPERTIES {CATALOG}.{SCHEMA}.opt_ex5_orders")
 retention_rows = props.filter("key = 'delta.deletedFileRetentionDuration'").collect()
 
 assert len(retention_rows) > 0, "Table should have delta.deletedFileRetentionDuration property"
-assert retention_rows[0].value == "168 hours", \
-    f"Retention should be '168 hours', got '{retention_rows[0].value}'"
+assert retention_rows[0].value == "720 hours", \
+    f"Retention should be '720 hours', got '{retention_rows[0].value}'"
 
 print("Exercise 5 passed!")
 
@@ -253,21 +248,18 @@ print("Exercise 5 passed!")
 # MAGIC ## Exercise 6: Run VACUUM and Verify
 # MAGIC **Difficulty**: Medium | **Time**: ~10 min
 # MAGIC
-# MAGIC VACUUM removes old, unreferenced files from a Delta table. The setup performed
-# MAGIC UPDATE and DELETE operations that left stale files behind.
+# MAGIC VACUUM deletes data files the table no longer references once they are older than the retention period.
 # MAGIC
-# MAGIC **Table** (`opt_ex6_orders`): 4 rows (was 5, one deleted). Has 3+ stale file versions
-# MAGIC from UPDATE/DELETE operations during setup.
+# MAGIC **Table** (`db_code.optimize_file_mgmt.opt_ex6_orders`): 4 rows. Setup ran two UPDATEs and one DELETE on it, so its storage holds files the current version no longer references.
 # MAGIC
-# MAGIC **Expected Output**: VACUUM completes. `DESCRIBE HISTORY` shows a VACUUM operation.
+# MAGIC **Expected Output**: `DESCRIBE HISTORY` on `opt_ex6_orders` shows a `VACUUM START` and a `VACUUM END` row, and `delta.deletedFileRetentionDuration` is back to `168 hours`.
 # MAGIC
 # MAGIC **Requirements**:
-# MAGIC 1. Set the table's file retention to 0 hours (via table property)
-# MAGIC 2. Run `VACUUM` to clean up stale files
-# MAGIC 3. Restore the retention to 168 hours after
+# MAGIC 1. Set `delta.deletedFileRetentionDuration` on `opt_ex6_orders` to `0 hours`
+# MAGIC 2. Run `VACUUM` on `opt_ex6_orders`
+# MAGIC 3. Set `delta.deletedFileRetentionDuration` back to `168 hours`
 # MAGIC
-# MAGIC **Approach**: By default, VACUUM refuses to delete files less than 7 days old. You can
-# MAGIC override the retention at the table level using `delta.deletedFileRetentionDuration`.
+# MAGIC **Approach**: By default, VACUUM keeps unreferenced files for 7 days, so the files setup left behind are too new to delete. Lowering the table's retention lets VACUUM remove them now. A 0-hour retention is for this exercise only: in production, a job still writing to the table can lose files it has not committed yet, and time travel to earlier versions stops working.
 
 # COMMAND ----------
 
@@ -285,6 +277,9 @@ vacuum_ops = hist.filter("operation = 'VACUUM END'").count()
 
 assert vacuum_ops > 0, "Should have at least one VACUUM operation in history"
 
+ret = spark.sql(f"SHOW TBLPROPERTIES {CATALOG}.{SCHEMA}.opt_ex6_orders").filter("key = 'delta.deletedFileRetentionDuration'").collect()
+assert ret and ret[0].value in ("168 hours", "interval 168 hours"), "Set delta.deletedFileRetentionDuration back to 168 hours"
+
 print("Exercise 6 passed!")
 
 # COMMAND ----------
@@ -294,12 +289,14 @@ print("Exercise 6 passed!")
 # MAGIC
 # MAGIC Read key metrics from `DESCRIBE DETAIL` and fill in a health report.
 # MAGIC
-# MAGIC **Table** (`opt_ex7_orders`): 5 rows from base orders.
+# MAGIC **Table** (`db_code.optimize_file_mgmt.opt_ex7_orders`): 5 rows (`ORD-001` to `ORD-005`).
+# MAGIC
+# MAGIC **Expected Output**: `opt_ex7_report` holds one row: `table_name` is the `name` you read (`db_code.optimize_file_mgmt.opt_ex7_orders`), and `num_files` and `size_bytes` are the `numFiles` and `sizeInBytes` you read.
 # MAGIC
 # MAGIC **Requirements**:
-# MAGIC 1. Run `DESCRIBE DETAIL` on `opt_ex7_orders`
+# MAGIC 1. Add a new cell and run `DESCRIBE DETAIL db_code.optimize_file_mgmt.opt_ex7_orders`
 # MAGIC 2. Find `name`, `numFiles`, `sizeInBytes` in the output
-# MAGIC 3. Fill in the placeholder values below
+# MAGIC 3. Put them in `table_name`, `num_files` and `size_bytes` in the code cell below and run it
 
 # COMMAND ----------
 
@@ -319,33 +316,32 @@ spark.sql(f"""
 
 # COMMAND ----------
 
-# Validate Exercise 7
+# Validate Checkpoint 7
 row = spark.table(f"{CATALOG}.{SCHEMA}.opt_ex7_report").collect()[0]
+actual = spark.sql(f"DESCRIBE DETAIL {CATALOG}.{SCHEMA}.opt_ex7_orders").collect()[0]
 
-assert len(row.table_name) > 0, "table_name should not be empty"
-assert row.num_files >= 1, f"Should have at least 1 file, got {row.num_files}"
-assert row.size_bytes > 0, f"Size should be positive, got {row.size_bytes}"
+assert row.table_name == actual.name, f"table_name should be the name column of DESCRIBE DETAIL, got '{row.table_name}'"
+assert row.num_files == actual.numFiles, f"num_files should be the numFiles that DESCRIBE DETAIL shows, got {row.num_files}"
+assert row.size_bytes == actual.sizeInBytes, f"size_bytes should be the sizeInBytes that DESCRIBE DETAIL shows, got {row.size_bytes}"
 
-print("Exercise 7 passed!")
+print("Checkpoint 7 passed!")
 
 # COMMAND ----------
 # MAGIC %md
 # MAGIC ## Exercise 8: Analyze OPTIMIZE History
-# MAGIC **Difficulty**: Hard | **Time**: ~15 min
+# MAGIC **Difficulty**: Medium | **Time**: ~10 min
 # MAGIC
-# MAGIC The setup already ran OPTIMIZE on this table. Query the table history to find the
-# MAGIC OPTIMIZE operation and read its metrics.
+# MAGIC Query the table history to find the `OPTIMIZE` operation and read its metrics.
 # MAGIC
-# MAGIC **Table** (`opt_ex8_orders`): was fragmented, then OPTIMIZE'd by setup.
+# MAGIC **Table** (`db_code.optimize_file_mgmt.opt_ex8_orders`): 20 rows built from 10 small INSERT files, then compacted by one `OPTIMIZE` during setup.
+# MAGIC
+# MAGIC **Expected Output**: `opt_ex8_analysis` holds one row: the OPTIMIZE `version`, `files_added` = 1 and `files_removed` = 10 (the check accepts 1 or more added).
 # MAGIC
 # MAGIC **Requirements**:
 # MAGIC 1. Run `DESCRIBE HISTORY` on `opt_ex8_orders`
-# MAGIC 2. Find the row where `operation = 'OPTIMIZE'`
-# MAGIC 3. Look at `operationMetrics` - it's a MAP with keys like `numAddedFiles`, `numRemovedFiles`
+# MAGIC 2. Find the row where `operation = 'OPTIMIZE'` (if you see more than one, take the one with the highest `version`)
+# MAGIC 3. Read `numAddedFiles` and `numRemovedFiles` from the `operationMetrics` MAP column
 # MAGIC 4. Fill in the placeholder values below
-# MAGIC
-# MAGIC **Approach**: In the DESCRIBE HISTORY output, expand or SELECT the `operationMetrics`
-# MAGIC column. Use bracket notation in SQL (e.g., `operationMetrics['numAddedFiles']`) to read map values.
 
 # COMMAND ----------
 
@@ -368,9 +364,11 @@ spark.sql(f"""
 # Validate Exercise 8
 row = spark.table(f"{CATALOG}.{SCHEMA}.opt_ex8_analysis").collect()[0]
 
-assert int(row.files_removed) >= 8, \
-    f"OPTIMIZE should have removed 8+ files, got {row.files_removed}"
+assert int(row.files_removed) >= 8, f"files_removed should be operationMetrics['numRemovedFiles'] of the OPTIMIZE row, got {row.files_removed}"
 assert int(row.files_added) >= 1, \
     f"OPTIMIZE should have added at least 1 file, got {row.files_added}"
+
+opt_versions = [r.version for r in spark.sql(f"DESCRIBE HISTORY {CATALOG}.{SCHEMA}.opt_ex8_orders").filter("operation = 'OPTIMIZE'").collect()]
+assert row.version in opt_versions, f"version should be the version of the OPTIMIZE row in DESCRIBE HISTORY, got {row.version}"
 
 print("Exercise 8 passed!")

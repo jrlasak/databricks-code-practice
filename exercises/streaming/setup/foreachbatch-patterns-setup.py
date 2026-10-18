@@ -25,7 +25,7 @@ CHECKPOINT_BASE = f"/Volumes/{CATALOG}/{SCHEMA}/checkpoints"
 
 # COMMAND ----------
 
-# -- Clean previous runs --
+# Clean previous runs
 # Drop per-exercise source, target, metrics, and quarantine tables and wipe checkpoints
 # so the notebook is fully idempotent. The base streaming schema is left alone.
 for i in range(1, 8):
@@ -46,16 +46,16 @@ spark.sql(f"CREATE VOLUME IF NOT EXISTS {CATALOG}.{SCHEMA}.checkpoints")
 
 # MAGIC %md
 # MAGIC ## Per-exercise streaming source tables
-# MAGIC Each `exN_source` is a Delta table with ~40 events. Rows include intentional edge
+# MAGIC Each `exN_source` is a Delta table with 40 events. Rows include intentional edge
 # MAGIC cases (negative `amount`, NULL `user_id`) used by the quality-routing exercises.
 # MAGIC
 # MAGIC Schema:
 # MAGIC | Column     | Type      | Notes |
 # MAGIC |------------|-----------|-------|
 # MAGIC | event_id   | STRING    | Primary key (unique within source) |
-# MAGIC | user_id    | STRING    | Nullable; ~2 rows have NULL |
 # MAGIC | event_type | STRING    | purchase / view / click |
-# MAGIC | amount     | DOUBLE    | Nullable; ~2 rows are negative (bad data) |
+# MAGIC | user_id    | STRING    | Nullable; 2 rows have NULL |
+# MAGIC | amount     | DOUBLE    | Nullable; 2 rows are negative (bad data) |
 # MAGIC | event_ts   | TIMESTAMP | Event timestamp |
 
 # COMMAND ----------
@@ -123,15 +123,14 @@ def create_events_source(table_name: str):
     """)
 
 # Exercises 1-7 all stream from a copy of the canonical 40-row source.
-# Each gets its own copy so simultaneous reruns of the notebook don't cause read-write
-# conflicts on a shared source.
+# Each exercise streams from its own copy, so its checkpoint tracks a table no other exercise reads.
 for ex in [1, 2, 3, 4, 5, 6, 7]:
     create_events_source(f"ex{ex}_source")
 
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## Exercise 2 + 4: pre-existing target table for MERGE upsert exercises
+# MAGIC ## Exercise 2: pre-existing target table for the MERGE upsert
 # MAGIC `ex2_target` has 10 rows. Streaming events for matching `event_id`s will UPDATE
 # MAGIC the existing rows; new `event_id`s will INSERT.
 
@@ -197,7 +196,7 @@ spark.sql(f"""
 
 # MAGIC %md
 # MAGIC ## Exercise 4: idempotent target table (tracks batch_id)
-# MAGIC Empty target. User's foreachBatch tags each row with `batch_id` and uses a MERGE
+# MAGIC Empty target. Your foreachBatch function tags each row with `batch_id` and uses a MERGE
 # MAGIC that skips already-applied batches, so calling the function twice with the same
 # MAGIC `batch_id` is a no-op.
 

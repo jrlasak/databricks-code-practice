@@ -1,19 +1,21 @@
 # Databricks notebook source
 # MAGIC %md
 # MAGIC # Batch Data Ingestion & File Formats
-# MAGIC **Zone**: ELT | **Exercises**: 6 | **Time**: ~60 min total
+# MAGIC **Topic**: ELT | **Exercises**: 6 | **Total Time**: ~60 min
 # MAGIC
 # MAGIC Practice batch ingestion patterns every Databricks data engineer uses: reading CSV and JSON from Volumes
 # MAGIC with explicit options and schemas, incremental loading with COPY INTO, flattening nested structs,
 # MAGIC handling malformed records with permissive mode, and unifying schemas across multiple file formats.
 # MAGIC
-# MAGIC **Prerequisites**: Run `00_Setup` and the setup notebook below before starting.
+# MAGIC **Prerequisites**: none. The next two cells run `00_Setup` and this topic's setup for you.
 # MAGIC
 # MAGIC **Solutions**: If stuck, see `solutions/batch-ingestion-solutions.py` for hints and answers.
 # MAGIC
-# MAGIC **Schemas used**:
+# MAGIC **Code**: TODO cells are Python. The variables `CATALOG`, `SCHEMA` and `VOLUME_PATH` are already defined; run SQL such as `COPY INTO` with `spark.sql(...)`. Every exercise except Exercise 3 writes its result as a Delta table in overwrite mode.
+# MAGIC
+# MAGIC **Locations**:
 # MAGIC - Source files: `/Volumes/db_code/batch_ingestion/source_files/`
-# MAGIC - Output tables: `db_code.batch_ingestion.exN_output`
+# MAGIC - Output tables: `db_code.batch_ingestion.ex1_output` to `ex6_output` (Exercise 3 loads `db_code.batch_ingestion.ex3_transactions` instead)
 
 # COMMAND ----------
 
@@ -33,13 +35,11 @@
 # MAGIC | 1 | `ex1_csv/` | CSV (pipe-delimited) | 12 products across 2 files | Header row, `\|` delimiter |
 # MAGIC | 2 | `ex2_json/` | Newline-delimited JSON | 8 orders in 1 file | Flat structure, explicit schema required |
 # MAGIC | 3 | `ex3_csv/` | CSV (comma-delimited) | 8 transactions across 2 files | Target table `ex3_transactions` already exists (empty) |
-# MAGIC | 4 | `ex4_json/` | Newline-delimited JSON | 6 events in 1 file | Nested `user.name`, `user.email`, `user.location.city` structs |
+# MAGIC | 4 | `ex4_json/` | Newline-delimited JSON | 6 events in 1 file | Nested `user` struct (`user_id`, `name`, `email`) holding a nested `location` struct (`city`, `state`) |
 # MAGIC | 5 | `ex5_csv/` | CSV | 10 sensor readings in 1 file | 3 malformed rows (bad numeric, bad timestamp, both) |
 # MAGIC | 6 | `ex6_csv/`, `ex6_json/`, `ex6_parquet/` | CSV + JSON + Parquet | 9 employees (3 per format) | Different column names per source system |
 # MAGIC
-# MAGIC Each exercise reads from its own source files and writes to its own output table (`ex1_output` through `ex6_output`,
-# MAGIC except Exercise 3 which loads into `ex3_transactions`).
-# MAGIC Exercises are independent. Skip to any exercise you want.
+# MAGIC Each exercise reads its own source folder and writes its own table. Exercises are independent: skip to any one.
 
 # COMMAND ----------
 
@@ -59,23 +59,22 @@ VOLUME_PATH = f"/Volumes/{CATALOG}/{SCHEMA}/source_files"
 # MAGIC then write the result as a Delta table.
 # MAGIC
 # MAGIC **Source**: CSV files at `/Volumes/db_code/batch_ingestion/source_files/ex1_csv/`
-# MAGIC - 2 files, 12 total product rows
+# MAGIC - 2 files (`products_batch1.csv`, `products_batch2.csv`), 12 total product rows
 # MAGIC - Delimiter is `|` (pipe), not comma
 # MAGIC - Files have a header row
 # MAGIC - Columns: `product_id` (STRING), `product_name` (STRING), `category` (STRING), `price` (DOUBLE), `in_stock` (BOOLEAN)
 # MAGIC
-# MAGIC **Target**: Write to `db_code.batch_ingestion.ex1_output`. Expected 12 rows.
+# MAGIC **Target**: Write to `db_code.batch_ingestion.ex1_output`. Expected 12 rows: `P-001` has `price` 1299.99, and `P-012` (from `products_batch2.csv`) is present.
 # MAGIC
 # MAGIC **Requirements**:
 # MAGIC 1. Read all CSV files from the `ex1_csv/` directory
 # MAGIC 2. Set the correct delimiter option (pipe character)
 # MAGIC 3. Enable header detection so column names come from the first row
 # MAGIC 4. Infer the schema so `price` is read as a numeric type (not string)
-# MAGIC 5. Write the result as a Delta table (overwrite mode)
 # MAGIC
 # MAGIC **Constraints**:
-# MAGIC - All 12 rows must appear (both files combined)
-# MAGIC - `price` column must be numeric (not string)
+# MAGIC - Both files have the same header row and column order
+# MAGIC - `product_id` is unique across the 2 files (P-001 to P-012)
 
 # COMMAND ----------
 
@@ -95,7 +94,7 @@ expected_cols = {"product_id", "product_name", "category", "price", "in_stock"}
 actual_cols = set(result_ex1.columns)
 assert expected_cols.issubset(actual_cols), f"Missing columns: {expected_cols - actual_cols}"
 
-# Check 3: Price is numeric (not string) - check a specific value
+# Check 3: price is numeric, not string
 from pyspark.sql.types import StringType
 assert not isinstance(result_ex1.schema["price"].dataType, StringType), "price column should be numeric, not string"
 
@@ -105,7 +104,7 @@ assert abs(laptop.price - 1299.99) < 0.01, f"Expected P-001 price 1299.99, got {
 
 # Check 5: Both files loaded
 p012 = result_ex1.filter("product_id = 'P-012'").count()
-assert p012 == 1, f"Expected P-012 from batch2, got {p012} rows"
+assert p012 == 1, f"Expected P-012 (from products_batch2.csv) once, got {p012} rows"
 
 print("Exercise 1 passed!")
 
@@ -123,17 +122,14 @@ print("Exercise 1 passed!")
 # MAGIC - 1 file, 8 order records (newline-delimited JSON)
 # MAGIC - Fields: `order_id` (STRING), `customer_name` (STRING), `product` (STRING), `amount` (DOUBLE), `order_date` (STRING)
 # MAGIC
-# MAGIC **Target**: Write to `db_code.batch_ingestion.ex2_output`. Expected 8 rows.
+# MAGIC **Target**: Write to `db_code.batch_ingestion.ex2_output`. Expected 8 rows: `ORD-001` is `Alice Chen` with `amount` 1299.99, and `ORD-008` has `amount` 699.00.
 # MAGIC
 # MAGIC **Requirements**:
 # MAGIC 1. Define a `StructType` schema with the 5 fields listed above (use StringType, DoubleType)
 # MAGIC 2. Read the JSON file using `spark.read.schema(your_schema).json(path)`
-# MAGIC 3. Write the result as a Delta table (overwrite mode)
 # MAGIC
 # MAGIC **Constraints**:
-# MAGIC - Must use an explicit `StructType` schema (do NOT rely on schema inference)
-# MAGIC - `amount` must be DOUBLE, not STRING
-# MAGIC - All 8 rows must appear
+# MAGIC - Every record has all 5 fields, and none is null
 
 # COMMAND ----------
 
@@ -182,19 +178,18 @@ print("Exercise 2 passed!")
 # MAGIC **Source**: CSV files at `/Volumes/db_code/batch_ingestion/source_files/ex3_csv/`
 # MAGIC - 2 files: `transactions_20260115.csv` (5 rows) and `transactions_20260118.csv` (3 rows)
 # MAGIC - Standard comma delimiter with header row
+# MAGIC - Columns (with the target table's types): `transaction_id` (STRING), `customer_id` (STRING), `amount` (DOUBLE), `currency` (STRING), `tx_date` (DATE)
 # MAGIC
 # MAGIC **Target**: The table `db_code.batch_ingestion.ex3_transactions` already exists (empty).
-# MAGIC Expected 8 rows after loading.
+# MAGIC Expected 8 rows after loading: `TXN-003` has `amount` 1200.00 and `currency` `EUR`.
 # MAGIC
 # MAGIC **Requirements**:
 # MAGIC 1. Use `COPY INTO` (not spark.read) to load all CSV files from the `ex3_csv/` directory
 # MAGIC 2. Specify the file format as CSV
-# MAGIC 3. Set format options: header = true
-# MAGIC 4. After running, the target table should contain all 8 transactions
+# MAGIC 3. Set format options: `'header' = 'true'` and `'inferSchema' = 'true'` (without `inferSchema` every CSV column is read as STRING, which does not match the table's DOUBLE and DATE columns)
 # MAGIC
 # MAGIC **Constraints**:
-# MAGIC - Must use COPY INTO (the assertion checks idempotency: running the cell twice should still yield 8 rows, not 16)
-# MAGIC - The target table already exists with the correct schema
+# MAGIC - Must use `COPY INTO`. Run your cell twice: the table still holds 8 rows, not 16, because COPY INTO skips files it already loaded.
 
 # COMMAND ----------
 
@@ -216,9 +211,11 @@ assert txn3.currency == "EUR", f"Expected TXN-003 currency EUR, got {txn3.curren
 
 # Check 3: Both files loaded
 batch2_count = result_ex3.filter("transaction_id >= 'TXN-006'").count()
-assert batch2_count == 3, f"Expected 3 rows from batch 2, got {batch2_count}"
+assert batch2_count == 3, f"Expected 3 rows from transactions_20260118.csv (TXN-006 to TXN-008), got {batch2_count}"
 
-# Check 4: Idempotency - count should still be exactly 8 (not 16 from double-loading)
+# Check 4: The rows were loaded by COPY INTO
+ops = [r.operation for r in spark.sql(f"DESCRIBE HISTORY {CATALOG}.{SCHEMA}.ex3_transactions").collect()]
+assert "COPY INTO" in ops, f"Load the files with COPY INTO; the table history shows only {ops}"
 
 print("Exercise 3 passed!")
 
@@ -236,7 +233,7 @@ print("Exercise 3 passed!")
 # MAGIC   a further nested `location` struct with `city` and `state`
 # MAGIC - Structure: `{event_id, event_type, timestamp, amount, user: {user_id, name, email, location: {city, state}}}`
 # MAGIC
-# MAGIC **Target**: Write to `db_code.batch_ingestion.ex4_output`. Expected 6 rows with flat columns.
+# MAGIC **Target**: Write to `db_code.batch_ingestion.ex4_output`. Expected 6 rows and 9 flat columns: `EVT-001` has `user_id` `U-201`, `user_email` `alice@example.com`, `city` `Seattle` and `amount` 149.97; `EVT-005` has `user_name` `Dan Park` and `state` `OR`.
 # MAGIC
 # MAGIC **Requirements**:
 # MAGIC 1. Read the JSON file(s) from `ex4_json/`
@@ -248,10 +245,8 @@ print("Exercise 3 passed!")
 # MAGIC    - `user.location.state` -> `state`
 # MAGIC 3. Keep `event_id`, `event_type`, `timestamp`, and `amount` as-is
 # MAGIC 4. Final table should have exactly 9 columns: `event_id`, `event_type`, `timestamp`, `amount`, `user_id`, `user_name`, `user_email`, `city`, `state`
-# MAGIC 5. Write as Delta table (overwrite mode)
 # MAGIC
 # MAGIC **Constraints**:
-# MAGIC - All 6 rows must appear
 # MAGIC - No struct columns in the output (all scalar types)
 
 # COMMAND ----------
@@ -303,24 +298,22 @@ print("Exercise 4 passed!")
 # MAGIC
 # MAGIC **Source**: CSV file at `/Volumes/db_code/batch_ingestion/source_files/ex5_csv/`
 # MAGIC - 10 sensor readings: `sensor_id` (STRING), `reading` (DOUBLE), `unit` (STRING), `recorded_at` (TIMESTAMP)
+# MAGIC - Comma-delimited with a header row
 # MAGIC - 3 malformed rows:
 # MAGIC   - SENS-002: `reading` = "NOT_A_NUMBER" (not a valid double)
 # MAGIC   - SENS-004: `recorded_at` = "INVALID_TIMESTAMP" (not a valid timestamp)
 # MAGIC   - SENS-009: both `reading` = "BROKEN" and `recorded_at` = "ALSO_BROKEN"
-# MAGIC - 1 row with null reading: SENS-006 (empty string in `reading` column)
+# MAGIC - 1 row with an empty `reading` field: SENS-006 (Spark reads it as null)
 # MAGIC
-# MAGIC **Target**: Write ONLY the valid rows to `db_code.batch_ingestion.ex5_output`. Expected 7 rows.
+# MAGIC **Target**: Write ONLY the valid rows to `db_code.batch_ingestion.ex5_output`. Expected 7 rows and 4 columns: `SENS-001` has `reading` 23.5.
 # MAGIC
 # MAGIC **Requirements**:
-# MAGIC 1. Read the CSV file with an explicit schema that enforces types (DOUBLE for reading, TIMESTAMP for recorded_at)
-# MAGIC 2. Use `PERMISSIVE` mode with a `_corrupt_record` column to capture malformed rows
+# MAGIC 1. Read the CSV file with `header` = `true` and an explicit schema that enforces types (DOUBLE for `reading`, TIMESTAMP for `recorded_at`)
+# MAGIC 2. Use `PERMISSIVE` mode and add a fifth field, `_corrupt_record` (STRING), to the end of your schema: Spark puts the raw line of each malformed row there and leaves it null for valid rows
 # MAGIC 3. Filter OUT rows where `_corrupt_record` is not null (those are the malformed ones)
 # MAGIC 4. Drop the `_corrupt_record` column from the final output
-# MAGIC 5. Write clean rows as a Delta table (overwrite mode)
 # MAGIC
 # MAGIC **Constraints**:
-# MAGIC - Must use an explicit schema (do not rely on inferSchema for this exercise)
-# MAGIC - The 3 malformed rows (SENS-002, SENS-004, SENS-009) must be excluded
 # MAGIC - SENS-006 (null reading) is valid and should be included (null is not malformed)
 
 # COMMAND ----------
@@ -375,7 +368,7 @@ print("Exercise 5 passed!")
 # MAGIC | B | `ex6_json/` | JSON | `emp_id`, `name`, `dept`, `annual_salary`, `start_date` |
 # MAGIC | C | `ex6_parquet/` | Parquet | `id`, `employee_name`, `department_name`, `compensation`, `date_hired` |
 # MAGIC
-# MAGIC **Target**: Write to `db_code.batch_ingestion.ex6_output`. Expected 9 rows.
+# MAGIC **Target**: Write to `db_code.batch_ingestion.ex6_output`. Expected 9 rows: `EMP-001` is `Sarah Johnson` with `salary` 125000, `EMP-005` is in `Engineering`, and `EMP-007` has `salary` 150000.
 # MAGIC
 # MAGIC **Unified schema** (all sources must be renamed to these columns):
 # MAGIC
@@ -394,11 +387,8 @@ print("Exercise 5 passed!")
 # MAGIC 4. Rename each source's columns to match the unified schema above
 # MAGIC 5. Ensure `salary` is cast to INT and `hire_date` is cast to DATE across all sources
 # MAGIC 6. Union all three DataFrames
-# MAGIC 7. Write the combined result as a Delta table (overwrite mode)
 # MAGIC
 # MAGIC **Constraints**:
-# MAGIC - Exactly 9 rows in output (3 per source)
-# MAGIC - All columns must match the unified schema (5 columns, exact names)
 # MAGIC - No nulls in any column
 
 # COMMAND ----------
@@ -441,9 +431,9 @@ emp007 = result_ex6.filter("employee_id = 'EMP-007'").collect()
 assert len(emp007) == 1, "EMP-007 (from Parquet) should be present"
 assert emp007[0].salary == 150000, f"Expected salary 150000, got {emp007[0].salary}"
 
-# Check 5: salary is integer type
-from pyspark.sql.types import IntegerType, LongType
+# Check 5: salary is INT
+from pyspark.sql.types import IntegerType
 salary_type = result_ex6.schema["salary"].dataType
-assert isinstance(salary_type, (IntegerType, LongType)), f"salary should be INT/LONG, got {salary_type}"
+assert isinstance(salary_type, IntegerType), f"salary should be INT (cast it in every source), got {salary_type}. An overwrite keeps the column types of a table you already wrote, so rerun the `%run ./setup/batch-ingestion-setup` cell at the top of the notebook, then your Exercise 6 cell."
 
 print("Exercise 6 passed!")

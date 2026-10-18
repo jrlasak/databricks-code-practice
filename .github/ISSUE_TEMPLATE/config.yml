@@ -3,9 +3,9 @@ contact_links:
   - name: I finished an exercise and want to share my solution
     url: https://github.com/jrlasak/databricks-code-practice/blob/main/CONTRIBUTING.md
     about: Keep it in your fork - please don't open a PR with solved TODO cells. Read why here.
-  - name: Databricks interview prep and more practice
+  - name: Databricks certification and learning paths
     url: https://dataengineer.wiki
-    about: Interview Prep for junior, mid and senior roles, plus DataDojo and the other free practice.
+    about: Cheat sheets, cert guides, and learning paths.
   - name: Newsletter and podcast
     url: https://dataengineer.wiki/substack
     about: New exercises and labs get announced here first.

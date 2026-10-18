@@ -20,14 +20,14 @@ CHECKPOINT_BASE = f"/Volumes/{CATALOG}/{SCHEMA}/checkpoints"
 # MAGIC **Hints**:
 # MAGIC 1. Use `pyspark.sql.functions.window(event_ts, "5 minutes")` inside `groupBy`
 # MAGIC 2. The `window` function returns a struct - select `window.start` and `window.end` after the aggregation
-# MAGIC 3. Append mode requires a watermark, so for this no-watermark exercise pick the write mode
-# MAGIC    that supports overwriting an existing table each batch.
+# MAGIC 3. A `foreachBatch` stream ends in `.start()`, not `.toTable(...)`: chain `.foreachBatch(fn)`, `.outputMode("complete")`, the checkpoint option and the trigger, then `.start().awaitTermination()`.
+# MAGIC 4. Complete mode can also write straight to Delta with `.toTable()`, which replaces the table every batch; reach for `foreachBatch` when each batch needs a write the streaming sink does not offer, such as a MERGE or a write to more than one table.
 # MAGIC
 # MAGIC **Common mistakes**:
 # MAGIC - Forgetting to flatten the `window` struct - downstream tools and assertions need explicit
 # MAGIC   `window_start` / `window_end` columns
 # MAGIC - Using `outputMode("append")` without a watermark - Spark rejects this for stateful streaming aggregations
-# MAGIC - Using `.toTable()` in complete mode - Delta sink requires append; use `foreachBatch` overwrite
+# MAGIC - Using `outputMode("update")` with `.toTable()` - the Delta sink supports only append and complete; for update-style output use `foreachBatch` with a MERGE
 # MAGIC - Omitting `.awaitTermination()` - the validate cell runs before the stream finishes
 
 # COMMAND ----------
@@ -74,8 +74,7 @@ def overwrite_ex1(batch_df, batch_id):
 # MAGIC
 # MAGIC **Common mistakes**:
 # MAGIC - Putting `user_id` in the window expression instead of `groupBy` - `window()` only accepts the time column
-# MAGIC - Using `.sum()` (a DataFrame action) instead of `F.sum("amount")` inside `.agg()`
-# MAGIC - Forgetting to alias the sum column - the default name is `sum(amount)` which fails the column-name assertion
+# MAGIC - Using `groupBy(...).sum("amount")` - it computes the right values, but the column comes out as `sum(amount)`; use `.agg(F.sum("amount").alias("total_amount"))`
 
 # COMMAND ----------
 
@@ -118,7 +117,7 @@ def overwrite_ex2(batch_df, batch_id):
 # MAGIC
 # MAGIC **Common mistakes**:
 # MAGIC - Swapping the window duration and slide arguments - syntax is `window(ts, window_duration, slide_duration)`
-# MAGIC - Setting slide_duration > window_duration - that creates gaps in coverage (not sliding)
+# MAGIC - Setting slide_duration > window_duration - Spark rejects the call (the slide must be <= the window duration); swapping the two arguments here does exactly that
 # MAGIC - Expecting one window per event - sliding windows duplicate counts across overlaps
 
 # COMMAND ----------
@@ -156,14 +155,14 @@ def overwrite_ex3(batch_df, batch_id):
 # MAGIC
 # MAGIC **Hints**:
 # MAGIC 1. Use `session_window(event_ts, "10 minutes")` - 10-minute inactivity gap means a new session
-# MAGIC    starts whenever consecutive events have a gap >= 10 minutes
+# MAGIC    starts when the next event comes more than 10 minutes after the previous one
 # MAGIC 2. Group by `user_id` AND the session_window (order matters less since groupBy is symmetric)
 # MAGIC 3. The session_window struct has `.start` (first event) and `.end` (last event + gap duration)
 # MAGIC
 # MAGIC **Common mistakes**:
 # MAGIC - Using `window()` instead of `session_window()` - tumbling/sliding windows have fixed boundaries,
 # MAGIC   session windows expand to fit each user's activity
-# MAGIC - Forgetting `user_id` in the groupBy - all events become one global session
+# MAGIC - Forgetting `user_id` in the groupBy - a streaming query rejects a `session_window` with no other grouping key (a global session works only in batch)
 # MAGIC - Confusing session_window with stateful operators that require watermarks - session_window in
 # MAGIC   complete mode does NOT require a watermark
 
@@ -205,19 +204,14 @@ def overwrite_ex4(batch_df, batch_id):
 # MAGIC 1. Apply `withWatermark("event_ts", "10 minutes")` BEFORE the `groupBy`
 # MAGIC 2. Use `outputMode("append")` - append mode emits a window once `window.end <= watermark`
 # MAGIC    (the window is "closed"). Open windows remain in state and are not emitted.
-# MAGIC 3. Append-mode aggregation writes directly to Delta - use `.format("delta").toTable(...)`
-# MAGIC    instead of `foreachBatch`
+# MAGIC 3. Write the aggregation straight to Delta with `.format("delta").toTable(...)` instead of
+# MAGIC    `foreachBatch`
 # MAGIC
 # MAGIC **Common mistakes**:
 # MAGIC - Applying `withWatermark` AFTER the aggregation - the watermark must be on the streaming
 # MAGIC   DataFrame before the stateful operator sees it
-# MAGIC - Choosing a watermark delay so large that no window closes during `availableNow` - here we
-# MAGIC   use 10 minutes against a 34-minute main-event span, so 5 windows close under Spark's append-mode
-# MAGIC   emission rule (a window closes when window.end <= watermark, non-strict)
-# MAGIC - Confusing "late-event drop" with "closed-window emission" - under `trigger(availableNow=True)`,
-# MAGIC   all events are read together before the watermark advances, so the late event ends up in
-# MAGIC   its closed window [09:30,09:35) rather than being dropped. True late-row drop requires
-# MAGIC   continuous processingTime triggers where the watermark advances BEFORE the late row arrives.
+# MAGIC - Choosing a watermark delay so large that no window closes during `availableNow`: with a 10-minute delay against the 34-minute main-event span, 5 windows close.
+# MAGIC - Expecting EVT-049 to be dropped: all 49 rows arrive in one micro-batch before the watermark moves, so it lands in its closed window [09:30,09:35). A row is dropped only when it arrives after its window has already closed (window.end <= watermark), and even then Spark only guarantees it MAY be dropped.
 
 # COMMAND ----------
 
@@ -243,7 +237,7 @@ def overwrite_ex4(batch_df, batch_id):
 
 # COMMAND ----------
 # MAGIC %md
-# MAGIC ## Exercise 6: Run Same Query With and Without Watermark, Diff the Outputs
+# MAGIC ## Exercise 6: Same Query With and Without a Watermark
 # MAGIC
 # MAGIC **Hints**:
 # MAGIC 1. Run the no-watermark version first using `foreachBatch` overwrite + complete mode
@@ -252,16 +246,16 @@ def overwrite_ex4(batch_df, batch_id):
 # MAGIC    sharing one across two different queries causes failure or silently corrupted state)
 # MAGIC
 # MAGIC **Common mistakes**:
-# MAGIC - Reusing one checkpoint for both streams - second run picks up the first run's state and fails
+# MAGIC - Reusing one checkpoint for both streams - the second query resumes from the first one's offsets and state, so it reads no new rows (or fails if the state does not match its plan)
 # MAGIC - Running both streams in append mode without a watermark on the first - append mode requires
 # MAGIC   a watermark for stateful aggregations, so the no-watermark stream MUST be complete mode
-# MAGIC - Forgetting `.awaitTermination()` between the two streams - the second stream starts before
-# MAGIC   the first finishes, racing on table writes
+# MAGIC - Forgetting `.awaitTermination()` on either stream - the cell returns while the stream is still running,
+# MAGIC   so the validate cell reads a missing or partial table
 
 # COMMAND ----------
 
 # EXERCISE_KEY: windows_ex6
-# --- Run 1: No watermark, complete mode, foreachBatch overwrite ---
+# Run 1: no watermark, complete mode, foreachBatch overwrite
 def overwrite_no_wm(batch_df, batch_id):
     (batch_df
         .select(
@@ -288,7 +282,7 @@ def overwrite_no_wm(batch_df, batch_id):
     .awaitTermination()
 )
 
-# --- Run 2: With watermark, append mode, direct toTable ---
+# Run 2: with watermark, append mode, direct toTable
 (spark.readStream
     .table(f"{CATALOG}.{SCHEMA}.windows_events")
     .withWatermark("event_ts", "10 minutes")
@@ -313,14 +307,14 @@ def overwrite_no_wm(batch_df, batch_id):
 # MAGIC ## Exercise 7: Watermarked Aggregation Grouped by Window + user_id
 # MAGIC
 # MAGIC **Hints**:
-# MAGIC 1. Apply `withWatermark("event_ts", "10 minutes")` then group by `window(...)` AND `user_id`
-# MAGIC 2. Aggregate two metrics: `count(*) AS event_count` and `sum(amount) AS total_amount`
-# MAGIC 3. Output mode = append, watermark is mandatory for stateful aggregations in append mode
+# MAGIC 1. Start from the Ex 5 query: add `user_id` to `groupBy` and put both aggregates in one `.agg(...)` call.
+# MAGIC 2. If rows for windows starting at 10:20 or later show up, the query is not in append mode; append holds open windows in state.
+# MAGIC 3. Expect 15 rows: each closed window has one row per user active in it, so [10:10,10:15) and [10:15,10:20) have 4 rows each and [09:30,09:35) has only USER-005.
+# MAGIC 4. `count("*")` counts rows; `count("amount")` skips NULL amounts. They agree here because no amount is NULL.
 # MAGIC
 # MAGIC **Common mistakes**:
 # MAGIC - Expecting open windows ([10:20,10:25), [10:25,10:30), [10:30,10:35)) to appear - they remain in state under
 # MAGIC   append mode because their window.end is NOT <= watermark at end-of-stream
-# MAGIC - Computing `count(amount)` instead of `count(*)` - count(amount) returns 0 for null-amount events
 # MAGIC - Forgetting that the aggregation key must include `window` (windowed aggregations require
 # MAGIC   a window column in groupBy)
 
@@ -358,13 +352,14 @@ def overwrite_no_wm(batch_df, batch_id):
 # MAGIC **Hints**:
 # MAGIC 1. Same skeleton as Ex 5/6, but aggregate `sum(amount)` instead of `count(*)`
 # MAGIC 2. Append mode + `.toTable()` writes directly to Delta - no foreachBatch needed
-# MAGIC 3. Open windows (window_end > watermark) are held in state and NOT written until they close
+# MAGIC 3. Call `withWatermark` on the source stream, before `groupBy`: after the aggregation `event_ts` no longer exists.
 # MAGIC
 # MAGIC **Common mistakes**:
 # MAGIC - Trying append mode without a watermark - Spark raises AnalysisException at query start
 # MAGIC - Expecting open windows to show with partial sums - they are held in state, not emitted
-# MAGIC - Picking too short a watermark delay - if delay = 0, every window closes immediately and
-# MAGIC   no real watermarking happens; pick a delay sized to your real-world late-arrival profile
+# MAGIC - Picking too short a watermark delay - with a delay of 0 the watermark equals the newest event_ts, so
+# MAGIC   a window closes as soon as a newer event passes its end and any out-of-order row for it may be dropped;
+# MAGIC   size the delay to how late your data really arrives
 
 # COMMAND ----------
 
@@ -393,9 +388,9 @@ def overwrite_no_wm(batch_df, batch_id):
 # MAGIC ## Exercise 9: Tumbling Window Grouped by Two Keys with Watermark
 # MAGIC
 # MAGIC **Hints**:
-# MAGIC 1. Group by `window(event_ts, "5 minutes")`, `event_type`, AND `region` (three keys)
-# MAGIC 2. Aggregate `count(*) AS event_count`
-# MAGIC 3. Watermark + append mode emit only closed (window, event_type, region) cells
+# MAGIC 1. This is the Ex 5 query with two extra grouping keys; nothing else changes.
+# MAGIC 2. Each closed window yields one row per (event_type, region) pair present in it, so [10:05,10:10) has 5 rows, not 6.
+# MAGIC 3. If you see windows starting at 10:20 or later, check `outputMode("append")`.
 # MAGIC
 # MAGIC **Common mistakes**:
 # MAGIC - Adding non-grouping columns to the select after agg - only grouping keys and aggregates

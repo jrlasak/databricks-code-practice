@@ -30,7 +30,7 @@ CHECKPOINT_BASE = f"/Volumes/{CATALOG}/{SCHEMA}/checkpoints"
 
 # COMMAND ----------
 
-# -- Clean previous runs --
+# Clean previous runs
 # Remove old checkpoints so streams re-process the source from scratch.
 dbutils.fs.rm(CHECKPOINT_BASE, recurse=True)
 spark.sql(f"CREATE VOLUME IF NOT EXISTS {CATALOG}.{SCHEMA}.checkpoints")
@@ -92,7 +92,7 @@ def ts(h, m, s):
 #  - per-user clusters create predictable session windows
 
 events_data = [
-    # ---------- Window [10:00, 10:05) -- 9 events ----------
+    # Window [10:00, 10:05): 9 events
     # boundary event: 10:00:00 starts this window
     ("EVT-001", "click",    "USER-001",  10.00, ts(10, 0, 0),   "NA"),
     ("EVT-002", "click",    "USER-002",  20.00, ts(10, 0, 30),  "EU"),
@@ -104,7 +104,7 @@ events_data = [
     ("EVT-008", "purchase", "USER-001", 100.00, ts(10, 4, 0),   "NA"),
     ("EVT-009", "purchase", "USER-002", 200.00, ts(10, 4, 30),  "EU"),
 
-    # ---------- Window [10:05, 10:10) -- 6 events ----------
+    # Window [10:05, 10:10): 6 events
     # boundary event: 10:05:00 belongs to THIS window (not the previous)
     ("EVT-010", "click",    "USER-002",  25.00, ts(10, 5, 0),   "EU"),
     ("EVT-011", "click",    "USER-001",  35.00, ts(10, 6, 0),   "NA"),
@@ -113,7 +113,7 @@ events_data = [
     ("EVT-014", "view",     "USER-002",   5.00, ts(10, 8, 30),  "EU"),
     ("EVT-015", "purchase", "USER-001", 150.00, ts(10, 9, 0),   "NA"),
 
-    # ---------- Window [10:10, 10:15) -- 8 events ----------
+    # Window [10:10, 10:15): 8 events
     # boundary event: 10:10:00 belongs to THIS window
     ("EVT-016", "click",    "USER-004",  15.00, ts(10, 10, 0),  "EU"),
     ("EVT-017", "click",    "USER-001",  25.00, ts(10, 11, 0),  "NA"),
@@ -124,7 +124,7 @@ events_data = [
     ("EVT-022", "purchase", "USER-001",  80.00, ts(10, 13, 30), "NA"),
     ("EVT-023", "purchase", "USER-002", 120.00, ts(10, 14, 0),  "EU"),
 
-    # ---------- Window [10:15, 10:20) -- 7 events ----------
+    # Window [10:15, 10:20): 7 events
     ("EVT-024", "click",    "USER-003",  10.00, ts(10, 15, 30), "NA"),
     ("EVT-025", "click",    "USER-004",  20.00, ts(10, 16, 0),  "EU"),
     ("EVT-026", "click",    "USER-001",  30.00, ts(10, 16, 30), "NA"),
@@ -133,7 +133,7 @@ events_data = [
     ("EVT-029", "purchase", "USER-001",  90.00, ts(10, 18, 0),  "NA"),
     ("EVT-030", "purchase", "USER-004", 110.00, ts(10, 19, 0),  "EU"),
 
-    # ---------- Window [10:20, 10:25) -- 6 events ----------
+    # Window [10:20, 10:25): 6 events
     ("EVT-031", "click",    "USER-001",  10.00, ts(10, 20, 30), "NA"),
     ("EVT-032", "click",    "USER-002",  20.00, ts(10, 21, 0),  "EU"),
     ("EVT-033", "view",     "USER-001",   5.00, ts(10, 22, 0),  "NA"),
@@ -141,7 +141,7 @@ events_data = [
     ("EVT-035", "view",     "USER-004",   5.00, ts(10, 23, 0),  "EU"),
     ("EVT-036", "purchase", "USER-002", 130.00, ts(10, 24, 0),  "EU"),
 
-    # ---------- Window [10:25, 10:30) -- 6 events ----------
+    # Window [10:25, 10:30): 6 events
     ("EVT-037", "click",    "USER-001",  10.00, ts(10, 25, 30), "NA"),
     ("EVT-038", "click",    "USER-003",  20.00, ts(10, 26, 0),  "NA"),
     ("EVT-039", "view",     "USER-002",   5.00, ts(10, 27, 0),  "EU"),
@@ -149,7 +149,7 @@ events_data = [
     ("EVT-041", "purchase", "USER-001",  60.00, ts(10, 28, 0),  "NA"),
     ("EVT-042", "purchase", "USER-004",  70.00, ts(10, 29, 0),  "EU"),
 
-    # ---------- Window [10:30, 10:35) -- 6 events ----------
+    # Window [10:30, 10:35): 6 events
     ("EVT-043", "click",    "USER-002",  10.00, ts(10, 30, 30), "EU"),
     ("EVT-044", "click",    "USER-001",  20.00, ts(10, 31, 0),  "NA"),
     ("EVT-045", "click",    "USER-003",  30.00, ts(10, 32, 0),  "NA"),
@@ -157,17 +157,12 @@ events_data = [
     ("EVT-047", "view",     "USER-004",   5.00, ts(10, 33, 30), "EU"),
     ("EVT-048", "purchase", "USER-002",  50.00, ts(10, 34, 0),  "EU"),
 
-    # ---------- Late arrival (used by Ex 5, 6, 7) ----------
-    # event_ts is 09:30:00 - 30 min before EVT-001. Its 5-min window [09:30,09:35) is well below
-    # (max_event_ts 10:34:00 - 10 min watermark) = 10:24:00, so it closes under append mode and
-    # is emitted as its own closed window in the output.
+    # Late event at 09:30:00: every exercise reads it; Ex 5-9 check its closed window [09:30,09:35)
     ("EVT-049", "click",    "USER-005",  99.00, ts(9, 30, 0),   "NA"),
 ]
 
-# Write all 49 events in a single commit. Under `trigger(availableNow=True)`, the engine reads
-# all available data before the watermark advances, so the late event ends up in a closed window
-# [09:30,09:35) rather than being dropped. Watermark-aware exercises here demonstrate append-mode
-# closed-window emission (open windows held in state), not late-row drop semantics.
+# Write all 49 events in one commit (one file), so `availableNow` reads them in one micro-batch and the
+# watermark only advances after it: EVT-049 lands in its closed window [09:30,09:35) instead of being dropped.
 all_df = spark.createDataFrame(events_data, schema=events_schema).coalesce(1)
 
 # Drop and recreate the table so setup is idempotent.

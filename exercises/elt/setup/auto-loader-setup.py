@@ -3,7 +3,7 @@
 # MAGIC %md
 # MAGIC ### Setup: Auto Loader Ingestion
 # MAGIC Creates source JSON/CSV files in Unity Catalog Volumes and target tables for each exercise.
-# MAGIC Run automatically via `%run` from the exercise notebook.
+# MAGIC Runs automatically via `%run` from the exercise notebook.
 
 # COMMAND ----------
 
@@ -22,7 +22,7 @@ CHECKPOINT_BASE = f"/Volumes/{CATALOG}/{SCHEMA}/checkpoints"
 
 # COMMAND ----------
 
-# -- Clean previous runs --
+# Clean previous runs
 # Remove old files and tables so setup is idempotent
 import os
 
@@ -46,7 +46,7 @@ spark.sql(f"DROP TABLE IF EXISTS {CATALOG}.{SCHEMA}.ex6_target")
 
 # MAGIC %md
 # MAGIC ## Exercise 1: Basic cloudFiles read
-# MAGIC 5 JSON files with a simple, consistent schema. User reads them with Auto Loader.
+# MAGIC 5 JSON files with a simple, consistent schema. You read them with Auto Loader.
 
 # COMMAND ----------
 
@@ -84,12 +84,11 @@ for i in range(0, 10, 2):
 
 # MAGIC %md
 # MAGIC ## Exercise 2: Schema hints for type control
-# MAGIC JSON files where `amount` is an integer in the JSON (no decimal point).
-# MAGIC Auto Loader will infer LONG by default. User must use schema hints to force DOUBLE.
+# MAGIC JSON files where `amount` is a whole number (no decimal point). Auto Loader infers it as STRING by default, or LONG with `cloudFiles.inferColumnTypes`; a schema hint pins it to DOUBLE.
 
 # COMMAND ----------
 
-# amount stored as whole numbers (no decimal point) - Auto Loader infers LONG
+# amount stored as whole numbers (no decimal point): inferred as STRING, or LONG with inferColumnTypes
 ex2_data = [
     ("ORD-301", "CUST-001", 100, "completed", datetime(2026, 3, 2, 9, 0, 0)),
     ("ORD-302", "CUST-002", 250, "pending", datetime(2026, 3, 2, 9, 5, 0)),
@@ -115,11 +114,11 @@ df_ex2.coalesce(1).write.mode("overwrite").json(f"{VOLUME_BASE}/ex2_files")
 # MAGIC %md
 # MAGIC ## Exercise 3: Schema evolution handling
 # MAGIC Two batches of files. Batch 1 has base schema. Batch 2 adds a `priority` column.
-# MAGIC User must configure Auto Loader to evolve the schema when new columns appear.
+# MAGIC You configure Auto Loader to evolve the schema when new columns appear.
 
 # COMMAND ----------
 
-# Batch 1: base schema (4 columns)
+# Batch 1: base schema (5 columns)
 ex3_batch1 = [
     ("ORD-401", "CUST-001", 120.00, "completed", datetime(2026, 3, 3, 8, 0, 0)),
     ("ORD-402", "CUST-002", 85.50, "pending", datetime(2026, 3, 3, 8, 5, 0)),
@@ -162,7 +161,7 @@ df_b2.coalesce(1).write.mode("overwrite").json(f"{VOLUME_BASE}/ex3_files_batch2"
 # MAGIC %md
 # MAGIC ## Exercise 4: Rescued data column
 # MAGIC JSON files where some records have a mismatched type (`amount` is a string instead of number).
-# MAGIC Auto Loader should capture these in the rescued data column.
+# MAGIC Auto Loader keeps the mismatched values in the rescued data column.
 
 # COMMAND ----------
 
@@ -197,8 +196,7 @@ dbutils.fs.put(bad_path, bad_lines, overwrite=True)
 
 # MAGIC %md
 # MAGIC ## Exercise 5: Auto Loader with CSV format
-# MAGIC CSV files with a pipe delimiter and header row. User must configure cloudFiles for CSV format
-# MAGIC with custom parsing options.
+# MAGIC CSV files with a pipe delimiter and header row. You configure cloudFiles for CSV with custom parsing options.
 
 # COMMAND ----------
 
@@ -225,7 +223,7 @@ dbutils.fs.put(f"{VOLUME_BASE}/ex5_files/orders_batch2.csv", file2_content, over
 # MAGIC %md
 # MAGIC ## Exercise 6: Auto Loader + MERGE for incremental upsert
 # MAGIC Source JSON files with order updates (some new, some updates to existing).
-# MAGIC User reads with Auto Loader and MERGEs into a target table.
+# MAGIC You read them with Auto Loader and MERGE them into a target table.
 
 # COMMAND ----------
 
