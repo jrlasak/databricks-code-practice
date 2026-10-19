@@ -91,7 +91,7 @@ GROUP BY s.channel ORDER BY revenue DESC;
 
 Do this **before** generating widgets so the linked agent is available to viewers from the moment the dashboard is published.
 
-> The colorful icon in the bottom toolbar opens **Genie Code** (the dashboard-builder AI) - that is NOT the chat embed. Linking a Genie Agent is done in the dashboard **Settings** and applies to the whole dashboard.
+> The colorful icon in the bottom toolbar opens **Genie Code** (the dashboard-builder AI) - that is NOT the chat embed. Linking a Genie Agent is done in the dashboard **Settings** and applies to the whole dashboard. Databricks moves buttons in the dashboard editor often: if the icon or a menu isn't where this guide says, look for the same name elsewhere in the editor toolbar or menus.
 
 1. Top-right of the editor → **⋮** menu → **Settings**.
 2. Click the **General** tab.
@@ -116,7 +116,7 @@ When the dashboard is published (§ 4), viewers get an **Ask Genie** button on e
 
 ## 4. Generate widgets with Genie Code
 
-Switch from the **Data** tab back to the **Untitled page** tab at the top. You're back at the Genie Code prompt box in the center of the canvas (if you dismissed it in § 1, the colorful icon in the bottom toolbar reopens Genie Code).
+Switch from the **Data** tab back to the **Untitled page** tab at the top. You're back at the Genie Code prompt box in the center of the canvas (if you dismissed it in § 1, the colorful icon in the bottom toolbar reopens Genie Code; if it has moved, look for **Genie Code** in the editor toolbar).
 
 Building widgets one at a time in the right-side config panel is boring busywork - not where a Databricks data engineer's time goes. **Let Genie Code do it.** Paste this prompt into the input box and hit send:
 
